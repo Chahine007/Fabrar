@@ -1,0 +1,13 @@
+# 🔐 Env (segreti)
+.env
+
+# 📦 Dependencies
+node_modules/
+
+# 🗄 Database SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# 📁 Cartella data (se contiene DB)
+data/
