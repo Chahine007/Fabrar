@@ -1,0 +1,970 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard Rendicontazione</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --primary: #2c3e50;
+      --primary-hover: #243242;
+      --bg-color: #f8f9fa;
+      --bg-elevated: #ffffff;
+      --text-main: #333333;
+      --text-muted: #6b7280;
+      --border-color: #e6e7ea;
+      --kpi-positive: #2c3e50;
+      --kpi-neutral: #757575;
+      --kpi-negative: #c07c6e;
+      --table-stripe: #f6f7f9;
+    }
+    body {
+      font-family: "Source Sans 3", "Segoe UI", sans-serif;
+      background:
+        linear-gradient(180deg, #f8f9fa 0%, #f1f2f4 100%);
+      color: var(--text-main);
+      margin: 0;
+      padding: 32px 20px 56px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      margin-top: 0;
+      color: var(--text-main);
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      letter-spacing: -0.01em;
+      font-weight: 600;
+    }
+    
+    /* Card Styles */
+    .card {
+      background: var(--bg-elevated);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 6px 16px rgba(17, 24, 39, 0.06);
+      border: 1px solid rgba(15, 23, 42, 0.05);
+      margin-bottom: 24px;
+      animation: rise 600ms ease both;
+    }
+    .card:nth-of-type(1) { animation-delay: 0ms; }
+    .card:nth-of-type(2) { animation-delay: 60ms; }
+    .card:nth-of-type(3) { animation-delay: 120ms; }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .kpi {
+      background: var(--bg-elevated);
+      padding: 18px;
+      border-radius: 10px;
+      border-left: 3px solid var(--kpi-positive);
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+    }
+    .kpi.danger { border-left-color: var(--kpi-negative); }
+    .kpi:last-child { border-left-color: var(--kpi-neutral); }
+    .kpi-title { font-size: 0.82rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .kpi-value { font-size: 1.6rem; font-weight: 600; margin-top: 6px; color: var(--text-main); }
+
+    /* Controls */
+    .controls-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    input[type="date"], input[type="text"] {
+      padding: 9px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      background: #ffffff;
+      color: var(--text-main);
+      outline: none;
+    }
+    input[type="text"] { flex-grow: 1; min-width: 200px; }
+    input[type="date"]:focus,
+    input[type="text"]:focus {
+      border-color: rgba(44, 62, 80, 0.35);
+      box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.12);
+    }
+    button {
+      padding: 9px 16px;
+      background-color: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
+    }
+    button:hover { background-color: var(--primary-hover); box-shadow: 0 4px 10px rgba(17, 24, 39, 0.12); }
+    button.secondary {
+      background-color: #f4f5f7;
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      font-weight: 600;
+    }
+    button.secondary:hover { background-color: #eef0f2; box-shadow: none; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .button-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 16px;
+      background-color: #f4f5f7;
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
+    }
+    .button-link:hover { background-color: #eef0f2; box-shadow: none; }
+    .controls-right {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* Table */
+    .table-container { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 12px 16px; border-bottom: 1px solid var(--border-color); }
+    th {
+      background-color: #f1f2f4;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    th:hover { background-color: #eceff2; }
+    tbody tr:nth-child(even) { background-color: var(--table-stripe); }
+    tbody tr:hover { background-color: #eef1f4; }
+    tbody tr.zero-row { background-color: rgba(192, 124, 110, 0.12); }
+    tbody tr.zero-row:hover { background-color: rgba(192, 124, 110, 0.18); }
+
+    /* Pagination */
+    .pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 16px;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .pagination-controls { display: flex; gap: 8px; }
+    .page-size {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .page-size select {
+      padding: 6px 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      background: #fff;
+    }
+    .page-status { display: flex; flex-direction: column; gap: 4px; }
+    .page-indicator { font-weight: 600; color: var(--text-main); }
+    .goto {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-right: 6px;
+    }
+    .goto input {
+      width: 72px;
+      padding: 6px 8px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+    }
+
+    #chart-wrapper {
+      position: relative;
+      height: 300px;
+      width: 100%;
+      background: linear-gradient(180deg, rgba(44, 62, 80, 0.04) 0%, rgba(44, 62, 80, 0.02) 100%);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      border-radius: 12px;
+      padding: 8px;
+    }
+    #chart {
+      filter: saturate(65%) brightness(0.95);
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .hidden { display: none !important; }
+    
+    /* Tabs Navigation */
+    .tabs-nav {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      border-bottom: 2px solid var(--border-color);
+      padding-bottom: 1px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 1rem;
+      padding: 10px 16px;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -3px;
+      transition: all 0.2s ease;
+    }
+    .tab-btn:hover {
+      color: var(--text-main);
+    }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+    
+    /* Interactive KPI (Drill-down) */
+    .kpi.clickable {
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .kpi.clickable:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.1);
+    }
+    
+    /* Global Filters */
+    .global-filters {
+      padding: 16px 20px;
+    }
+
+    @media (max-width: 640px) {
+      body { padding: 24px 16px 40px; }
+      button, input[type="date"], input[type="text"] { width: 100%; }
+      .controls-bar { align-items: stretch; }
+    }
+
+    #loginOverlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: var(--bg-color);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 9999;
+    }
+    .login-card {
+      background: #fff; padding: 32px; border-radius: 12px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 360px;
+    }
+    .login-card h2 { margin-bottom: 24px; text-align: center; color: var(--text-main); margin-top: 0; }
+    .login-field { margin-bottom: 16px; }
+    .login-field label { display: block; margin-bottom: 8px; font-weight: 500; font-size: 0.9rem; }
+    .login-field input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px;}
+    .login-error { color: var(--kpi-negative); margin-bottom: 16px; font-size: 0.9rem; display: none; text-align: center; font-weight: 600;}
+    .login-btn { width: 100%; padding: 12px; font-size: 1rem; }
+  </style>
+</head>
+<body>
+  <div id="loginOverlay" style="display: none;">
+    <div class="login-card">
+      <h2>Accesso Riservato</h2>
+      <div id="loginError" class="login-error">Credenziali errate</div>
+      <div class="login-field">
+        <label>Username</label>
+        <input type="text" id="loginUser" placeholder="admin" autocomplete="username">
+      </div>
+      <div class="login-field">
+        <label>Password</label>
+        <input type="password" id="loginPass" placeholder="••••••••" autocomplete="current-password">
+      </div>
+      <button id="loginBtn" class="login-btn">Accedi</button>
+    </div>
+  </div>
+
+  <div class="container" style="display: none;">
+    <h1>Dashboard Rendicontazione</h1>
+
+    <!-- TABS NAV -->
+    <nav class="tabs-nav">
+      <button class="tab-btn active" data-target="tab-dashboard" onclick="switchTab('tab-dashboard')">📊 Dashboard Operativa</button>
+      <button class="tab-btn" data-target="tab-settings" onclick="switchTab('tab-settings')">⚙️ Impostazioni</button>
+    </nav>
+
+    <!-- TAB DASHBOARD OPERATIVA -->
+    <div id="tab-dashboard" class="tab-pane">
+      
+      <!-- GLOBAL FILTERS -->
+      <div class="card global-filters">
+        <div class="controls-bar" style="margin-bottom: 0;">
+          <input type="date" id="dateFrom" title="Data inizio">
+          <input type="date" id="dateTo" title="Data fine">
+          <input type="text" id="searchInput" placeholder="Cerca dipendente, attività, cantiere..." style="min-width: 250px; flex-grow: 1;">
+          <button id="applyFilters">Applica Filtri</button>
+          <button id="resetFilters" class="secondary">Reset</button>
+          <div class="controls-right">
+            <button id="downloadCsv" class="secondary">📥 Scarica CSV</button>
+            <a class="button-link" href="/logs.html">🕵️‍♂️ Audit Logs</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPI Grid -->
+      <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-title">Totale Ore</div><div class="kpi-value" id="kpiTotalHours">0</div></div>
+      <div class="kpi"><div class="kpi-title">Media Giornaliera</div><div class="kpi-value" id="kpiAvgHours">0</div></div>
+      <div class="kpi danger"><div class="kpi-title">Giorni a 0 Ore</div><div class="kpi-value" id="kpiZeroDays">0</div></div>
+      <div class="kpi"><div class="kpi-title">Intervallo</div><div class="kpi-value" id="kpiRange" style="font-size: 1rem; margin-top: 10px;">-</div></div>
+    </div>
+
+    <!-- Contabilità Action Card -->
+    <div class="card" style="background: linear-gradient(135deg, #1e3a8a, #2563eb); color: white; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap;">
+      <div>
+        <h2 style="margin: 0 0 8px 0; color: white; font-family: 'Space Grotesk', sans-serif;">Contabilità Genya</h2>
+        <p style="margin: 0; font-size: 0.95rem; opacity: 0.9;">Importa le fatture elettroniche (CSV) per aggiornare il Job Costing.</p>
+      </div>
+      <a href="/import.html" style="background: white; color: #1e3a8a; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; white-space: nowrap; transition: transform 0.2s, box-shadow 0.2s;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.2)'; this.style.transform='scale(1.02)'" onmouseout="this.style.boxShadow='none'; this.style.transform='none'">
+        Vai all'Importatore ➡️
+      </a>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0; font-family:'Space Grotesk', sans-serif;">Stato Cantieri (Job Costing)</h2>
+      <div id="cantieriGrid" class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-bottom: 0;">
+        <div style="padding: 10px; color: var(--text-muted)">Caricamento dati cantieri...</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="chart-wrapper">
+        <canvas id="chart"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="table-container">
+        <table id="reportsTable">
+          <thead>
+            <tr>
+              <th data-sort="date">Data ↕</th>
+              <th data-sort="name">Dipendente ↕</th>
+              <th data-sort="hours">Ore ↕</th>
+              <th>Ingresso</th>
+              <th>P. Inizio</th>
+              <th>P. Fine</th>
+              <th>Uscita</th>
+              <th data-sort="activity">Attività ↕</th>
+              <th data-sort="location">Cantiere ↕</th>
+              <th data-sort="issues">Problemi ↕</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <div class="page-size">
+          <span>Righe per pagina</span>
+          <select id="pageSize">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+        <div class="page-status">
+          <span id="pageInfo">Mostrando 0-0 di 0 record</span>
+          <span id="pageIndicator" class="page-indicator">Pagina 0 / 0</span>
+        </div>
+        <div class="pagination-controls">
+          <div class="goto">
+            <label for="gotoPage">Vai a</label>
+            <input id="gotoPage" type="number" min="1" />
+            <button id="goPage" class="secondary">Vai</button>
+          </div>
+          <button id="firstPage" class="secondary">Prima</button>
+          <button id="prevPage" class="secondary">Precedente</button>
+          <button id="nextPage" class="secondary">Successiva</button>
+          <button id="lastPage" class="secondary">Ultima</button>
+        </div>
+      </div>
+    </div>
+    </div> <!-- END TAB DASHBOARD -->
+
+    <!-- TAB IMPOSTAZIONI -->
+    <div id="tab-settings" class="tab-pane hidden">
+    <!-- Gestione Cantieri CRUD -->
+    <div class="card">
+      <h2 style="margin-top:0; font-family:'Space Grotesk', sans-serif;">Gestione Cantieri</h2>
+      
+      <div style="background:var(--table-stripe); padding:18px; border-radius:10px; border:1px solid var(--border-color); margin-bottom:20px;">
+        <h3 style="margin-top:0; font-size:1rem; color:var(--text-main);">Aggiungi Nuovo Cantiere</h3>
+        <div class="controls-bar" style="margin-bottom:0;">
+          <input type="text" id="newCantiereNome" placeholder="Nome Cantiere *" required style="min-width: 200px;">
+          <input type="number" id="newCantiereBudget" placeholder="Budget Stimato (€)" step="0.01" style="max-width:160px;">
+          <input type="number" id="newCantiereLat" placeholder="Latitudine" step="0.000001" style="max-width:140px;">
+          <input type="number" id="newCantiereLng" placeholder="Longitudine" step="0.000001" style="max-width:140px;">
+          <button id="addCantiereBtn">➕ Aggiungi Cantiere</button>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table id="cantieriAdminTable">
+          <thead>
+            <tr>
+              <th>Nome Cantiere</th>
+              <th>Budget</th>
+              <th>Coordinate</th>
+              <th>Stato</th>
+              <th>Azioni</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    </div> <!-- END TAB IMPOSTAZIONI -->
+  </div>
+
+  <script>
+    window.switchTab = function(tabId) {
+      document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
+      document.getElementById(tabId).classList.remove('hidden');
+      
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        if (btn.dataset.target === tabId) btn.classList.add('active');
+        else btn.classList.remove('active');
+      });
+    };
+
+    window.drillDownTo = function(nomeCantiere) {
+      const input = document.getElementById("searchInput");
+      input.value = nomeCantiere;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      document.getElementById("reportsTable").scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    function checkAuth() {
+      const token = localStorage.getItem('jwt_token');
+      if (!token) {
+        document.getElementById('loginOverlay').style.display = 'flex';
+        document.querySelector('.container').style.display = 'none';
+        return false;
+      }
+      document.getElementById('loginOverlay').style.display = 'none';
+      document.querySelector('.container').style.display = 'block';
+      return true;
+    }
+
+    async function fetchWithAuth(url, options = {}) {
+      if (!checkAuth()) throw new Error("Unauthenticated");
+      const token = localStorage.getItem('jwt_token');
+      const headers = { ...options.headers, 'Authorization': `Bearer ${token}` };
+      const res = await fetch(url, { ...options, headers });
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem('jwt_token');
+        checkAuth();
+        throw new Error("Token scaduto o non valido");
+      }
+      return res;
+    }
+
+    document.getElementById("loginBtn").addEventListener("click", async () => {
+      const user = document.getElementById("loginUser").value;
+      const pass = document.getElementById("loginPass").value;
+      const errEl = document.getElementById("loginError");
+      errEl.style.display = 'none';
+      try {
+        const res = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: user, password: pass })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Login fallito");
+        localStorage.setItem('jwt_token', data.token);
+        if (checkAuth()) {
+          document.getElementById("loginUser").value = "";
+          document.getElementById("loginPass").value = "";
+          load();
+        }
+      } catch (err) {
+        errEl.innerText = err.message;
+        errEl.style.display = 'block';
+      }
+    });
+
+    let chartInstance;
+    let allReports = [];
+    let currentSort = { col: 'date', asc: false };
+    
+    // Pagination state
+    let currentPage = 1;
+    let pageSize = 50;
+    let filteredDataCache = [];
+
+    const allowedSortCols = new Set(["date", "name", "hours", "activity", "location", "issues"]);
+    const savedSort = localStorage.getItem("reportSort");
+    if (savedSort) {
+      try {
+        const parsed = JSON.parse(savedSort);
+        if (parsed && allowedSortCols.has(parsed.col)) {
+          currentSort = { col: parsed.col, asc: Boolean(parsed.asc) };
+        }
+      } catch {}
+    }
+    const savedPageSize = Number(localStorage.getItem("pageSize"));
+    if ([25, 50, 100].includes(savedPageSize)) {
+      pageSize = savedPageSize;
+    }
+
+    // Utility dates
+    const parseDate = v => v ? new Date(v.split("-").map(Number)[0], v.split("-").map(Number)[1] - 1, v.split("-").map(Number)[2]) : null;
+    const formatDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const addDays = (d, days) => { const n = new Date(d); n.setDate(n.getDate() + days); return n; };
+    const getDisplayDate = r => (r.report_date || r.data_utc || "").slice(0, 10);
+    const isWeekend = dString => { const day = new Date(dString).getDay(); return day === 0 || day === 6; };
+
+    function renderKPIs(hoursArray, zeroDaysCount, dates) {
+      const total = hoursArray.reduce((acc, val) => acc + val, 0);
+      const avg = hoursArray.length ? (total / hoursArray.length) : 0;
+      document.getElementById("kpiTotalHours").innerText = total.toFixed(1);
+      document.getElementById("kpiAvgHours").innerText = avg.toFixed(1);
+      document.getElementById("kpiZeroDays").innerText = zeroDaysCount;
+      document.getElementById("kpiRange").innerText = dates.length ? `${dates[0]} / ${dates[dates.length-1]}` : "-";
+    }
+
+    function renderChart(dates, hours) {
+      const ctx = document.getElementById("chart").getContext("2d");
+      
+      // Dynamic styling for points: Red if 0, Orange if weekend, Blue otherwise
+      const pointColors = dates.map((d, i) => hours[i] === 0 ? '#ef4444' : (isWeekend(d) ? '#f59e0b' : '#3b82f6'));
+      const pointSizes = dates.map((d, i) => hours[i] === 0 ? 6 : 4);
+
+      if (chartInstance) {
+        chartInstance.data.labels = dates;
+        chartInstance.data.datasets[0].data = hours;
+        chartInstance.data.datasets[0].pointBackgroundColor = pointColors;
+        chartInstance.data.datasets[0].pointRadius = pointSizes;
+        chartInstance.update();
+        return;
+      }
+      chartInstance = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: dates,
+          datasets: [{ 
+            label: "Ore lavorate", 
+            data: hours,
+            borderColor: "#3b82f6",
+            backgroundColor: "rgba(59, 130, 246, 0.1)",
+            fill: true,
+            tension: 0.3,
+            pointBackgroundColor: pointColors,
+            pointRadius: pointSizes,
+            pointHoverRadius: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: (ctx) => {
+                  const val = ctx.raw;
+                  const date = ctx.label;
+                  if (val === 0) return isWeekend(date) ? "Weekend (0 ore)" : "Nessun report (0 ore)";
+                  return `${val} ore`;
+                }
+              }
+            }
+          },
+          scales: {
+            y: { beginAtZero: true }
+          }
+        }
+      });
+    }
+
+    function updateTable() {
+      const search = document.getElementById("searchInput").value.toLowerCase();
+      
+      // 1. Filter
+      filteredDataCache = allReports.filter(r => {
+        const dip = [r.nome, r.cognome].filter(Boolean).join(" ") || r.telegram_id || "";
+        const rowText = `${dip} ${r.attivita_svolte||''} ${r.luogo_cantiere||''} ${r.problemi_riscontrati||''}`.toLowerCase();
+        return rowText.includes(search);
+      });
+
+      // 2. Sort
+      filteredDataCache.sort((a, b) => {
+        let valA, valB;
+        switch(currentSort.col) {
+          case 'date': valA = getDisplayDate(a); valB = getDisplayDate(b); break;
+          case 'name': valA = [a.nome, a.cognome].join(" "); valB = [b.nome, b.cognome].join(" "); break;
+          case 'hours': valA = a.ore_lavorate || 0; valB = b.ore_lavorate || 0; break;
+          case 'activity': valA = a.attivita_svolte || ""; valB = b.attivita_svolte || ""; break;
+          case 'location': valA = a.luogo_cantiere || ""; valB = b.luogo_cantiere || ""; break;
+          case 'issues': valA = a.problemi_riscontrati || ""; valB = b.problemi_riscontrati || ""; break;
+        }
+        if (valA < valB) return currentSort.asc ? -1 : 1;
+        if (valA > valB) return currentSort.asc ? 1 : -1;
+        return 0;
+      });
+
+      // 3. Paginate
+      const totalRows = filteredDataCache.length;
+      const totalPages = Math.ceil(totalRows / pageSize) || 1;
+      if (currentPage > totalPages) currentPage = totalPages;
+      
+      const startIdx = (currentPage - 1) * pageSize;
+      const endIdx = startIdx + pageSize;
+      const paginatedData = filteredDataCache.slice(startIdx, endIdx);
+
+      // 4. Render
+      const tbody = document.querySelector("#reportsTable tbody");
+      tbody.innerHTML = "";
+      paginatedData.forEach(r => {
+        const tr = document.createElement("tr");
+        const dip = [r.nome, r.cognome].filter(Boolean).join(" ") || r.telegram_id || "-";
+        if ((r.ore_lavorate || 0) === 0) tr.classList.add("zero-row");
+        tr.innerHTML = `
+          <td>${getDisplayDate(r)}</td>
+          <td><strong>${dip}</strong></td>
+          <td><span style="background:var(--bg-color);padding:2px 8px;border-radius:12px;font-weight:600">${r.ore_lavorate ?? "-"}</span></td>
+          <td>${r.ingresso ?? "-"}</td>
+          <td>${r.pausa_inizio ?? "-"}</td>
+          <td>${r.pausa_fine ?? "-"}</td>
+          <td>${r.uscita ?? "-"}</td>
+          <td>${r.attivita_svolte ?? "-"}</td>
+          <td>${r.luogo_cantiere ?? "-"}</td>
+          <td>${r.problemi_riscontrati ?? "-"}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      // 5. Update Pagination Info
+      const showingEnd = Math.min(endIdx, totalRows);
+      const showingStart = totalRows === 0 ? 0 : startIdx + 1;
+      document.getElementById("pageInfo").innerText = `Mostrando ${showingStart}-${showingEnd} di ${totalRows} record`;
+      document.getElementById("pageIndicator").innerText = `Pagina ${totalRows === 0 ? 0 : currentPage} / ${totalPages}`;
+      
+      document.getElementById("prevPage").disabled = currentPage === 1;
+      document.getElementById("nextPage").disabled = currentPage === totalPages || totalRows === 0;
+      document.getElementById("firstPage").disabled = currentPage === 1;
+      document.getElementById("lastPage").disabled = currentPage === totalPages || totalRows === 0;
+    }
+
+    async function load() {
+      const start = document.getElementById("dateFrom").value;
+      const end = document.getElementById("dateTo").value;
+      const params = new URLSearchParams();
+      if (start) params.set("start", start);
+      if (end) params.set("end", end);
+
+      try {
+        allReports = await fetchWithAuth(`/api/reports${params.toString() ? `?${params.toString()}` : ""}`).then(r => r.json());
+      } catch (err) {
+        return; // auth will handle redirect
+      }
+      currentPage = 1; // reset page on load
+      updateTable();
+
+      // Chart processing
+      const byDate = {};
+      allReports.forEach(r => {
+        const d = getDisplayDate(r);
+        if (!d) return;
+        byDate[d] = (byDate[d] || 0) + (r.ore_lavorate || 0);
+      });
+
+      let startDate = parseDate(start);
+      let endDate = parseDate(end);
+      
+      if (!startDate && !endDate) {
+        const reportDates = Object.keys(byDate).sort();
+        endDate = reportDates.length ? parseDate(reportDates[reportDates.length - 1]) : new Date();
+        startDate = addDays(endDate, -13);
+      } else if (!startDate) { startDate = addDays(endDate, -13); }
+        else if (!endDate) { endDate = addDays(startDate, 13); }
+
+      if (startDate > endDate) [startDate, endDate] = [endDate, startDate];
+
+      const dates = [];
+      let cursor = new Date(startDate);
+      while (cursor <= endDate) {
+        dates.push(formatDate(cursor));
+        cursor = addDays(cursor, 1);
+      }
+
+      const hours = dates.map(d => byDate[d] || 0);
+      const zeroDaysCount = hours.filter(h => h === 0).length;
+
+      renderKPIs(hours, zeroDaysCount, dates);
+      renderChart(dates, hours);
+      
+      await loadCantieriStatus();
+      await loadCantieriAdmin();
+    }
+
+    async function loadCantieriStatus() {
+      try {
+        const res = await fetchWithAuth('/api/cantieri/status');
+        const cantieri = await res.json();
+        const container = document.getElementById('cantieriGrid');
+        container.innerHTML = '';
+        
+        if (!cantieri || cantieri.length === 0) {
+          container.innerHTML = '<div style="padding: 10px; color: var(--text-muted)">Nessun cantiere attivo trovato nel sistema.</div>';
+          return;
+        }
+
+        cantieri.forEach(c => {
+          const budget = c.budget || 0;
+          const costoTot = c.costo_totale || 0;
+          const pct = budget > 0 ? (costoTot / budget) : null;
+          
+          let progressColor = "#757575"; // neutral
+          
+          if (pct !== null) {
+            if (pct < 0.75) progressColor = "#22c55e"; // green
+            else if (pct <= 0.90) progressColor = "#f59e0b"; // amber/yellow
+            else progressColor = "#ef4444"; // red
+          }
+          
+          const pctP = pct !== null ? (pct * 100).toFixed(1) + "%" : "N/A";
+          const wPct = pct !== null ? Math.min(pct * 100, 100) : 0;
+          
+          const div = document.createElement('div');
+          div.className = 'kpi clickable';
+          div.addEventListener("click", () => drillDownTo(c.nome));
+          div.style.borderLeftColor = progressColor;
+          
+          div.innerHTML = `
+            <div class="kpi-title" style="font-weight:bold; color:var(--text-main); text-transform:none; font-size:1.05rem;">🏗️ ${c.nome}</div>
+            <div style="font-size:0.9rem; margin-top:12px; color:var(--text-muted)">Budget: <strong style="color:var(--text-main)">€ ${budget.toFixed(2)}</strong></div>
+            <div style="font-size:0.9rem; margin-top:4px; color:var(--text-muted)">Costi Totali: <strong style="color:var(--text-main)">€ ${costoTot.toFixed(2)}</strong></div>
+            <div style="font-size:0.8rem; color:var(--text-muted); margin-top:2px;">(Mano: €${c.costo_manodopera.toFixed(2)} | Mat: €${c.costo_materiali.toFixed(2)})</div>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-top:14px; font-size:0.8rem;">
+              <div style="flex-grow:1; background:#e6e7ea; height:8px; border-radius:4px; overflow:hidden; margin-right:12px;">
+                <div style="width:${wPct}%; background:${progressColor}; height:100%; transition: width 0.6s ease-out;"></div>
+              </div>
+              <span style="font-weight:bold; color:${progressColor}">${pctP}</span>
+            </div>
+          `;
+          container.appendChild(div);
+        });
+      } catch (err) {
+        console.error('Error loading cantieri status', err);
+        const container = document.getElementById('cantieriGrid');
+        container.innerHTML = '<div style="padding: 10px; color: var(--kpi-negative)">Errore durante il caricamento dello stato cantieri.</div>';
+      }
+    }
+
+    async function loadCantieriAdmin() {
+      try {
+        const res = await fetchWithAuth('/api/admin/cantieri');
+        if (!res.ok) throw new Error("Errore fetch cantieri");
+        const cantieri = await res.json();
+        
+        const tbody = document.querySelector("#cantieriAdminTable tbody");
+        tbody.innerHTML = "";
+        
+        if (cantieri.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Nessun cantiere presente.</td></tr>';
+          return;
+        }
+
+        cantieri.forEach(c => {
+          const tr = document.createElement("tr");
+          // Badge
+          let statoBadge;
+          if (c.attivo) {
+            statoBadge = '<span style="background:#dcfce7; color:#166534; padding:4px 8px; border-radius:12px; font-weight:600; font-size:0.85rem;">Attivo</span>';
+          } else {
+            statoBadge = '<span style="background:#f3f4f6; color:#4b5563; padding:4px 8px; border-radius:12px; font-weight:600; font-size:0.85rem;">Chiuso</span>';
+          }
+          
+          // Button
+          const btnText = c.attivo ? "Chiudilo" : "Riapri";
+          const btnClass = c.attivo ? "secondary" : ""; 
+          const btnHtml = `<button class="${btnClass}" onclick="toggleCantiereStatus(${c.id})" style="padding:6px 12px; font-size:0.85rem;">${btnText}</button>`;
+          
+          // Coordinate
+          const coord = (c.lat !== null && c.lng !== null) ? `${c.lat}, ${c.lng}` : "-";
+          
+          tr.innerHTML = `
+            <td><strong>${c.nome}</strong></td>
+            <td>€ ${c.budget !== null ? c.budget.toFixed(2) : "0.00"}</td>
+            <td>${coord}</td>
+            <td>${statoBadge}</td>
+            <td>${btnHtml}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    window.toggleCantiereStatus = async function(id) {
+      if (!confirm("Cambiare lo stato di questo cantiere?")) return;
+      try {
+        const res = await fetchWithAuth(`/api/admin/cantieri/${id}/toggle`, {
+          method: 'PATCH'
+        });
+        if (!res.ok) throw new Error("Errore nella modifica dello stato");
+        loadCantieriAdmin();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+
+    document.getElementById("addCantiereBtn").addEventListener("click", async () => {
+      const nomeInput = document.getElementById("newCantiereNome");
+      const budgetInput = document.getElementById("newCantiereBudget");
+      const latInput = document.getElementById("newCantiereLat");
+      const lngInput = document.getElementById("newCantiereLng");
+
+      const nome = nomeInput.value.trim();
+      if (!nome) {
+        alert("Il Nome Cantiere è obbligatorio.");
+        return;
+      }
+      
+      const payload = {
+        nome,
+        budget: budgetInput.value ? Number(budgetInput.value) : null,
+        lat: latInput.value ? Number(latInput.value) : null,
+        lng: lngInput.value ? Number(lngInput.value) : null
+      };
+
+      try {
+        const res = await fetchWithAuth("/api/admin/cantieri", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error("Salvataggio fallito.");
+        
+        nomeInput.value = "";
+        budgetInput.value = "";
+        latInput.value = "";
+        lngInput.value = "";
+        
+        loadCantieriAdmin();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+
+    // Event Listeners
+    document.getElementById("applyFilters").addEventListener("click", load);
+    document.getElementById("resetFilters").addEventListener("click", () => {
+      document.getElementById("dateFrom").value = "";
+      document.getElementById("dateTo").value = "";
+      document.getElementById("searchInput").value = "";
+      load();
+    });
+    document.getElementById("downloadCsv").addEventListener("click", async () => {
+      const start = document.getElementById("dateFrom").value;
+      const end = document.getElementById("dateTo").value;
+      const params = new URLSearchParams();
+      if (start) params.set("start", start);
+      if (end) params.set("end", end);
+      const url = `/admin/export.csv${params.toString() ? `?${params.toString()}` : ""}`;
+      try {
+        const res = await fetchWithAuth(url);
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.style.display = "none";
+        a.href = blobUrl;
+        a.download = "export.csv";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(blobUrl);
+      } catch (err) {}
+    });
+    
+    document.getElementById("searchInput").addEventListener("input", () => {
+      currentPage = 1;
+      updateTable();
+    });
+
+    document.getElementById("pageSize").addEventListener("change", (e) => {
+      const value = Number(e.target.value) || 50;
+      pageSize = value;
+      localStorage.setItem("pageSize", String(pageSize));
+      currentPage = 1;
+      updateTable();
+    });
+
+    document.querySelectorAll("th[data-sort]").forEach(th => {
+      th.addEventListener("click", () => {
+        const col = th.getAttribute("data-sort");
+        if (currentSort.col === col) {
+          currentSort.asc = !currentSort.asc;
+        } else {
+          currentSort.col = col;
+          currentSort.asc = true;
+        }
+        localStorage.setItem("reportSort", JSON.stringify(currentSort));
+        updateTable();
+      });
+    });
+
+    // Pagination Listeners
+    document.getElementById("prevPage").addEventListener("click", () => {
+      if (currentPage > 1) { currentPage--; updateTable(); }
+    });
+    document.getElementById("nextPage").addEventListener("click", () => {
+      const totalPages = Math.ceil(filteredDataCache.length / pageSize);
+      if (currentPage < totalPages) { currentPage++; updateTable(); }
+    });
+    document.getElementById("firstPage").addEventListener("click", () => {
+      if (currentPage !== 1) { currentPage = 1; updateTable(); }
+    });
+    document.getElementById("lastPage").addEventListener("click", () => {
+      const totalPages = Math.ceil(filteredDataCache.length / pageSize) || 1;
+      if (currentPage !== totalPages) { currentPage = totalPages; updateTable(); }
+    });
+
+    document.getElementById("goPage").addEventListener("click", () => {
+      const totalPages = Math.ceil(filteredDataCache.length / pageSize) || 1;
+      const value = Number(document.getElementById("gotoPage").value);
+      if (!Number.isFinite(value)) return;
+      const clamped = Math.min(Math.max(1, Math.trunc(value)), totalPages);
+      currentPage = clamped;
+      updateTable();
+    });
+    document.getElementById("gotoPage").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        document.getElementById("goPage").click();
+      }
+    });
+
+    const pageSizeSelect = document.getElementById("pageSize");
+    if (pageSizeSelect) {
+      pageSizeSelect.value = String(pageSize);
+    }
+
+    if (checkAuth()) {
+      load();
+    }
+  </script>
+</body>
+</html>
