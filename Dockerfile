@@ -22,7 +22,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl postgresql-client \
+  && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+  && install -d /etc/apt/keyrings \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg \
+  && echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt bullseye-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client-16 \
+  && apt-get purge -y --auto-remove gnupg \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
