@@ -1,5 +1,6 @@
-import express from "express";
+﻿import express from "express";
 import bcrypt from "bcrypt";
+import logger from "../logger.js";
 import {
   listEmployees,
   listReportsWithEntries,
@@ -17,6 +18,13 @@ import {
   employeeHasTariffa,
   listPricebook,
   insertSpesa,
+  createTariffa,
+  updateEmployee,
+  updateReportHeader,
+  updateSpesa,
+  updateCantiere,
+  formatDateOnly,
+  parseDateOnly,
 } from "../db/index.js";
 import jwt from "jsonwebtoken";
 import { verifyTokenAndRole, DASHBOARD_ROLES } from "../middleware/auth.js";
@@ -24,6 +32,213 @@ import { extractCVData } from "../services/openai.js";
 
 const router = express.Router();
 const MAX_DAILY_HOURS_ALERT = 12;
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function normalizeDate(value) {
+  if (typeof value !== "string") return null;
+  return DATE_ONLY_RE.test(value) ? value : null;
+}
+
+function normalizeStatus(value, fallback = "pending") {
+  return String(value ?? fallback).trim().toLowerCase();
+}
+
+function isRejectedStatus(value) {
+  return normalizeStatus(value) === "rejected";
+}
+
+function isVerifiedStatus(value) {
+  return normalizeStatus(value) === "verified";
+}
+
+function isPendingStatus(value, fallback = "pending") {
+  return normalizeStatus(value, fallback) === "pending";
+}
+
+function toNumber(value) {
+  if (value == null || value === "") return 0;
+  return Number(value);
+}
+
+function toNullableNumber(value) {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function round2(value) {
+  return Number(Number(value || 0).toFixed(2));
+}
+
+function parseIdParam(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeOptionalText(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text === "" ? null : text;
+}
+
+function isBlankText(value) {
+  return normalizeOptionalText(value) == null;
+}
+
+function formatEmployeeName(employee, employeeId) {
+  const fullName = [employee?.nome, employee?.cognome].filter(Boolean).join(" ").trim();
+  return fullName || `Dipendente ${employeeId}`;
+}
+
+function getMonthKey(value) {
+  const dateOnly = formatDateOnly(value);
+  return dateOnly ? dateOnly.slice(0, 7) : null;
+}
+
+function parseImportedTimestamp(value) {
+  if (!value) return new Date();
+
+  if (typeof value === "string" && value.includes("/")) {
+    const [day, month, year] = value.split("/");
+    if (day && month && year) {
+      return new Date(`${year}-${month}-${day}T12:00:00.000Z`);
+    }
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Timestamp non valido: ${value}`);
+  }
+
+  return parsed;
+}
+
+function resolveEntryStatus(entry) {
+  return normalizeStatus(entry?.stato_validazione, "pending");
+}
+
+function resolveSpesaStatus(spesa) {
+  return normalizeStatus(spesa?.stato_validazione ?? spesa?.status, "pending");
+}
+
+function isRejectedEntry(entry) {
+  return isRejectedStatus(resolveEntryStatus(entry));
+}
+
+function isRejectedSpesa(spesa) {
+  return isRejectedStatus(resolveSpesaStatus(spesa));
+}
+
+function isPendingEntry(entry) {
+  return isPendingStatus(resolveEntryStatus(entry));
+}
+
+function isPendingSpesa(spesa) {
+  return isPendingStatus(resolveSpesaStatus(spesa));
+}
+
+function isManualInput(...values) {
+  return !values.some((value) => ["timer", "gps", "app"].includes(normalizeStatus(value, "")));
+}
+
+function getEntryHourlyCost(entry) {
+  return toNumber(entry?.report?.employee?.tariffe?.[0]?.costo_orario);
+}
+
+function getEntryCost(entry) {
+  return round2(toNumber(entry?.ore_lavorate) * getEntryHourlyCost(entry));
+}
+
+async function getPendingSummary(prisma) {
+  const [reports, spese] = await Promise.all([
+    prisma.reportEntry.count({
+      where: {
+        OR: [
+          { stato_validazione: "" },
+          { stato_validazione: { equals: "pending", mode: "insensitive" } },
+        ],
+      },
+    }),
+    prisma.spesa.findMany({
+      select: {
+        stato_validazione: true,
+        status: true,
+      },
+    }),
+  ]);
+
+  return {
+    reports,
+    spese: spese.filter(isPendingSpesa).length,
+  };
+}
+
+function mapAuditOreRow(entry) {
+  return {
+    id: entry.id,
+    type: "ore",
+    status: resolveEntryStatus(entry),
+    input_method: normalizeOptionalText(entry.fonte) || normalizeOptionalText(entry.report?.input_method) || "manual",
+    date: formatDateOnly(entry.report?.report_date),
+    value: toNumber(entry.ore_lavorate),
+    employee_id: entry.report?.employee_id,
+    nome: entry.report?.employee?.nome || null,
+    cognome: entry.report?.employee?.cognome || null,
+    note: entry.attivita_svolte || null,
+    cantiere_nome: entry.cantiere?.nome || entry.report?.cantiere?.nome || null,
+    report_id: entry.report_id,
+  };
+}
+
+function mapAuditSpesaRow(spesa) {
+  return {
+    id: spesa.id,
+    type: "spese",
+    status: resolveSpesaStatus(spesa),
+    input_method: normalizeOptionalText(spesa.input_method) || normalizeOptionalText(spesa.fonte) || "manual",
+    date: spesa.timestamp_utc,
+    value: toNumber(spesa.importo),
+    employee_id: spesa.employee_id,
+    nome: spesa.employee?.nome || null,
+    cognome: spesa.employee?.cognome || null,
+    note: spesa.descrizione || null,
+    cantiere_nome: spesa.cantiere?.nome || null,
+  };
+}
+
+async function loadCantiereCostDataset(prisma, cantiereId) {
+  const cantiere = await prisma.cantiere.findUnique({
+    where: { id: Number(cantiereId) },
+    include: {
+      report_entries: {
+        include: {
+          report: {
+            include: {
+              employee: {
+                include: {
+                  tariffe: { orderBy: { valido_dal: "desc" }, take: 1 }
+                }
+              }
+            }
+          },
+          cantiere: { select: { nome: true } },
+        },
+        orderBy: { id: "asc" }
+      },
+      spese: {
+        include: { cantiere: { select: { nome: true } } },
+        orderBy: { timestamp_utc: "asc" }
+      }
+    }
+  });
+
+  if (!cantiere) return null;
+
+  const verifiedEntries = cantiere.report_entries.filter((entry) => isVerifiedStatus(entry.stato_validazione));
+  const activeSpese = cantiere.spese.filter((spesa) => !isRejectedStatus(spesa.stato_validazione ?? spesa.status));
+
+  return { cantiere, verifiedEntries, activeSpese };
+}
 
 router.post("/api/login", async (req, res) => {
   try {
@@ -56,7 +271,7 @@ router.post("/api/login", async (req, res) => {
 
     return res.json({ message: "Login effettuato", token });
   } catch (err) {
-    console.error("[auth] login error", err);
+    logger.error({ err, event: "login_error" }, "login_error");
     return res.status(500).json({ error: "Errore durante il login." });
   }
 });
@@ -78,7 +293,7 @@ router.get("/api/reports", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res)
   res.json(rows);
 });
 
-// ─── GET /api/pricebook — listino materiali (Policy 4.3) ─────────────────────
+// â”€â”€â”€ GET /api/pricebook â€” listino materiali (Policy 4.3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get("/api/pricebook", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
     const rows = await listPricebook();
@@ -88,7 +303,7 @@ router.get("/api/pricebook", verifyTokenAndRole(DASHBOARD_ROLES), async (req, re
   }
 });
 
-// ─── POST /api/admin/spese/manual — spesa da ufficio (con pricebook opzionale) ─
+// â”€â”€â”€ POST /api/admin/spese/manual â€” spesa da ufficio (con pricebook opzionale) â”€
 router.post("/api/admin/spese/manual", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
     const uploaderId = req.user?.employee_id;
@@ -127,7 +342,7 @@ router.post("/api/admin/spese/manual", verifyTokenAndRole(DASHBOARD_ROLES), asyn
   }
 });
 
-// ─── PATCH /api/admin/entries/:id/approve | reject — righe report (Policy 4.2) ─
+// â”€â”€â”€ PATCH /api/admin/entries/:id/approve | reject â€” righe report (Policy 4.2) â”€
 router.patch("/api/admin/entries/:id/approve", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -170,7 +385,7 @@ router.get("/api/logs", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) =>
   res.json(rows);
 });
 
-// --- ROTTE CANTIERI (Alias per compatibilità frontend/cache) ---
+// --- ROTTE CANTIERI (Alias per compatibilitÃ  frontend/cache) ---
 router.get(["/api/cantieri", "/api/admin/cantieri"], verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
     const rows = await getAllCantieri();
@@ -218,97 +433,126 @@ router.post("/api/admin/spese/bulk", verifyTokenAndRole(DASHBOARD_ROLES), async 
   const uploaderEmployeeId = req.user?.employee_id;
   if (uploaderEmployeeId == null || uploaderEmployeeId === "") {
     return res.status(400).json({
-      error: "Utente senza employee_id collegato: impossibile registrare l'import. Verificare il record users → employees.",
+      error: "Utente senza employee_id collegato: impossibile registrare l'import. Verificare il record users -> employees.",
     });
   }
 
-  const db = getDb();
-  await db.run("BEGIN TRANSACTION;");
   try {
-    const stmt = await db.prepare(
-      `INSERT INTO spese (timestamp_utc, employee_id, cantiere_id, importo, fornitore, descrizione, fonte, fattura_rif, stato_validazione)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`
-    );
-    for (const s of spese_bulk) {
-      if (typeof s.importo !== "number" || s.importo <= 0) {
-        throw new Error("Tutti gli importi devono essere maggiori di zero.");
-      }
-      if (!s.cantiere_id) {
-        throw new Error("Ogni spesa deve essere associata a un cantiere.");
-      }
+    const prisma = getDb();
+    const employeeId = Number(uploaderEmployeeId);
 
-      // Converti DD/MM/YYYY → ISO se necessario
-      let isoDate = s.timestamp_utc || new Date().toISOString();
-      if (isoDate && isoDate.includes("/")) {
-        const [day, month, year] = isoDate.split("/");
-        if (day && month && year) {
-          isoDate = new Date(`${year}-${month}-${day}T12:00:00Z`).toISOString();
+    await prisma.$transaction(async (tx) => {
+      const rootWbsCache = new Map();
+
+      for (const item of spese_bulk) {
+        const importo = typeof item.importo === "number" ? item.importo : parseFloat(String(item.importo));
+        if (!Number.isFinite(importo) || importo <= 0) {
+          throw new Error("Tutti gli importi devono essere maggiori di zero.");
         }
-      }
 
-      await stmt.run(
-        isoDate,
-        uploaderEmployeeId,
-        s.cantiere_id,
-        s.importo,
-        s.fornitore,
-        s.descrizione,
-        s.fonte || "IMPORT",
-        s.fattura_rif || null
-      );
-    }
-    await stmt.finalize();
-    await db.run("COMMIT;");
+        const cantiereId = parseIdParam(item.cantiere_id);
+        if (!cantiereId) {
+          throw new Error("Ogni spesa deve essere associata a un cantiere.");
+        }
+
+        const cantiere = await tx.cantiere.findFirst({
+          where: { id: cantiereId, attivo: 1 },
+          select: { id: true },
+        });
+        if (!cantiere) {
+          throw new Error(`Cantiere non valido o inattivo: ${cantiereId}.`);
+        }
+
+        if (!rootWbsCache.has(cantiereId)) {
+          const rootWbs = await tx.wbsNode.findFirst({
+            where: { cantiere_id: cantiereId, parent_id: null },
+            select: { id: true },
+          });
+          rootWbsCache.set(cantiereId, rootWbs?.id ?? null);
+        }
+
+        await tx.spesa.create({
+          data: {
+            timestamp_utc: parseImportedTimestamp(item.timestamp_utc),
+            employee_id: employeeId,
+            cantiere_id: cantiereId,
+            wbs_node_id: rootWbsCache.get(cantiereId),
+            importo,
+            fornitore: normalizeOptionalText(item.fornitore),
+            descrizione: normalizeOptionalText(item.descrizione),
+            fonte: normalizeOptionalText(item.fonte) || "IMPORT",
+            fattura_rif: normalizeOptionalText(item.fattura_rif),
+            stato_validazione: "PENDING",
+          },
+        });
+      }
+    });
+
     res.json({ ok: true, salvate: spese_bulk.length });
-  } catch (e) {
-    await db.run("ROLLBACK;");
-    res.status(500).json({ error: e.message || "Errore durante l'inserimento massivo" });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Errore durante l'inserimento massivo" });
   }
 });
 
 router.get("/api/admin/employees/:id/timeline", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const { id } = req.params;
-    const db = getDb();
+    const employeeId = parseIdParam(req.params.id);
+    if (!employeeId) {
+      return res.status(400).json({ error: "ID dipendente non valido." });
+    }
 
+    const prisma = getDb();
     const [reports, logs, spese] = await Promise.all([
-      db.all("SELECT * FROM reports WHERE employee_id = ?", [id]),
-      db.all("SELECT * FROM message_logs WHERE employee_id = ?", [id]),
-      db.all("SELECT * FROM spese WHERE employee_id = ? AND fonte = 'TELEGRAM'", [id])
+      prisma.report.findMany({
+        where: { employee_id: employeeId },
+        orderBy: { data_utc: "desc" },
+      }),
+      prisma.messageLog.findMany({
+        where: { employee_id: employeeId },
+        orderBy: { timestamp_utc: "desc" },
+      }),
+      prisma.spesa.findMany({
+        where: {
+          employee_id: employeeId,
+          fonte: { equals: "TELEGRAM", mode: "insensitive" },
+        },
+        orderBy: { timestamp_utc: "desc" },
+      }),
     ]);
 
     const timeline = [];
 
-    reports.forEach((r) => {
+    reports.forEach((report) => {
       timeline.push({
         type: "REPORT",
-        timestamp: r.data_utc || r.report_date,
+        timestamp: report.data_utc || report.report_date,
         data: {
-          ore: r.ore_lavorate,
-          cantiere_id: r.cantiere_id,
-          note: r.attivita_svolte || r.testo_originale,
+          ore: toNumber(report.ore_lavorate),
+          cantiere_id: report.cantiere_id,
+          note: report.attivita_svolte || report.testo_originale,
+          report_date: formatDateOnly(report.report_date),
         },
       });
     });
 
-    logs.forEach((m) => {
+    logs.forEach((log) => {
       timeline.push({
         type: "LOG",
-        timestamp: m.timestamp_utc,
+        timestamp: log.timestamp_utc,
         data: {
-          messaggio: m.raw_text,
-          has_audio: m.message_type === "voice" || m.message_type === "audio",
+          messaggio: log.raw_text,
+          has_audio: log.message_type === "voice" || log.message_type === "audio",
         },
       });
     });
 
-    spese.forEach((s) => {
+    spese.forEach((spesa) => {
       timeline.push({
         type: "EXPENSE",
-        timestamp: s.timestamp_utc,
+        timestamp: spesa.timestamp_utc,
         data: {
-          importo: s.importo,
-          cantiere_id: s.cantiere_id,
+          importo: toNumber(spesa.importo),
+          cantiere_id: spesa.cantiere_id,
         },
       });
     });
@@ -327,54 +571,88 @@ router.get("/api/admin/employees/:id/timeline", verifyTokenAndRole(DASHBOARD_ROL
 
 router.get("/api/hr/alerts", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    const reportsPending = await db.get(`
-      SELECT COUNT(*) as count FROM report_entries
-      WHERE LOWER(COALESCE(TRIM(stato_validazione), '')) = 'pending'
-    `);
-    const spesePending = await db.get(`
-      SELECT COUNT(*) as count FROM spese
-      WHERE LOWER(COALESCE(TRIM(stato_validazione), TRIM(status), 'pending')) = 'pending'
-    `);
+    const prisma = getDb();
+    const pending = await getPendingSummary(prisma);
 
-    const anomalies = [];
-    const highHours = await db.all(`
-      SELECT r.employee_id, e.nome, e.cognome, r.report_date, SUM(re.ore_lavorate) as total_hours
-      FROM report_entries re
-      JOIN reports r ON r.id = re.report_id
-      LEFT JOIN employees e ON r.employee_id = e.id
-      WHERE LOWER(COALESCE(re.stato_validazione, '')) != 'rejected'
-      GROUP BY r.employee_id, r.report_date, e.nome, e.cognome
-      HAVING total_hours > ?
-    `, [MAX_DAILY_HOURS_ALERT]);
+    const lastThirtyDays = new Date();
+    lastThirtyDays.setDate(lastThirtyDays.getDate() - 30);
 
-    highHours.forEach((row) => {
-      anomalies.push(`Il dipendente ${row.nome} ${row.cognome} ha registrato ${row.total_hours}h il ${row.report_date}.`);
-    });
+    const [entries, recentReports] = await Promise.all([
+      prisma.reportEntry.findMany({
+        where: {
+          NOT: { stato_validazione: { in: ["rejected", "REJECTED"] } },
+        },
+        select: {
+          ore_lavorate: true,
+          report: {
+            select: {
+              employee_id: true,
+              report_date: true,
+              employee: { select: { nome: true, cognome: true } },
+            },
+          },
+        },
+      }),
+      prisma.report.findMany({
+        where: { report_date: { gte: parseDateOnly(formatDateOnly(lastThirtyDays)) } },
+        include: { employee: { select: { nome: true, cognome: true } } },
+        orderBy: [{ report_date: "desc" }, { id: "desc" }],
+      }),
+    ]);
 
-    const reportRows = await db.all(`
-      SELECT r.*, e.nome, e.cognome
-      FROM reports r
-      JOIN employees e ON r.employee_id = e.id
-      WHERE r.report_date >= date('now', '-30 days')
-      AND (r.ore_lavorate > 12 OR (r.metodo = 'manuale' AND (r.note IS NULL OR length(trim(r.note)) < 2)))
-      ORDER BY r.report_date DESC
-    `);
+    const groupedHours = new Map();
+    for (const entry of entries) {
+      const reportDate = formatDateOnly(entry.report?.report_date);
+      if (!reportDate) continue;
 
-    const warnings = reportRows.map((r) => ({
-      type: r.ore_lavorate > 12 ? "ORE ELEVATE" : "NO NOTA",
-      name: `${r.nome} ${r.cognome}`,
-      text:
-        r.ore_lavorate > 12
-          ? `${r.ore_lavorate}h il ${r.report_date}`
-          : `Manuale senza nota il ${r.report_date}`,
-    }));
+      const key = `${entry.report?.employee_id}:${reportDate}`;
+      const current = groupedHours.get(key) || {
+        employee: entry.report?.employee,
+        employee_id: entry.report?.employee_id,
+        report_date: reportDate,
+        total_hours: 0,
+      };
+      current.total_hours += toNumber(entry.ore_lavorate);
+      groupedHours.set(key, current);
+    }
+
+    const anomalies = Array.from(groupedHours.values())
+      .filter((row) => row.total_hours > MAX_DAILY_HOURS_ALERT)
+      .sort((a, b) => b.total_hours - a.total_hours)
+      .map((row) => {
+        const name = formatEmployeeName(row.employee, row.employee_id);
+        return `Il dipendente ${name} ha registrato ${round2(row.total_hours)}h il ${row.report_date}.`;
+      });
+
+    const warnings = [];
+    for (const report of recentReports) {
+      const name = formatEmployeeName(report.employee, report.employee_id);
+      const reportDate = formatDateOnly(report.report_date);
+      const note = normalizeOptionalText(report.attivita_svolte) || normalizeOptionalText(report.testo_originale);
+
+      if (toNumber(report.ore_lavorate) > MAX_DAILY_HOURS_ALERT) {
+        warnings.push({
+          type: "ORE ELEVATE",
+          name,
+          text: `${round2(report.ore_lavorate)}h il ${reportDate}`,
+        });
+        continue;
+      }
+
+      if (isManualInput(report.input_method, report.fonte) && isBlankText(note)) {
+        warnings.push({
+          type: "NO NOTA",
+          name,
+          text: `Manuale senza nota il ${reportDate}`,
+        });
+      }
+    }
 
     res.json({
       pending: {
-        reports: reportsPending.count || 0,
-        spese: spesePending.count || 0,
-        total: (reportsPending.count || 0) + (spesePending.count || 0),
+        reports: pending.reports,
+        spese: pending.spese,
+        total: pending.reports + pending.spese,
       },
       anomalies,
       warnings,
@@ -386,52 +664,65 @@ router.get("/api/hr/alerts", verifyTokenAndRole(DASHBOARD_ROLES), async (req, re
 
 router.get("/api/hr/users/:id/kpi", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const { id } = req.params;
-    const db = getDb();
-    
-    // Mese Corrente (YYYY-MM)
+    const employeeId = parseIdParam(req.params.id);
+    if (!employeeId) {
+      return res.status(400).json({ error: "ID dipendente non valido." });
+    }
+
+    const prisma = getDb();
     const now = new Date();
-    const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    
-    const kpiData = await db.get(`
-      SELECT SUM(re.ore_lavorate) as total_hours
-      FROM report_entries re
-      JOIN reports r ON r.id = re.report_id
-      WHERE r.employee_id = ? AND r.report_date LIKE ?
-        AND LOWER(COALESCE(re.stato_validazione, '')) != 'rejected'
-    `, [id, `${currentMonthPrefix}%`]);
+    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const monthStart = parseDateOnly(`${month}-01`);
+    const nextMonthStart = new Date(`${month}-01T00:00:00.000Z`);
+    nextMonthStart.setUTCMonth(nextMonthStart.getUTCMonth() + 1);
 
-    const inputStats = await db.all(`
-      SELECT
-        CASE WHEN COALESCE(LOWER(re.fonte), '') IN ('timer', 'gps', 'app') THEN 'timer' ELSE 'manual' END as input_method,
-        COUNT(*) as count,
-        SUM(re.ore_lavorate) as hours
-      FROM report_entries re
-      JOIN reports r ON r.id = re.report_id
-      WHERE r.employee_id = ? AND r.report_date LIKE ?
-        AND LOWER(COALESCE(re.stato_validazione, '')) != 'rejected'
-      GROUP BY CASE WHEN COALESCE(LOWER(re.fonte), '') IN ('timer', 'gps', 'app') THEN 'timer' ELSE 'manual' END
-    `, [id, `${currentMonthPrefix}%`]);
+    const [entries, employeeSpese, tariffa] = await Promise.all([
+      prisma.reportEntry.findMany({
+        where: {
+          NOT: { stato_validazione: { in: ["rejected", "REJECTED"] } },
+          report: {
+            is: {
+              employee_id: employeeId,
+              report_date: {
+                gte: monthStart,
+                lt: nextMonthStart,
+              },
+            },
+          },
+        },
+        select: { ore_lavorate: true, fonte: true },
+      }),
+      prisma.spesa.findMany({
+        where: { employee_id: employeeId },
+        select: { stato_validazione: true, status: true },
+      }),
+      prisma.tariffa.findFirst({
+        where: { employee_id: employeeId },
+        orderBy: [{ valido_dal: "desc" }, { id: "desc" }],
+      }),
+    ]);
 
-    const pendingSpese = await db.get(`
-      SELECT COUNT(*) as count
-      FROM spese
-      WHERE employee_id = ? AND LOWER(COALESCE(TRIM(stato_validazione), TRIM(status), 'pending')) = 'pending'
-    `, [id]);
+    const totalHours = round2(entries.reduce((sum, entry) => sum + toNumber(entry.ore_lavorate), 0));
+    const inputStatsMap = new Map();
+    for (const entry of entries) {
+      const inputMethod = isManualInput(entry.fonte) ? "manual" : "timer";
+      const current = inputStatsMap.get(inputMethod) || { input_method: inputMethod, count: 0, hours: 0 };
+      current.count += 1;
+      current.hours += toNumber(entry.ore_lavorate);
+      inputStatsMap.set(inputMethod, current);
+    }
 
-    // get the latest costo_orario
-    const currentCost = await db.get(`
-      SELECT costo_orario, valido_dal FROM tariffe 
-      WHERE employee_id = ? 
-      ORDER BY valido_dal DESC LIMIT 1
-    `, [id]);
+    const inputStats = Array.from(inputStatsMap.values()).map((row) => ({
+      ...row,
+      hours: round2(row.hours),
+    }));
 
     res.json({
-      month: currentMonthPrefix,
-      totalHours: kpiData?.total_hours || 0,
+      month,
+      totalHours,
       inputStats,
-      pendingSpese: pendingSpese?.count || 0,
-      costo_orario: currentCost ? currentCost.costo_orario : 0
+      pendingSpese: employeeSpese.filter(isPendingSpesa).length,
+      costo_orario: toNumber(tariffa?.costo_orario),
     });
   } catch (err) {
     res.status(500).json({ error: "Errore durante il recupero dei KPI utente." });
@@ -440,72 +731,85 @@ router.get("/api/hr/users/:id/kpi", verifyTokenAndRole(DASHBOARD_ROLES), async (
 
 router.get("/api/hr/audit", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    const { type, status, employee_id } = req.query;
+    const prisma = getDb();
+    const type = normalizeOptionalText(req.query.type);
+    const status = normalizeOptionalText(req.query.status);
+    const employeeId = req.query.employee_id != null && req.query.employee_id !== ""
+      ? parseIdParam(req.query.employee_id)
+      : null;
 
-    let queryOre = `
-      SELECT
-        re.id,
-        'ore' as type,
-        LOWER(COALESCE(re.stato_validazione, 'pending')) as status,
-        COALESCE(re.fonte, r.input_method, 'manual') as input_method,
-        r.report_date as date,
-        re.ore_lavorate as value,
-        r.employee_id,
-        e.nome, e.cognome,
-        re.attivita_svolte as note,
-        c.nome as cantiere_nome,
-        r.id as report_id
-      FROM report_entries re
-      JOIN reports r ON r.id = re.report_id
-      JOIN employees e ON e.id = r.employee_id
-      LEFT JOIN cantieri c ON c.id = re.cantiere_id
-    `;
-    let querySpese = `
-      SELECT s.id, 'spese' as type,
-        LOWER(COALESCE(s.stato_validazione, s.status, 'pending')) as status,
-        COALESCE(s.input_method, s.fonte, 'manual') as input_method,
-        s.timestamp_utc as date, s.importo as value, s.employee_id, e.nome, e.cognome,
-        s.descrizione as note, c.nome as cantiere_nome
-      FROM spese s
-      LEFT JOIN employees e ON s.employee_id = e.id
-      LEFT JOIN cantieri c ON s.cantiere_id = c.id
-    `;
-
-    const wheresOre = [];
-    const wheresSpese = [];
-    const paramsOre = [];
-    const paramsSpese = [];
-
-    if (status) {
-      wheresOre.push("LOWER(COALESCE(TRIM(re.stato_validazione), '')) = ?");
-      paramsOre.push(String(status).toLowerCase());
-      wheresSpese.push("LOWER(COALESCE(TRIM(s.stato_validazione), TRIM(s.status), 'pending')) = ?");
-      paramsSpese.push(String(status).toLowerCase());
+    if (req.query.employee_id != null && req.query.employee_id !== "" && !employeeId) {
+      return res.status(400).json({ error: "employee_id non valido." });
     }
 
-    if (employee_id) {
-      wheresOre.push("r.employee_id = ?");
-      paramsOre.push(employee_id);
-      wheresSpese.push("s.employee_id = ?");
-      paramsSpese.push(employee_id);
-    }
-
-    if (wheresOre.length) queryOre += " WHERE " + wheresOre.join(" AND ");
-    if (wheresSpese.length) querySpese += " WHERE " + wheresSpese.join(" AND ");
-
+    const statusValue = status ? normalizeStatus(status) : null;
     let allData = [];
+
     if (!type || type === "ore") {
-      const oreRows = await db.all(queryOre, paramsOre);
-      allData = allData.concat(oreRows);
+      const oreRows = await prisma.reportEntry.findMany({
+        where: {
+          ...(employeeId
+            ? {
+                report: {
+                  is: { employee_id: employeeId },
+                }, 
+              }
+            : {}),
+          ...(statusValue
+            ? statusValue === "pending"
+              ? {}
+              : { stato_validazione: { equals: statusValue, mode: "insensitive" } }
+            : {}),
+        },
+        include: {
+          report: {
+            include: {
+              employee: { select: { nome: true, cognome: true } },
+              cantiere: { select: { nome: true } },
+            },
+          },
+          cantiere: { select: { nome: true } },
+        },
+        orderBy: [{ created_at: "desc" }, { id: "desc" }],
+      });
+
+      allData = allData.concat(
+        oreRows
+          .map(mapAuditOreRow)
+          .filter((row) => (statusValue === "pending" ? row.status === "pending" : true))
+      );
     }
+
     if (!type || type === "spese") {
-      const speseRows = await db.all(querySpese, paramsSpese);
-      allData = allData.concat(speseRows);
+      const speseRows = await prisma.spesa.findMany({
+        where: {
+          ...(employeeId ? { employee_id: employeeId } : {}),
+          ...(statusValue
+            ? statusValue === "pending"
+              ? {}
+              : {
+                  OR: [
+                    { stato_validazione: { equals: statusValue, mode: "insensitive" } },
+                    { status: { equals: statusValue, mode: "insensitive" } },
+                  ],
+                }
+            : {}),
+        },
+        include: {
+          employee: { select: { nome: true, cognome: true } },
+          cantiere: { select: { nome: true } },
+        },
+        orderBy: [{ timestamp_utc: "desc" }, { id: "desc" }],
+      });
+
+      allData = allData.concat(
+        speseRows
+          .map(mapAuditSpesaRow)
+          .filter((row) => (statusValue === "pending" ? row.status === "pending" : true))
+      );
     }
 
     allData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
     res.json(allData);
   } catch (err) {
     res.status(500).json({ error: "Errore durante il recupero audit." });
@@ -521,322 +825,470 @@ function mapAuditStatusToDb(s) {
 }
 
 router.put("/api/hr/audit/bulk", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
-  const db = getDb();
-  const { items } = req.body;
-  if (!Array.isArray(items)) return res.status(400).json({ error: "Formato non valido." });
-
+  const prisma = getDb();
   const iso = new Date().toISOString();
+
   try {
-    await db.run("BEGIN TRANSACTION");
-    for (const item of items) {
-      const newSt = mapAuditStatusToDb(item.newStatus);
-      if (item.type === "ore") {
-        const entry = await getReportEntryById(item.id);
-        if (!entry) {
-          await db.run("ROLLBACK");
-          return res.status(400).json({ error: `Riga ore non trovata: ${item.id}` });
+    const result = await prisma.$transaction(async (tx) => {
+      let items = Array.isArray(req.body?.items) ? req.body.items : null;
+
+      if (!items) {
+        const ids = Array.isArray(req.body?.ids)
+          ? req.body.ids.map((value) => parseIdParam(value)).filter(Boolean)
+          : null;
+        const action = normalizeOptionalText(req.body?.action);
+
+        if (!ids || ids.length === 0 || !action) {
+          throw new Error("Formato non valido.");
         }
-        if (newSt === "VERIFIED") {
-          const report = await getReportById(entry.report_id);
-          if (!report) {
-            await db.run("ROLLBACK");
-            return res.status(400).json({ error: "Report non trovato." });
+
+        const reportEntries = await tx.reportEntry.findMany({
+          where: { id: { in: ids } },
+          select: { id: true },
+        });
+        const spese = await tx.spesa.findMany({
+          where: { id: { in: ids } },
+          select: { id: true },
+        });
+
+        const reportEntryIds = new Set(reportEntries.map((row) => row.id));
+        const spesaIds = new Set(spese.map((row) => row.id));
+        const defaultStatus = action === "verify" ? "verified" : action === "reject" ? "rejected" : action;
+
+        items = ids.map((id) => {
+          const inReportEntries = reportEntryIds.has(id);
+          const inSpese = spesaIds.has(id);
+
+          if (inReportEntries && inSpese) {
+            throw new Error(`ID ambiguo presente sia nelle ore sia nelle spese: ${id}`);
           }
-          if (!(await employeeHasTariffa(report.employee_id))) {
-            await db.run("ROLLBACK");
-            return res.status(400).json({
-              error:
-                "Impossibile approvare: il dipendente non ha una tariffa oraria valida nel sistema (Policy 4.2).",
-            });
+          if (!inReportEntries && !inSpese) {
+            throw new Error(`Voce audit non trovata: ${id}`);
           }
-        }
-        await updateReportEntry(item.id, { stato_validazione: newSt, modified_by_admin_at: iso });
-      } else if (item.type === "spese") {
-        await db.run(
-          `UPDATE spese SET stato_validazione = ?, status = ?, modified_by_admin_at = ? WHERE id = ?`,
-          [newSt, newSt.toLowerCase(), iso, item.id]
-        );
+
+          return {
+            id,
+            type: inReportEntries ? "ore" : "spese",
+            newStatus: defaultStatus,
+          };
+        });
       }
-    }
-    await db.run("COMMIT");
-    res.json({ success: true, count: items.length });
+
+      if (!Array.isArray(items) || items.length === 0) {
+        throw new Error("Formato non valido.");
+      }
+
+      for (const rawItem of items) {
+        const id = parseIdParam(rawItem.id);
+        if (!id) {
+          throw new Error("Elemento bulk non valido.");
+        }
+
+        const newSt = mapAuditStatusToDb(rawItem.newStatus);
+        if (rawItem.type === "ore") {
+          const entry = await tx.reportEntry.findUnique({
+            where: { id },
+            select: {
+              report_id: true,
+              report: { select: { employee_id: true } },
+            },
+          });
+
+          if (!entry) {
+            throw new Error(`Riga ore non trovata: ${id}`);
+          }
+
+          if (newSt === "VERIFIED") {
+            const tariffaCount = await tx.tariffa.count({
+              where: { employee_id: entry.report?.employee_id },
+            });
+            if (tariffaCount === 0) {
+              throw new Error(
+                "Impossibile approvare: il dipendente non ha una tariffa oraria valida nel sistema (Policy 4.2)."
+              );
+            }
+          }
+
+          await tx.reportEntry.update({
+            where: { id },
+            data: { stato_validazione: newSt, modified_by_admin_at: iso },
+          });
+          continue;
+        }
+
+        if (rawItem.type === "spese") {
+          await tx.spesa.update({
+            where: { id },
+            data: {
+              stato_validazione: newSt,
+              status: newSt.toLowerCase(),
+              modified_by_admin_at: iso,
+            },
+          });
+          continue;
+        }
+
+        throw new Error(`Tipo audit non supportato: ${rawItem.type}`);
+      }
+
+      return items.length;
+    });
+
+    res.json({ success: true, count: result });
   } catch (err) {
-    await db.run("ROLLBACK").catch(() => {});
-    res.status(500).json({ error: err.message || "Errore durante il bulk update." });
+    const statusCode = err.message === "Formato non valido." ? 400 : 500;
+    res.status(statusCode).json({ error: err.message || "Errore durante il bulk update." });
   }
 });
 
 router.post("/api/hr/users/:id/cost", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    const { id } = req.params;
-    const { costo_orario, valido_dal } = req.body;
-    
-    if (costo_orario === undefined || !valido_dal) {
+    const employeeId = parseIdParam(req.params.id);
+    if (!employeeId) {
+      return res.status(400).json({ error: "ID dipendente non valido." });
+    }
+
+    const costoOrario = toNullableNumber(req.body?.costo_orario);
+    const validoDal = normalizeDate(req.body?.valido_dal);
+
+    if (!Number.isFinite(costoOrario) || costoOrario <= 0 || !validoDal) {
       return res.status(400).json({ error: "costo_orario e valido_dal sono obbligatori." });
     }
 
-    await db.run(
-      "INSERT INTO tariffe (employee_id, costo_orario, valido_dal) VALUES (?, ?, ?)",
-      [id, parseFloat(costo_orario), valido_dal]
-    );
+    await createTariffa({
+      employee_id: employeeId,
+      costo_orario: costoOrario,
+      valido_dal: validoDal,
+    });
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Errore inserimento nuova tariffa." });
   }
 });
 
-// ─── PATCH /api/admin/employees/:id — Modifica profilo dipendente ──────────────
 router.patch("/api/admin/employees/:id", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    const { id } = req.params;
-    const allowed = ["nome", "cognome", "ruolo", "telefono", "skills", "note_admin", "documenti", "attivo"];
-    const fields = {};
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) fields[key] = req.body[key];
+    const employeeId = parseIdParam(req.params.id);
+    if (!employeeId) {
+      return res.status(400).json({ error: "ID dipendente non valido." });
     }
+
+    const fields = {};
+    const textFields = ["nome", "cognome", "ruolo", "telefono", "skills", "note_admin", "documenti"];
+    for (const key of textFields) {
+      if (req.body[key] !== undefined) {
+        fields[key] = normalizeOptionalText(req.body[key]);
+      }
+    }
+
+    if (req.body.attivo !== undefined) {
+      const attivo = Number(req.body.attivo);
+      if (!Number.isFinite(attivo)) {
+        return res.status(400).json({ error: "Valore attivo non valido." });
+      }
+      fields.attivo = attivo;
+    }
+
     if (Object.keys(fields).length === 0) {
       return res.status(400).json({ error: "Nessun campo da aggiornare." });
     }
-    const set = Object.keys(fields).map(k => `${k} = ?`).join(", ");
-    const values = Object.values(fields);
-    await db.run(`UPDATE employees SET ${set} WHERE id = ?`, [...values, id]);
+
+    await updateEmployee(employeeId, fields);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Errore aggiornamento dipendente." });
   }
 });
 
-// ─── PATCH /api/hr/reports/:id — Modifica record ore con audit trail admin ────
 router.patch("/api/hr/reports/:id", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    const { id } = req.params;
-    const allowed = ["ore_lavorate", "report_date", "cantiere_id", "attivita_svolte", "luogo_cantiere", "admin_note", "status"];
-    const fields = {};
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) fields[key] = req.body[key];
+    const reportId = parseIdParam(req.params.id);
+    if (!reportId) {
+      return res.status(400).json({ error: "ID report non valido." });
     }
+
+    const fields = {};
+
+    if (req.body.ore_lavorate !== undefined) {
+      const oreLavorate = toNullableNumber(req.body.ore_lavorate);
+      if (oreLavorate == null || oreLavorate < 0) {
+        return res.status(400).json({ error: "ore_lavorate non valido." });
+      }
+      fields.ore_lavorate = oreLavorate;
+    }
+
+    if (req.body.report_date !== undefined) {
+      const reportDate = normalizeDate(req.body.report_date);
+      if (!reportDate) {
+        return res.status(400).json({ error: "report_date non valido." });
+      }
+      fields.report_date = reportDate;
+    }
+
+    if (req.body.cantiere_id !== undefined) {
+      if (req.body.cantiere_id === "" || req.body.cantiere_id === null) {
+        fields.cantiere_id = null;
+      } else {
+        const cantiereId = parseIdParam(req.body.cantiere_id);
+        if (!cantiereId) {
+          return res.status(400).json({ error: "cantiere_id non valido." });
+        }
+        fields.cantiere_id = cantiereId;
+      }
+    }
+
+    if (req.body.attivita_svolte !== undefined) fields.attivita_svolte = normalizeOptionalText(req.body.attivita_svolte);
+    if (req.body.luogo_cantiere !== undefined) fields.luogo_cantiere = normalizeOptionalText(req.body.luogo_cantiere);
+    if (req.body.admin_note !== undefined) fields.admin_note = normalizeOptionalText(req.body.admin_note);
+
+    if (req.body.status !== undefined) {
+      const statusValue = normalizeOptionalText(req.body.status);
+      fields.status = statusValue ? normalizeStatus(statusValue, statusValue) : null;
+      fields.stato_validazione = statusValue ? mapAuditStatusToDb(statusValue) : null;
+    }
+
     if (Object.keys(fields).length === 0) {
       return res.status(400).json({ error: "Nessun campo da aggiornare." });
     }
+
     fields.modified_by_admin_at = new Date().toISOString();
-    const set = Object.keys(fields).map(k => `${k} = ?`).join(", ");
-    const values = Object.values(fields);
-    await db.run(`UPDATE reports SET ${set} WHERE id = ?`, [...values, id]);
+    await updateReportHeader(reportId, fields);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Errore aggiornamento report." });
   }
 });
 
-// ─── PATCH /api/hr/spese/:id — Modifica record spesa con audit trail admin ────
 router.patch("/api/hr/spese/:id", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    const { id } = req.params;
-    const allowed = ["importo", "fornitore", "descrizione", "cantiere_id", "admin_note", "status"];
-    const fields = {};
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) fields[key] = req.body[key];
+    const spesaId = parseIdParam(req.params.id);
+    if (!spesaId) {
+      return res.status(400).json({ error: "ID spesa non valido." });
     }
+
+    const fields = {};
+
+    if (req.body.importo !== undefined) {
+      const importo = toNullableNumber(req.body.importo);
+      if (!Number.isFinite(importo) || importo <= 0) {
+        return res.status(400).json({ error: "Importo non valido." });
+      }
+      fields.importo = importo;
+    }
+
+    if (req.body.cantiere_id !== undefined) {
+      const cantiereId = parseIdParam(req.body.cantiere_id);
+      if (!cantiereId) {
+        return res.status(400).json({ error: "cantiere_id non valido." });
+      }
+      fields.cantiere_id = cantiereId;
+    }
+
+    if (req.body.fornitore !== undefined) fields.fornitore = normalizeOptionalText(req.body.fornitore);
+    if (req.body.descrizione !== undefined) fields.descrizione = normalizeOptionalText(req.body.descrizione);
+    if (req.body.admin_note !== undefined) fields.admin_note = normalizeOptionalText(req.body.admin_note);
+
+    if (req.body.status !== undefined) {
+      const statusValue = normalizeOptionalText(req.body.status);
+      fields.status = statusValue ? normalizeStatus(statusValue, statusValue) : null;
+      fields.stato_validazione = statusValue ? mapAuditStatusToDb(statusValue) : null;
+    }
+
     if (Object.keys(fields).length === 0) {
       return res.status(400).json({ error: "Nessun campo da aggiornare." });
     }
+
     fields.modified_by_admin_at = new Date().toISOString();
-    const set = Object.keys(fields).map(k => `${k} = ?`).join(", ");
-    const values = Object.values(fields);
-    await db.run(`UPDATE spese SET ${set} WHERE id = ?`, [...values, id]);
+    await updateSpesa(spesaId, fields);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Errore aggiornamento spesa." });
   }
 });
 
-// ─── PATCH /api/admin/cantieri/:id — Modifica completa cantiere ───────────────
 router.patch("/api/admin/cantieri/:id", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    const { id } = req.params;
-    const allowed = ["nome", "indirizzo", "lat", "lng", "budget", "raggio_tolleranza", "attivo"];
-    const fields = {};
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) {
-        fields[key] = ["lat","lng","budget","raggio_tolleranza"].includes(key)
-          ? (req.body[key] !== null && req.body[key] !== "" ? parseFloat(req.body[key]) : null)
-          : req.body[key];
-      }
+    const cantiereId = parseIdParam(req.params.id);
+    if (!cantiereId) {
+      return res.status(400).json({ error: "ID cantiere non valido." });
     }
+
+    const fields = {};
+
+    if (req.body.nome !== undefined) {
+      const nome = normalizeOptionalText(req.body.nome);
+      if (!nome) {
+        return res.status(400).json({ error: "Nome cantiere obbligatorio." });
+      }
+      fields.nome = nome;
+    }
+
+    if (req.body.indirizzo !== undefined) fields.indirizzo = normalizeOptionalText(req.body.indirizzo);
+    if (req.body.lat !== undefined) fields.lat = toNullableNumber(req.body.lat);
+    if (req.body.lng !== undefined) fields.lng = toNullableNumber(req.body.lng);
+    if (req.body.budget !== undefined) fields.budget = toNullableNumber(req.body.budget);
+
+    if (req.body.raggio_tolleranza !== undefined) {
+      const raggio = toNullableNumber(req.body.raggio_tolleranza);
+      if (!Number.isFinite(raggio) || raggio < 0) {
+        return res.status(400).json({ error: "raggio_tolleranza non valido." });
+      }
+      fields.raggio_tolleranza = raggio;
+    }
+
+    if (req.body.attivo !== undefined) {
+      const attivo = Number(req.body.attivo);
+      if (!Number.isFinite(attivo)) {
+        return res.status(400).json({ error: "Valore attivo non valido." });
+      }
+      fields.attivo = attivo;
+    }
+
     if (Object.keys(fields).length === 0) {
       return res.status(400).json({ error: "Nessun campo da aggiornare." });
     }
-    const set = Object.keys(fields).map(k => `${k} = ?`).join(", ");
-    const values = Object.values(fields);
-    await db.run(`UPDATE cantieri SET ${set} WHERE id = ?`, [...values, id]);
+
+    await updateCantiere(cantiereId, fields);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Errore aggiornamento cantiere." });
   }
 });
 
-// ─── GET /api/cantieri/:id/financial-timeline — Costo cumulativo per grafico ──
 router.get("/api/cantieri/:id/financial-timeline", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    const { id } = req.params;
+    const cantiereId = parseIdParam(req.params.id);
+    if (!cantiereId) {
+      return res.status(400).json({ error: "ID cantiere non valido." });
+    }
 
-    // Recupera budget cantiere
-    const cantiere = await db.get("SELECT nome, budget, raggio_tolleranza FROM cantieri WHERE id = ?", [id]);
-    if (!cantiere) return res.status(404).json({ error: "Cantiere non trovato." });
+    const dataset = await loadCantiereCostDataset(getDb(), cantiereId);
+    if (!dataset) {
+      return res.status(404).json({ error: "Cantiere non trovato." });
+    }
 
-    // Manodopera: solo righe VERIFIED (coerente con job costing / cantieri status).
-    const manodopera = await db.all(`
-      WITH UltimaTariffa AS (
-        SELECT employee_id, costo_orario
-        FROM (
-          SELECT employee_id, costo_orario,
-                 ROW_NUMBER() OVER(PARTITION BY employee_id ORDER BY valido_dal DESC) as rn
-          FROM tariffe
-        ) WHERE rn = 1
-      )
-      SELECT 
-        strftime('%Y-%m', r.report_date) as month,
-        SUM(IFNULL(re.ore_lavorate, 0) * IFNULL(t.costo_orario, 0)) as costo
-      FROM report_entries re
-      JOIN reports r ON r.id = re.report_id
-      LEFT JOIN UltimaTariffa t ON r.employee_id = t.employee_id
-      WHERE re.cantiere_id = ? AND LOWER(COALESCE(re.stato_validazione, '')) = 'verified'
-      GROUP BY month
-      ORDER BY month ASC
-    `, [id]);
-
-    const materiali = await db.all(`
-      SELECT 
-        strftime('%Y-%m', timestamp_utc) as month,
-        SUM(importo) as costo
-      FROM spese
-      WHERE cantiere_id = ? AND LOWER(COALESCE(stato_validazione, status, 'pending')) != 'rejected'
-      GROUP BY month
-      ORDER BY month ASC
-    `, [id]);
-
-    // Merge mesi unici e somma
     const byMonth = {};
-    for (const r of manodopera) {
-      byMonth[r.month] = (byMonth[r.month] || 0) + (r.costo || 0);
-    }
-    for (const r of materiali) {
-      byMonth[r.month] = (byMonth[r.month] || 0) + (r.costo || 0);
+
+    for (const entry of dataset.verifiedEntries) {
+      const month = getMonthKey(entry.report?.report_date);
+      if (!month) continue;
+      byMonth[month] = round2((byMonth[month] || 0) + getEntryCost(entry));
     }
 
-    // Costruisce array ordinato con cumulativo
-    const sortedMonths = Object.keys(byMonth).sort();
+    for (const spesa of dataset.activeSpese) {
+      const month = getMonthKey(spesa.timestamp_utc);
+      if (!month) continue;
+      byMonth[month] = round2((byMonth[month] || 0) + toNumber(spesa.importo));
+    }
+
+    const months = Object.keys(byMonth).sort();
     let cumulative = 0;
-    const costoReale = sortedMonths.map(m => {
-      cumulative += byMonth[m];
-      return parseFloat(cumulative.toFixed(2));
+    const costoPerMese = months.map((month) => round2(byMonth[month] || 0));
+    const costoReale = costoPerMese.map((value) => {
+      cumulative = round2(cumulative + value);
+      return cumulative;
     });
 
     res.json({
-      nome: cantiere.nome,
-      budget: cantiere.budget || 0,
-      raggio_tolleranza: cantiere.raggio_tolleranza || 300,
-      months: sortedMonths,
+      nome: dataset.cantiere.nome,
+      budget: toNumber(dataset.cantiere.budget),
+      raggio_tolleranza: dataset.cantiere.raggio_tolleranza || 300,
+      months,
       costoReale,
-      costoPerMese: sortedMonths.map(m => parseFloat((byMonth[m] || 0).toFixed(2)))
+      costoPerMese,
     });
   } catch (err) {
     res.status(500).json({ error: "Errore financial timeline: " + err.message });
   }
 });
 
-// ─── GET /api/cantieri/:id/details — KPI e operativi per scheda cantiere ──────
 router.get("/api/cantieri/:id/details", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    const { id } = req.params;
+    const cantiereId = parseIdParam(req.params.id);
+    if (!cantiereId) {
+      return res.status(400).json({ error: "ID cantiere non valido." });
+    }
 
-    const cantiere = await db.get("SELECT * FROM cantieri WHERE id = ?", [id]);
-    if (!cantiere) return res.status(404).json({ error: "Cantiere non trovato." });
+    const dataset = await loadCantiereCostDataset(getDb(), cantiereId);
+    if (!dataset) {
+      return res.status(404).json({ error: "Cantiere non trovato." });
+    }
 
-    // KPI: costo totale attuale
-    const costoManodopera = await db.get(`
-      WITH UltimaTariffa AS (
-        SELECT employee_id, costo_orario
-        FROM (
-          SELECT employee_id, costo_orario,
-                 ROW_NUMBER() OVER(PARTITION BY employee_id ORDER BY valido_dal DESC) as rn
-          FROM tariffe
-        ) WHERE rn = 1
-      )
-      SELECT SUM(IFNULL(re.ore_lavorate,0) * IFNULL(t.costo_orario,0)) as totale
-      FROM report_entries re
-      JOIN reports r ON r.id = re.report_id
-      LEFT JOIN UltimaTariffa t ON r.employee_id = t.employee_id
-      WHERE re.cantiere_id = ? AND LOWER(COALESCE(re.stato_validazione, '')) = 'verified'
-    `, [id]);
+    const costoManodopera = round2(dataset.verifiedEntries.reduce((sum, entry) => sum + getEntryCost(entry), 0));
+    const costoMateriali = round2(dataset.activeSpese.reduce((sum, spesa) => sum + toNumber(spesa.importo), 0));
+    const costoTotale = round2(costoManodopera + costoMateriali);
+    const budget = toNumber(dataset.cantiere.budget);
+    const margine = round2(budget - costoTotale);
 
-    const costoMateriali = await db.get(`
-      SELECT SUM(importo) as totale FROM spese
-      WHERE cantiere_id = ? AND LOWER(COALESCE(stato_validazione, status, 'pending')) != 'rejected'
-    `, [id]);
+    const perDipendenteMap = new Map();
+    for (const entry of dataset.verifiedEntries) {
+      const employeeId = entry.report?.employee_id;
+      if (!employeeId) continue;
 
-    const perDipendente = await db.all(`
-      WITH UltimaTariffa AS (
-        SELECT employee_id, costo_orario
-        FROM (
-          SELECT employee_id, costo_orario,
-                 ROW_NUMBER() OVER(PARTITION BY employee_id ORDER BY valido_dal DESC) as rn
-          FROM tariffe
-        ) WHERE rn = 1
-      )
-      SELECT 
-        e.nome, e.cognome,
-        SUM(re.ore_lavorate) as ore_tot,
-        SUM(IFNULL(re.ore_lavorate,0) * IFNULL(t.costo_orario,0)) as costo_calcolato,
-        MAX(r.report_date) as ultimo_accesso
-      FROM report_entries re
-      JOIN reports r ON r.id = re.report_id
-      LEFT JOIN employees e ON r.employee_id = e.id
-      LEFT JOIN UltimaTariffa t ON r.employee_id = t.employee_id
-      WHERE re.cantiere_id = ? AND LOWER(COALESCE(re.stato_validazione, '')) = 'verified'
-      GROUP BY r.employee_id
-      ORDER BY ore_tot DESC
-    `, [id]);
+      const current = perDipendenteMap.get(employeeId) || {
+        nome: entry.report?.employee?.nome || null,
+        cognome: entry.report?.employee?.cognome || null,
+        ore_tot: 0,
+        costo_calcolato: 0,
+        ultimo_accesso: null,
+      };
 
-    const cM = parseFloat((costoManodopera?.totale || 0).toFixed(2));
-    const cMat = parseFloat((costoMateriali?.totale || 0).toFixed(2));
-    const costoTotale = parseFloat((cM + cMat).toFixed(2));
-    const budget = cantiere.budget || 0;
-    const margine = parseFloat((budget - costoTotale).toFixed(2));
+      current.ore_tot += toNumber(entry.ore_lavorate);
+      current.costo_calcolato += getEntryCost(entry);
 
-    // Burn rate: costo totale / numero mesi distinti con attività
-    const mesiAttivi = await db.get(`
-      SELECT COUNT(DISTINCT strftime('%Y-%m', r.report_date)) as cnt
-      FROM report_entries re
-      JOIN reports r ON r.id = re.report_id
-      WHERE re.cantiere_id = ? AND LOWER(COALESCE(re.stato_validazione, '')) = 'verified'
-    `, [id]);
-    const nMesi = mesiAttivi?.cnt || 1;
-    const burnRate = parseFloat((costoTotale / nMesi).toFixed(2));
+      const reportDate = formatDateOnly(entry.report?.report_date);
+      if (reportDate && (!current.ultimo_accesso || reportDate > current.ultimo_accesso)) {
+        current.ultimo_accesso = reportDate;
+      }
+
+      perDipendenteMap.set(employeeId, current);
+    }
+
+    const perDipendente = Array.from(perDipendenteMap.values())
+      .map((row) => ({
+        ...row,
+        ore_tot: round2(row.ore_tot),
+        costo_calcolato: round2(row.costo_calcolato),
+      }))
+      .sort((a, b) => b.ore_tot - a.ore_tot);
+
+    const mesiAttiviSet = new Set(
+      dataset.verifiedEntries
+        .map((entry) => getMonthKey(entry.report?.report_date))
+        .filter(Boolean)
+    );
+    const nMesi = Math.max(mesiAttiviSet.size, 1);
+    const burnRate = round2(costoTotale / nMesi);
+
+    const { report_entries: _entries, spese: _spese, ...cantiere } = dataset.cantiere;
 
     res.json({
-      cantiere,
-      kpi: { budget, costoTotale, costoManodopera: cM, costoMateriali: cMat, margine, burnRate, nMesi },
-      perDipendente
+      cantiere: {
+        ...cantiere,
+        budget,
+      },
+      kpi: {
+        budget,
+        costoTotale,
+        costoManodopera,
+        costoMateriali,
+        margine,
+        burnRate,
+        nMesi,
+      },
+      perDipendente,
     });
   } catch (err) {
     res.status(500).json({ error: "Errore details cantiere: " + err.message });
   }
 });
 
-// ─── POST /api/admin/employees/parse-cv — AI CV Text Parsing ──────────────────
 router.post("/api/admin/employees/parse-cv", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
     const body = req.body || {};
     const text = body.text;
-    console.log("[parse-cv] Content-Type:", req.headers["content-type"], "| body keys:", Object.keys(body), "| text length:", text?.length || 0);
+    logger.info({ event: "parse_cv_request", contentType: req.headers["content-type"], bodyKeys: Object.keys(body), textLen: text?.length || 0 }, "parse_cv_request");
     if (!text || typeof text !== "string" || text.trim().length < 20) {
       return res.status(400).json({ 
         error: "Testo CV troppo corto o mancante (minimo 20 caratteri).",
@@ -850,129 +1302,119 @@ router.post("/api/admin/employees/parse-cv", verifyTokenAndRole(DASHBOARD_ROLES)
   }
 });
 
-// ─── GET /api/dashboard/radar — KPI aggregati per Radar Aziendale ─────────────
+// â”€â”€â”€ GET /api/dashboard/radar â€” KPI aggregati per Radar Aziendale â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get("/api/dashboard/radar", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-
-    // Cantieri attivi con semaforo
-    const cantieriRaw = await db.all(`
-      WITH UltimaTariffa AS (
-        SELECT employee_id, costo_orario
-        FROM (SELECT employee_id, costo_orario, ROW_NUMBER() OVER(PARTITION BY employee_id ORDER BY valido_dal DESC) as rn FROM tariffe) WHERE rn = 1
-      ),
-      CostoManodopera AS (
-        SELECT re.cantiere_id, SUM(IFNULL(re.ore_lavorate,0)*IFNULL(t.costo_orario,0)) as costo
-        FROM report_entries re
-        JOIN reports r ON r.id = re.report_id
-        LEFT JOIN UltimaTariffa t ON r.employee_id = t.employee_id
-        WHERE re.cantiere_id IS NOT NULL AND LOWER(COALESCE(re.stato_validazione,'')) = 'verified'
-        GROUP BY re.cantiere_id
-      ),
-      CostoMateriali AS (
-        SELECT cantiere_id, SUM(importo) as costo FROM spese
-        WHERE LOWER(COALESCE(stato_validazione, status, 'pending')) != 'rejected'
-        GROUP BY cantiere_id
-      )
-      SELECT c.id, c.nome, IFNULL(c.budget,0) as budget,
-        (IFNULL(m.costo,0)+IFNULL(mat.costo,0)) as costo_totale
-      FROM cantieri c
-      LEFT JOIN CostoManodopera m ON c.id=m.cantiere_id
-      LEFT JOIN CostoMateriali mat ON c.id=mat.cantiere_id
-      WHERE c.attivo=1
-    `);
-    const cantieri = cantieriRaw.map(c => {
-      const pct = c.budget > 0 ? c.costo_totale / c.budget : null;
-      let status = 'gray';
-      if (pct !== null) { if (pct < 0.75) status = 'green'; else if (pct <= 0.90) status = 'amber'; else status = 'red'; }
-      return { id: c.id, nome: c.nome, budget: c.budget, costo: c.costo_totale, pct, status };
-    });
-
-    // Pending approvazioni
-    const pendingR = await db.get(`
-      SELECT COUNT(*) as c FROM report_entries WHERE LOWER(COALESCE(TRIM(stato_validazione), '')) = 'pending'
-    `);
-    const pendingS = await db.get(`
-      SELECT COUNT(*) as c FROM spese WHERE LOWER(COALESCE(TRIM(stato_validazione), TRIM(status), 'pending')) = 'pending'
-    `);
-
-    // Ore questa settimana vs scorsa
+    const prisma = getDb();
     const today = new Date();
-    const dayOfWeek = today.getDay() || 7; // 1=Mon...7=Sun
+    const dayOfWeek = today.getDay() || 7;
     const monday = new Date(today);
     monday.setDate(today.getDate() - dayOfWeek + 1);
-    const mondayStr = monday.toISOString().slice(0, 10);
+
     const lastMonday = new Date(monday);
     lastMonday.setDate(monday.getDate() - 7);
-    const lastMondayStr = lastMonday.toISOString().slice(0, 10);
-    const lastSundayStr = new Date(monday.getTime() - 86400000).toISOString().slice(0, 10);
 
-    const thisWeek = await db.get(`
-      SELECT IFNULL(SUM(re.ore_lavorate),0) as h
-      FROM report_entries re JOIN reports r ON r.id = re.report_id
-      WHERE r.report_date >= ? AND LOWER(COALESCE(re.stato_validazione,'')) != 'rejected'
-    `, [mondayStr]);
-    const lastWeek = await db.get(`
-      SELECT IFNULL(SUM(re.ore_lavorate),0) as h
-      FROM report_entries re JOIN reports r ON r.id = re.report_id
-      WHERE r.report_date >= ? AND r.report_date <= ? AND LOWER(COALESCE(re.stato_validazione,'')) != 'rejected'
-    `, [lastMondayStr, lastSundayStr]);
+    const lastSunday = new Date(monday);
+    lastSunday.setDate(monday.getDate() - 1);
 
-    const sevenDaysAgo = new Date(today.getTime() - 7 * 86400000).toISOString().slice(0, 10);
-    const activeWorkers = await db.get(`
-      SELECT COUNT(DISTINCT r.employee_id) as c
-      FROM report_entries re JOIN reports r ON r.id = re.report_id
-      WHERE r.report_date >= ? AND LOWER(COALESCE(re.stato_validazione,'')) != 'rejected'
-    `, [sevenDaysAgo]);
+    const sevenDaysAgo = new Date(today);
+    sevenDaysAgo.setDate(today.getDate() - 7);
+
+    const mondayStr = formatDateOnly(monday);
+    const lastMondayStr = formatDateOnly(lastMonday);
+    const lastSundayStr = formatDateOnly(lastSunday);
+    const sevenDaysAgoStr = formatDateOnly(sevenDaysAgo);
+
+    const [cantieriRaw, pending, weekEntries, activeEntries] = await Promise.all([
+      getCantieriStatus(),
+      getPendingSummary(prisma),
+      prisma.reportEntry.findMany({
+        where: {
+          NOT: { stato_validazione: { in: ["rejected", "REJECTED"] } },
+          report: {
+            is: {
+              report_date: { gte: parseDateOnly(lastMondayStr) },
+            },
+          },
+        },
+        select: {
+          ore_lavorate: true,
+          report: { select: { report_date: true, employee_id: true } },
+        },
+      }),
+      prisma.reportEntry.findMany({
+        where: {
+          NOT: { stato_validazione: { in: ["rejected", "REJECTED"] } },
+          report: {
+            is: {
+              report_date: { gte: parseDateOnly(sevenDaysAgoStr) },
+            },
+          },
+        },
+        select: {
+          report: { select: { employee_id: true } },
+        },
+      }),
+    ]);
+
+    const cantieri = cantieriRaw.map((cantiere) => {
+      const pct = cantiere.budget > 0 ? cantiere.costo_totale / cantiere.budget : null;
+      let status = "gray";
+      if (pct !== null) {
+        if (pct < 0.75) status = "green";
+        else if (pct <= 0.9) status = "amber";
+        else status = "red";
+      }
+      return {
+        id: cantiere.id,
+        nome: cantiere.nome,
+        budget: cantiere.budget,
+        costo: round2(cantiere.costo_totale),
+        pct,
+        status,
+      };
+    });
+
+    let currentWeekHours = 0;
+    let lastWeekHours = 0;
+    for (const entry of weekEntries) {
+      const reportDate = formatDateOnly(entry.report?.report_date);
+      if (!reportDate) continue;
+
+      const hours = toNumber(entry.ore_lavorate);
+      if (reportDate >= mondayStr) {
+        currentWeekHours += hours;
+      } else if (reportDate >= lastMondayStr && reportDate <= lastSundayStr) {
+        lastWeekHours += hours;
+      }
+    }
+
+    const activeWorkers = new Set(
+      activeEntries
+        .map((entry) => entry.report?.employee_id)
+        .filter(Boolean)
+    );
 
     res.json({
       cantieri,
-      pending: { reports: pendingR?.c || 0, spese: pendingS?.c || 0 },
-      oreSettimana: { corrente: thisWeek?.h || 0, scorsa: lastWeek?.h || 0 },
-      operaiAttivi: activeWorkers?.c || 0
+      pending: { reports: pending.reports, spese: pending.spese },
+      oreSettimana: {
+        corrente: round2(currentWeekHours),
+        scorsa: round2(lastWeekHours),
+      },
+      operaiAttivi: activeWorkers.size,
     });
   } catch (err) {
     res.status(500).json({ error: "Errore radar: " + err.message });
   }
 });
 
-// ─── GET /api/cantieri/status — Costo totale per ogni cantiere ───────────────
 router.get("/api/cantieri/status", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    // Manodopera: ore da report_entries VERIFIED × tariffa (allineato a getCantieriStatus in db).
-    const rows = await db.all(`
-      WITH UltimaTariffa AS (
-        SELECT employee_id, costo_orario
-        FROM (
-          SELECT employee_id, costo_orario,
-                 ROW_NUMBER() OVER(PARTITION BY employee_id ORDER BY valido_dal DESC) as rn
-          FROM tariffe
-        ) WHERE rn = 1
-      ),
-      CostoManodopera AS (
-        SELECT re.cantiere_id, SUM(IFNULL(re.ore_lavorate, 0) * IFNULL(t.costo_orario, 0)) as costo_manodopera
-        FROM report_entries re
-        JOIN reports r ON r.id = re.report_id
-        LEFT JOIN UltimaTariffa t ON r.employee_id = t.employee_id
-        WHERE re.cantiere_id IS NOT NULL AND LOWER(COALESCE(re.stato_validazione, '')) = 'verified'
-        GROUP BY re.cantiere_id
-      ),
-      CostoMateriali AS (
-        SELECT s.cantiere_id, SUM(IFNULL(s.importo, 0)) as costo_materiali
-        FROM spese s
-        WHERE LOWER(COALESCE(s.stato_validazione, s.status, 'pending')) != 'rejected'
-        GROUP BY s.cantiere_id
-      )
-      SELECT c.id, (IFNULL(m.costo_manodopera,0) + IFNULL(mat.costo_materiali, 0)) as costo_totale
-      FROM cantieri c
-      LEFT JOIN CostoManodopera m ON c.id = m.cantiere_id
-      LEFT JOIN CostoMateriali mat ON c.id = mat.cantiere_id
-    `);
-
+    const rows = await getCantieriStatus({ activeOnly: false });
     const map = {};
-    rows.forEach((r) => {
-      map[r.id] = { costo_totale: r.costo_totale };
+    rows.forEach((row) => {
+      map[row.id] = { costo_totale: round2(row.costo_totale) };
     });
     res.json(map);
   } catch (err) {
@@ -980,7 +1422,6 @@ router.get("/api/cantieri/status", verifyTokenAndRole(DASHBOARD_ROLES), async (r
   }
 });
 
-// ─── PATCH /api/hr/report-entries/:id — Modifica riga rendiconto (testata/righe) ─
 router.patch("/api/hr/report-entries/:id", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -1003,66 +1444,21 @@ router.patch("/api/hr/report-entries/:id", verifyTokenAndRole(DASHBOARD_ROLES), 
   }
 });
 
-// ─── PATCH /api/hr/reports/:id — Modifica amministrativa report ───────────
-router.patch("/api/hr/reports/:id", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { ore_lavorate, report_date, cantiere_id, note, admin_note } = req.body;
-    const db = getDb();
-    await db.run(`
-      UPDATE reports SET 
-        ore_lavorate = COALESCE(?, ore_lavorate),
-        report_date = COALESCE(?, report_date),
-        cantiere_id = COALESCE(?, cantiere_id),
-        note = COALESCE(?, note),
-        admin_note = ?,
-        modified_by_admin_at = CURRENT_TIMESTAMP
-      WHERE id = ?`, 
-      [ore_lavorate, report_date, cantiere_id, note, admin_note, id]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "Errore modifica report: " + err.message });
-  }
-});
-
-// ─── PATCH /api/hr/spese/:id — Modifica amministrativa spesa ────────────
-router.patch("/api/hr/spese/:id", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { importo, fornitore, cantiere_id, descrizione, admin_note } = req.body;
-    const db = getDb();
-    await db.run(`
-      UPDATE spese SET 
-        importo = COALESCE(?, importo),
-        fornitore = COALESCE(?, fornitore),
-        cantiere_id = COALESCE(?, cantiere_id),
-        descrizione = COALESCE(?, descrizione),
-        admin_note = ?,
-        modified_by_admin_at = CURRENT_TIMESTAMP
-      WHERE id = ?`, 
-      [importo, fornitore, cantiere_id, descrizione, admin_note, id]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "Errore modifica spesa: " + err.message });
-  }
-});
-
-// ─── GET /api/admin/pending-summary — Conteggio approvazioni pendenti ────────
+// â”€â”€â”€ GET /api/admin/pending-summary â€” Conteggio approvazioni pendenti â”€â”€â”€â”€â”€â”€â”€â”€
 router.get("/api/admin/pending-summary", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
-    const db = getDb();
-    const reports = await db.get(`
-      SELECT COUNT(*) as c FROM report_entries WHERE LOWER(COALESCE(TRIM(stato_validazione), '')) = 'pending'
-    `);
-    const spese = await db.get(`
-      SELECT COUNT(*) as c FROM spese WHERE LOWER(COALESCE(TRIM(stato_validazione), TRIM(status), 'pending')) = 'pending'
-    `);
-    res.json({ reports: reports?.c || 0, spese: spese?.c || 0 });
+    const pending = await getPendingSummary(getDb());
+    res.json(pending);
   } catch (err) {
     res.status(500).json({ error: "Errore pending summary: " + err.message });
   }
 });
 
 export default router;
+
+
+
+
+
+
+

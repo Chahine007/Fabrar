@@ -1,4 +1,4 @@
-# Rendicontazione Telegram Bot (SQLite, single-file)
+﻿# Rendicontazione Telegram Bot (PostgreSQL + Prisma)
 
 ## Avvio rapido
 
@@ -34,7 +34,7 @@ Invoke-WebRequest -Method POST -Uri http://localhost:3000/set-webhook
 
 6. Verifica
 https://gestionale.myfabdar.com/health
-→ `{"ok":true,"time":"..."}`
+â†’ `{"ok":true,"time":"..."}`
 
 7. Accesso dashboard
 https://gestionale.myfabdar.com
@@ -59,7 +59,7 @@ docker compose down
 
 Il webhook punta a `BASE_URL/telegram/webhook`.
 
-L'infrastruttura usa Cloudflare Tunnel per esporre in modo sicuro il bot su rete pubblica senza Nginx o reverse proxy complessi. HTTPS è gestito trasparentemente. Telegram invierà le notifiche degli eventi a questo endpoint. Configuralo inviando una `POST` a `/set-webhook` (vedi Avvio rapido).
+L'infrastruttura usa Cloudflare Tunnel per esporre in modo sicuro il bot su rete pubblica senza Nginx o reverse proxy complessi. HTTPS Ã¨ gestito trasparentemente. Telegram invierÃ  le notifiche degli eventi a questo endpoint. Configuralo inviando una `POST` a `/set-webhook` (vedi Avvio rapido).
 
 ## Autenticazione dashboard
 
@@ -77,10 +77,10 @@ Richiede JWT Bearer token se attiva tramite dashboard.
 
 ## Persistenza dati e Backup
 
-Il database SQLite viene salvato in `./data/app.db`.
+Il database applicativo risiede in PostgreSQL.
 
-I backup automatici notturni (alle 03:00) sono generati nella stessa cartella e mantenuti per `BACKUP_RETENTION_DAYS` (default 7).
-Configurando `ONEDRIVE_BACKUP_PATH` in `.env`, una copia dei file di backup sarà esportata automaticamente sul percorso OneDrive (o qualsiasi directory Windows indicata) all'avvio o creazione.
+I backup automatici notturni (alle 03:00) sono generati in `./backups` come dump PostgreSQL e mantenuti per `BACKUP_RETENTION_DAYS` (default 7).
+Configurando `ONEDRIVE_BACKUP_PATH` in `.env`, una copia dei dump di backup sara esportata automaticamente sul percorso OneDrive (o qualsiasi directory Windows indicata).
 
 ## Arresto
 ```bash
@@ -92,3 +92,4 @@ docker compose down
 - Il bot accetta messaggi testuali e vocali.
 - Per i vocali, Telegram limita il download a 20 MB.
 - La conferma del report avviene rispondendo coi pulsanti o `/edit`.
+

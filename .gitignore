@@ -1,13 +1,17 @@
-# 🔐 Env (segreti)
+﻿# ðŸ” Env (segreti)
 .env
 
-# 📦 Dependencies
+# ðŸ“¦ Dependencies
 node_modules/
 
-# 🗄 Database SQLite
+# Database artifacts
 *.db
 *.db-shm
 *.db-wal
+backups/
 
-# 📁 Cartella data (se contiene DB)
+# Local data directories
 data/
+
+/src/generated/prisma
+

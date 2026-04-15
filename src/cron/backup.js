@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
+import { spawn } from "child_process";
 import logger from "../logger.js";
-import { getDb } from "../db/index.js";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -13,27 +13,80 @@ function formatDate(date) {
 }
 
 function parseBackupDate(name) {
-  const match = /^app_backup_(\d{4}-\d{2}-\d{2})\.db$/.exec(name);
+  const match = /^app_backup_(\d{4}-\d{2}-\d{2})\.dump$/.exec(name);
   if (!match) return null;
   const [y, m, d] = match[1].split("-").map(Number);
   if (!y || !m || !d) return null;
   return new Date(y, m - 1, d);
 }
 
+function getBackupDir() {
+  return path.resolve(process.env.DB_BACKUP_DIR || path.join(process.cwd(), "backups"));
+}
+
+function getPgDumpTarget() {
+  const rawUrl = process.env.PRISMA_DB_URL;
+  if (!rawUrl) {
+    throw new Error("PRISMA_DB_URL non configurata.");
+  }
+
+  const parsed = new URL(rawUrl);
+  const schema = parsed.searchParams.get("schema");
+  parsed.searchParams.delete("schema");
+
+  return {
+    connectionString: parsed.toString(),
+    schema,
+  };
+}
+
+async function runPgDump(backupPath) {
+  const { connectionString, schema } = getPgDumpTarget();
+  const args = [
+    "--format=custom",
+    "--file",
+    backupPath,
+    "--no-owner",
+    "--no-privileges",
+    `--dbname=${connectionString}`,
+  ];
+
+  if (schema) {
+    args.push("--schema", schema);
+  }
+
+  await new Promise((resolve, reject) => {
+    const child = spawn("pg_dump", args, {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: process.env,
+    });
+
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(stderr.trim() || `pg_dump terminato con codice ${code}`));
+    });
+  });
+}
+
 export async function runDbBackup() {
-  const dbPath = process.env.DB_PATH || "/app/data/app.db";
-  const dir = path.dirname(dbPath);
+  const dir = getBackupDir();
   await fs.mkdir(dir, { recursive: true });
 
   const today = new Date();
   const stamp = formatDate(today);
-  const backupName = `app_backup_${stamp}.db`;
+  const backupName = `app_backup_${stamp}.dump`;
   const backupPath = path.join(dir, backupName);
 
-  // VACUUM INTO garantisce una copia integra e consistente con WAL attivo,
-  // a differenza di fs.copyFile che può catturare uno stato intermedio.
-  // Richiede che il file di destinazione NON esista già (nomi giornalieri garantiscono questo).
-  await getDb().run("VACUUM INTO ?", [backupPath]);
+  await runPgDump(backupPath);
   logger.info({ event: "db_backup_ok", backupPath }, "db_backup_ok");
 
   if (process.env.ONEDRIVE_BACKUP_PATH) {

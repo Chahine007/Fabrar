@@ -9,10 +9,10 @@
  *   SEED_TELEGRAM_ID=123456 SEED_USERNAME=admin SEED_PASSWORD=secret npm run seed:admin
  *
  * Variabili d'ambiente:
- *   SEED_TELEGRAM_ID  — Telegram ID numerico del dipendente (obbligatorio)
- *   SEED_USERNAME     — Username login dashboard (obbligatorio)
- *   SEED_PASSWORD     — Password in chiaro (obbligatorio; solo in env per ambienti controllati)
- *   DB_PATH           — Opzionale; stesso significato del server (default ./data/app.db)
+ *   SEED_TELEGRAM_ID  â€” Telegram ID numerico del dipendente (obbligatorio)
+ *   SEED_USERNAME     â€” Username login dashboard (obbligatorio)
+ *   SEED_PASSWORD     â€” Password in chiaro (obbligatorio; solo in env per ambienti controllati)
+ *   PRISMA_DB_URL     - Stringa di connessione PostgreSQL usata dal server
  */
 
 import "dotenv/config";
@@ -81,7 +81,7 @@ async function main() {
 
   const existingUser = await findUserByUsername(username);
   if (existingUser) {
-    console.error(`Errore: esiste già un utente con username "${username}".`);
+    console.error(`Errore: esiste giÃ  un utente con username "${username}".`);
     process.exit(1);
   }
 
@@ -96,7 +96,7 @@ async function main() {
   const userSameEmployee = await findUserByEmployeeId(employee.id);
   if (userSameEmployee) {
     console.error(
-      `Errore: il dipendente ${employee.id} ha già un utente dashboard (id=${userSameEmployee.id}, username=${userSameEmployee.username}).`
+      `Errore: il dipendente ${employee.id} ha giÃ  un utente dashboard (id=${userSameEmployee.id}, username=${userSameEmployee.username}).`
     );
     process.exit(1);
   }
@@ -119,3 +119,4 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+

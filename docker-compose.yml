@@ -7,11 +7,10 @@ services:
     env_file:
       - .env
     environment:
-      - DB_PATH=/app/data/app.db
+      - PRISMA_DB_URL=postgresql://fabrar:fabrar_password@db:5432/fabrar_erp?schema=public
+      - DB_BACKUP_DIR=/app/backups
     volumes:
-      - ./:/app
-      - /app/node_modules
-      - sqlite_data:/app/data
+      - ./backups:/app/backups
     restart: unless-stopped
     cpus: "0.5"
     mem_limit: "512m"
@@ -27,7 +26,17 @@ services:
       timeout: 5s
       retries: 3
 
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fabrar
+      POSTGRES_PASSWORD: fabrar_password
+      POSTGRES_DB: fabrar_erp
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
 volumes:
-  sqlite_data:
-    external: true
-    name: rendicontazione_sqlite_data
+  postgres_data:

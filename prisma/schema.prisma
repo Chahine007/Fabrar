@@ -1,0 +1,193 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Employee {
+  id                  Int       @id @default(autoincrement())
+  telegram_id         BigInt?   @unique
+  chat_id             BigInt?
+  nome                String?
+  cognome             String?
+  attivo              Int       @default(1)
+  stato_registrazione String?   @default("in_attesa_nome")
+  gdpr_accettato      Int       @default(0)
+  pending_json        String?
+  pending_text        String?
+  pending_date        String?
+  pending_report_date String?
+  ruolo               String?
+  telefono            String?
+  skills              String?
+  note_admin          String?
+  documenti           String?
+
+  users               User[]
+  reports             Report[]
+  spese               Spesa[]
+  tariffe             Tariffa[]
+  message_logs        MessageLog[]
+}
+
+model User {
+  id            Int       @id @default(autoincrement())
+  employee_id   Int
+  username      String    @unique
+  password_hash String
+  role          String    // ADMIN, HR, EXTERNAL_PM, ecc.
+  is_active     Int       @default(1)
+  created_at    DateTime  @default(now())
+  last_login_at DateTime?
+
+  employee      Employee  @relation(fields: [employee_id], references: [id])
+
+  @@index([employee_id])
+  @@index([role, is_active])
+}
+
+model Cantiere {
+  id                Int       @id @default(autoincrement())
+  nome              String
+  indirizzo         String?
+  lat               Float?
+  lng               Float?
+  budget            Decimal?  @db.Decimal(10, 2)
+  attivo            Int       @default(1)
+  raggio_tolleranza Int       @default(200)
+
+  wbs_nodes         WbsNode[]
+  report_entries    ReportEntry[]
+  spese             Spesa[]
+  reports           Report[]
+}
+
+// NEW ERP TABLE: WBS Nodes
+model WbsNode {
+  id                  Int       @id @default(autoincrement())
+  parent_id           Int?
+  cantiere_id         Int
+  nome                String
+  budget_preventivato Decimal?  @default(0) @db.Decimal(10, 2)
+  is_variant          Boolean   @default(false)
+
+  cantiere            Cantiere  @relation(fields: [cantiere_id], references: [id])
+  parent              WbsNode?  @relation("WbsHierarchy", fields: [parent_id], references: [id])
+  children            WbsNode[] @relation("WbsHierarchy")
+
+  report_entries      ReportEntry[]
+  spese               Spesa[]
+}
+
+model Report {
+  id                   Int       @id @default(autoincrement())
+  data_utc             DateTime  @default(now())
+  report_date          DateTime  @db.Date
+  employee_id          Int
+  cantiere_id          Int?      
+  ore_lavorate         Float?
+  ingresso             String?
+  pausa_inizio         String?
+  pausa_fine           String?
+  uscita               String?
+  attivita_svolte      String?
+  luogo_cantiere       String?
+  problemi_riscontrati String?
+  testo_originale      String?
+  stato_validazione    String    @default("PENDING")
+  fonte                String?
+  status               String?   @default("verified")
+  input_method         String?   @default("timer")
+  admin_note           String?
+  modified_by_admin_at DateTime?
+
+  employee             Employee  @relation(fields: [employee_id], references: [id])
+  cantiere             Cantiere? @relation(fields: [cantiere_id], references: [id])
+  entries              ReportEntry[]
+
+  @@unique([employee_id, report_date])
+}
+
+model ReportEntry {
+  id                   Int       @id @default(autoincrement())
+  report_id            Int
+  cantiere_id          Int?
+  wbs_node_id          Int?      // NEW: link to WBS per il Job Costing dettagliato
+  ore_lavorate         Float?
+  ingresso             String?
+  pausa_inizio         String?
+  pausa_fine           String?
+  uscita               String?
+  attivita_svolte      String?
+  luogo_cantiere       String?
+  problemi_riscontrati String?
+  testo_originale      String?
+  stato_validazione    String    @default("PENDING")
+  fonte                String?
+  admin_note           String?
+  modified_by_admin_at DateTime?
+  created_at           DateTime  @default(now())
+
+  report               Report    @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  cantiere             Cantiere? @relation(fields: [cantiere_id], references: [id])
+  wbs_node             WbsNode?  @relation(fields: [wbs_node_id], references: [id])
+}
+
+model Spesa {
+  id                   Int       @id @default(autoincrement())
+  timestamp_utc        DateTime  @default(now())
+  employee_id          Int
+  cantiere_id          Int
+  wbs_node_id          Int?      // NEW: link to WBS per il Job Costing dettagliato
+  importo              Decimal   @db.Decimal(10, 2)
+  fornitore            String?
+  descrizione          String?
+  pricebook_id         Int?
+  quantita             Decimal?  @db.Decimal(10, 2)
+  stato_validazione    String    @default("PENDING")
+  fonte                String?   @default("TELEGRAM")
+  status               String?   @default("verified")
+  input_method         String?   @default("telegram_ocr")
+  fattura_rif          String?
+  admin_note           String?
+  modified_by_admin_at DateTime?
+
+  employee             Employee  @relation(fields: [employee_id], references: [id])
+  cantiere             Cantiere  @relation(fields: [cantiere_id], references: [id])
+  pricebook            Pricebook? @relation(fields: [pricebook_id], references: [id])
+  wbs_node             WbsNode?  @relation(fields: [wbs_node_id], references: [id])
+}
+
+model Tariffa {
+  id            Int       @id @default(autoincrement())
+  employee_id   Int?
+  costo_orario  Decimal   @db.Decimal(10, 2)
+  valido_dal    DateTime  @db.Date
+  
+  employee      Employee? @relation(fields: [employee_id], references: [id])
+}
+
+model Pricebook {
+  id             Int       @id @default(autoincrement())
+  nome           String
+  unita          String?
+  costo_unitario Decimal   @db.Decimal(10, 2)
+
+  spese          Spesa[]
+}
+
+model MessageLog {
+  id             Int       @id @default(autoincrement())
+  timestamp_utc  DateTime  @default(now())
+  employee_id    Int
+  message_type   String?
+  raw_text       String?
+  extracted_json String?
+
+  employee       Employee  @relation(fields: [employee_id], references: [id])
+}

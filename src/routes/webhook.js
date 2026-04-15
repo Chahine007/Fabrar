@@ -23,9 +23,13 @@ function isDuplicateUpdate(updateId) {
 
 router.post("/telegram/webhook", async (req, res) => {
   try {
+    const expected = process.env.TELEGRAM_SECRET;
+    if (!expected) {
+      logger.fatal("TELEGRAM_SECRET non configurato — exit");
+      process.exit(1);
+    }
     const secret = req.header("X-Telegram-Bot-Api-Secret-Token");
-    const expected = process.env.TELEGRAM_SECRET || "";
-    if (expected && secret !== expected) {
+    if (secret !== expected) {
       return res.status(401).send("unauthorized");
     }
 
@@ -66,6 +70,5 @@ async function handleSetWebhook(req, res) {
 }
 
 router.post("/set-webhook", handleSetWebhook);
-router.get("/set-webhook", handleSetWebhook);
 
 export default router;

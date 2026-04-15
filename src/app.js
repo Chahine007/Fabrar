@@ -1,6 +1,9 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import pinoHttp from "pino-http";
 import logger from "./logger.js";
 import webhookRoutes from "./routes/webhook.js";
 import apiRoutes from "./routes/api.js";
@@ -15,6 +18,24 @@ export function createApp() {
   app.set("trust proxy", 1);
   app.disable("etag");
   app.use(express.json({ limit: "2mb" }));
+  app.use(helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        // React build is fully bundled by Vite — no external CDN scripts needed
+        "script-src": ["'self'"],
+        "style-src":  ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        "font-src":   ["'self'", "https://fonts.gstatic.com", "data:"],
+        // ui-avatars.com used for JWT-based user avatars
+        "img-src":    ["'self'", "data:", "https://ui-avatars.com"],
+        "connect-src": ["'self'"],
+      },
+    },
+  }));
+
+  app.use(pinoHttp({ logger }));
+  app.use("/telegram/webhook", rateLimit({ windowMs: 60_000, max: 300 }));
+  app.use("/api/login", rateLimit({ windowMs: 60_000, max: 10 }));
 
   app.get("/health", (req, res) => {
     res.json({ ok: true, time: new Date().toISOString() });

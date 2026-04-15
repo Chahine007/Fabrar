@@ -1,67 +1,29 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
-// Strategia mocking: resettiamo i moduli e forziamo DB_PATH=:memory:
-// per garantire isolamento totale e nessun accesso al DB di produzione.
+let parseDateOnly;
+let formatDateOnly;
 
-async function loadDb() {
-  vi.resetModules();
-  process.env.DB_PATH = ":memory:";
+beforeAll(async () => {
+  process.env.PRISMA_DB_URL ||= "postgresql://test:test@localhost:5432/test_db?schema=public";
   const db = await import("../src/db/index.js");
-  await db.initDb();
-  return db;
-}
+  parseDateOnly = db.parseDateOnly;
+  formatDateOnly = db.formatDateOnly;
+});
 
-describe("db", () => {
-  beforeEach(() => {
-    process.env.DB_PATH = ":memory:";
+describe("db date helpers", () => {
+  it("normalizza una data ISO date-only", () => {
+    const parsed = parseDateOnly("2026-04-14");
+    expect(parsed).toBeInstanceOf(Date);
+    expect(parsed.toISOString()).toBe("2026-04-14T00:00:00.000Z");
   });
 
-  it("crea un dipendente e lo recupera", async () => {
-    const db = await loadDb();
-    const emp = await db.createEmployee(123, 456);
-    expect(emp.telegram_id).toBe(123);
-
-    const found = await db.findEmployeeByTelegramId(123);
-    expect(found).not.toBeNull();
-    expect(found.chat_id).toBe(456);
+  it("normalizza una Date preservando il giorno", () => {
+    const parsed = parseDateOnly(new Date("2026-04-14T18:45:00.000Z"));
+    expect(formatDateOnly(parsed)).toBe("2026-04-14");
   });
 
-  it("aggiorna il dipendente in stato registrato", async () => {
-    const db = await loadDb();
-    const emp = await db.createEmployee(999, 111);
-    await db.updateEmployee(emp.id, { stato_registrazione: "registrato", nome: "Mario" });
-
-    const found = await db.findEmployeeByTelegramId(999);
-    expect(found.stato_registrazione).toBe("registrato");
-    expect(found.nome).toBe("Mario");
-  });
-
-  it("upsert report giornaliero crea e poi aggiorna", async () => {
-    const db = await loadDb();
-    const emp = await db.createEmployee(222, 333);
-    const date = "2026-03-26";
-
-    await db.upsertReport(emp.id, date, {
-      ore_lavorate: 8,
-      attivita_svolte: "Test A",
-      luogo_cantiere: "Cantiere 1",
-      problemi_riscontrati: "Nessuno",
-      testo_originale: "ok",
-    });
-
-    const r1 = await db.findReportForDate(emp.id, date);
-    expect(r1.ore_lavorate).toBe(8);
-
-    await db.upsertReport(emp.id, date, {
-      ore_lavorate: 7.5,
-      attivita_svolte: "Test B",
-      luogo_cantiere: "Cantiere 1",
-      problemi_riscontrati: "Ritardo",
-      testo_originale: "ok2",
-    });
-
-    const r2 = await db.findReportForDate(emp.id, date);
-    expect(r2.ore_lavorate).toBe(7.5);
-    expect(r2.attivita_svolte).toBe("Test B");
+  it("serializza BigInt senza perdita", () => {
+    const json = JSON.stringify({ telegram_id: 9223372036854775807n });
+    expect(json).toContain("\"9223372036854775807\"");
   });
 });

@@ -55,10 +55,10 @@ router.get("/admin/export.csv", verifyTokenAndRole(DASHBOARD_ROLES), async (req,
       r.cognome,
       r.telegram_id,
       r.ore_lavorate,
-      r.ora_ingresso ?? "",
-      r.ora_pausa_inizio ?? "",
-      r.ora_pausa_fine ?? "",
-      r.ora_uscita ?? "",
+      r.ingresso ?? "",
+      r.pausa_inizio ?? "",
+      r.pausa_fine ?? "",
+      r.uscita ?? "",
       r.attivita_svolte,
       r.luogo_cantiere,
       r.problemi_riscontrati,
@@ -72,7 +72,7 @@ router.get("/admin/export.csv", verifyTokenAndRole(DASHBOARD_ROLES), async (req,
   res.send(lines.join("\n"));
 });
 
-router.post("/cron/reminders", async (req, res) => {
+router.post("/cron/reminders", verifyTokenAndRole(DASHBOARD_ROLES), async (req, res) => {
   try {
     await sendReminders();
     res.json({ ok: true });
