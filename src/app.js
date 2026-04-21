@@ -15,22 +15,32 @@ const __dirname = path.dirname(__filename);
 
 export function createApp() {
   const app = express();
-  app.set("trust proxy", 1);
+  // Fiducie per proxy (Cloudflare/Tunnel)
+  app.set("trust proxy", 1); 
   app.disable("etag");
   app.use(express.json({ limit: "2mb" }));
+
+  // Security headers – Configurazione CSP Manuale (per evitare conflitti con i default di Helmet)
   app.use(helmet({
     contentSecurityPolicy: {
-      useDefaults: true,
+      useDefaults: false,
       directives: {
-        // React build is fully bundled by Vite — no external CDN scripts needed
-        "script-src": ["'self'"],
-        "style-src":  ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        "font-src":   ["'self'", "https://fonts.gstatic.com", "data:"],
-        // ui-avatars.com used for JWT-based user avatars
-        "img-src":    ["'self'", "data:", "https://ui-avatars.com"],
-        "connect-src": ["'self'"],
+        "default-src": ["'self'"],
+        "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        "script-src-elem": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
+        "img-src": ["'self'", "data:", "blob:", "https://ui-avatars.com", "https://*.tile.openstreetmap.org", "https://cdnjs.cloudflare.com"],
+        "connect-src": ["'self'", "ws:", "wss:", "https://gestionale.myfabdar.com"],
+        "base-uri": ["'self'"],
+        "form-action": ["'self'"],
+        "frame-ancestors": ["'self'"],
+        "object-src": ["'none'"],
+        "upgrade-insecure-requests": [],
       },
     },
+    crossOriginOpenerPolicy: { policy: "same-origin" },
+    crossOriginResourcePolicy: { policy: "same-origin" },
   }));
 
   app.use(pinoHttp({ logger }));
@@ -71,6 +81,14 @@ export function createApp() {
       }
     }
   }));
+
+  app.get("*", (req, res) => {
+    // Se la richiesta è per un'API o un asset non trovato, non servire index.html
+    if (req.path.startsWith("/api") || req.path.includes(".")) {
+      return res.status(404).json({ error: "Not Found" });
+    }
+    res.sendFile(path.join(publicDir, "index.html"));
+  });
 
   app.use((err, req, res, next) => {
     logger.error({ err, event: "unhandled_error" }, "unhandled_error");

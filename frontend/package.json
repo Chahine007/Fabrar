@@ -10,19 +10,26 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.99.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",
+    "jwt-decode": "^4.0.0",
+    "leaflet": "^1.9.4",
     "lucide-react": "^1.8.0",
     "motion": "^12.38.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-hook-form": "^7.73.1",
+    "react-leaflet": "^5.0.0",
     "react-router-dom": "^7.14.1",
     "recharts": "^3.8.1",
+    "socket.io-client": "^4.8.3",
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@tailwindcss/vite": "^4.2.2",
+    "@types/leaflet": "^1.9.21",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",

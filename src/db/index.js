@@ -15,11 +15,11 @@ function parseEnvInt(value, fallback) {
 }
 
 // Keep API JSON safe: BigInt stays lossless, Decimal stays numeric for the frontend.
-BigInt.prototype.toJSON = function() {
+BigInt.prototype.toJSON = function () {
   return this.toString();
 };
 
-Decimal.prototype.toJSON = function() {
+Decimal.prototype.toJSON = function () {
   return Number(this.toString());
 };
 
@@ -116,12 +116,12 @@ export async function createEmployee(telegramId, chatId) {
 
 export async function updateEmployee(id, fields) {
   if (Object.keys(fields).length === 0) return;
-  
+
   // Clean fields if bigints are passed as strings
   const data = { ...fields };
-  if(data.telegram_id) data.telegram_id = BigInt(data.telegram_id);
-  if(data.chat_id) data.chat_id = BigInt(data.chat_id);
-  
+  if (data.telegram_id) data.telegram_id = BigInt(data.telegram_id);
+  if (data.chat_id) data.chat_id = BigInt(data.chat_id);
+
   await prisma.employee.update({
     where: { id },
     data
@@ -217,7 +217,7 @@ export async function listReports({ start, end } = {}) {
     orderBy: { data_utc: 'desc' },
     include: { employee: true }
   });
-  
+
   return reports.map(r => ({
     ...normalizeReportRecord(r),
     nome: r.employee?.nome,
@@ -230,11 +230,11 @@ export async function listReportsWithEntries({ start, end } = {}) {
   const reports = await prisma.report.findMany({
     where: start || end
       ? {
-          report_date: {
-            ...(start ? { gte: parseDateOnly(start) } : {}),
-            ...(end ? { lte: parseDateOnly(end) } : {})
-          }
+        report_date: {
+          ...(start ? { gte: parseDateOnly(start) } : {}),
+          ...(end ? { lte: parseDateOnly(end) } : {})
         }
+      }
       : undefined,
     orderBy: { data_utc: 'desc' },
     include: { employee: true, entries: { orderBy: { id: 'asc' } } }
@@ -270,18 +270,18 @@ export async function insertSpesa(employeeId, cantiereId, importo, fornitore, de
   if (typeof importo !== "number" || importo <= 0) {
     throw new Error("L'importo deve essere maggiore di zero.");
   }
-  
+
   let pricebook_id = extra?.pricebook_id ?? null;
   let quantita = extra?.quantita ?? null;
   let stato_validazione = extra?.stato_validazione ?? "PENDING";
-  
+
   if (pricebook_id != null && quantita == null) {
     quantita = 1;
   }
 
   const ok = await cantiereExists(cantiereId);
   if (!ok) throw new Error("Cantiere non valido o inattivo.");
-  
+
   // Assign to root WBS directly for older logic
   const rootWbs = await prisma.wbsNode.findFirst({
     where: { cantiere_id: cantiereId, parent_id: null }
@@ -357,7 +357,7 @@ export async function getCantieriStatus({ activeOnly = true } = {}) {
 
 export async function getAllCantieri() {
   const cantieri = await prisma.cantiere.findMany({
-    orderBy: [ { attivo: 'desc' }, { id: 'desc' } ]
+    orderBy: [{ attivo: 'desc' }, { id: 'desc' }]
   });
   return cantieri.map((c) => ({
     ...c,
@@ -376,7 +376,7 @@ export async function createCantiere({ nome, indirizzo, lat, lng, budget }) {
       attivo: 1
     }
   });
-  
+
   // ERP auto create wbs node
   await prisma.wbsNode.create({
     data: { cantiere_id: c.id, nome: "Fase Radice", budget_preventivato: decimalOrNull(budget ?? 0) }
@@ -498,10 +498,10 @@ export async function deleteUserById(id) {
 // Report Entries
 export async function createReportEntry(fields) {
   const data = { ...fields };
-  if(data.modified_by_admin_at) data.modified_by_admin_at = new Date(data.modified_by_admin_at);
-  if(data.wbs_node_id === undefined && data.cantiere_id) {
-     const wbs = await prisma.wbsNode.findFirst({ where: { cantiere_id: data.cantiere_id, parent_id: null }});
-     data.wbs_node_id = wbs ? wbs.id : null;
+  if (data.modified_by_admin_at) data.modified_by_admin_at = new Date(data.modified_by_admin_at);
+  if (data.wbs_node_id == null && data.cantiere_id) {
+    const wbs = await prisma.wbsNode.findFirst({ where: { cantiere_id: data.cantiere_id, parent_id: null } });
+    data.wbs_node_id = wbs ? wbs.id : null;
   }
   const created = await prisma.reportEntry.create({ data });
   return created.id;
@@ -518,17 +518,17 @@ export async function listReportEntriesByEmployeeAndDate(employeeId, reportDate)
     where: { employee_id_report_date: { employee_id: employeeId, report_date: parseDateOnly(reportDate) } },
     include: { entries: { orderBy: { id: 'asc' } } }
   });
-  if(!report) return [];
+  if (!report) return [];
   return report.entries.map(e => ({ ...e, report_date: formatDateOnly(report.report_date), employee_id: report.employee_id }));
 }
 export async function updateReportEntry(id, fields) {
-  const allowed = ['cantiere_id','ore_lavorate','ingresso','pausa_inizio','pausa_fine','uscita','attivita_svolte','luogo_cantiere','problemi_riscontrati','testo_originale','stato_validazione','fonte','admin_note','modified_by_admin_at','wbs_node_id'];
+  const allowed = ['cantiere_id', 'ore_lavorate', 'ingresso', 'pausa_inizio', 'pausa_fine', 'uscita', 'attivita_svolte', 'luogo_cantiere', 'problemi_riscontrati', 'testo_originale', 'stato_validazione', 'fonte', 'admin_note', 'modified_by_admin_at', 'wbs_node_id'];
   const data = {};
   for (const k of allowed) if (fields[k] !== undefined) data[k] = fields[k];
-  if(data.modified_by_admin_at) data.modified_by_admin_at = new Date(data.modified_by_admin_at);
+  if (data.modified_by_admin_at) data.modified_by_admin_at = new Date(data.modified_by_admin_at);
   if (Object.keys(data).length > 0) {
-    if(data.cantiere_id && !data.wbs_node_id) {
-      const wbs = await prisma.wbsNode.findFirst({ where: { cantiere_id: data.cantiere_id, parent_id: null }});
+    if (data.cantiere_id && !data.wbs_node_id) {
+      const wbs = await prisma.wbsNode.findFirst({ where: { cantiere_id: data.cantiere_id, parent_id: null } });
       data.wbs_node_id = wbs ? wbs.id : null;
     }
     await prisma.reportEntry.update({ where: { id }, data });
@@ -564,8 +564,8 @@ export async function updateSpesa(id, fields) {
   if (data.quantita !== undefined) data.quantita = decimalOrNull(data.quantita);
   if (data.modified_by_admin_at) data.modified_by_admin_at = new Date(data.modified_by_admin_at);
   if (Object.keys(data).length > 0) {
-    if(data.cantiere_id && !data.wbs_node_id) {
-      const wbs = await prisma.wbsNode.findFirst({ where: { cantiere_id: data.cantiere_id, parent_id: null }});
+    if (data.cantiere_id && !data.wbs_node_id) {
+      const wbs = await prisma.wbsNode.findFirst({ where: { cantiere_id: data.cantiere_id, parent_id: null } });
       data.wbs_node_id = wbs ? wbs.id : null;
     }
     await prisma.spesa.update({ where: { id }, data });
@@ -612,4 +612,138 @@ export async function updateCantiere(id, fields) {
   if (Object.keys(data).length > 0) {
     await prisma.cantiere.update({ where: { id }, data });
   }
+}
+
+// ─── WBS (Work Breakdown Structure) ─────────────────────────────────────────
+
+export async function getWbsNodesByCantiere(cantiereId) {
+  return prisma.wbsNode.findMany({
+    where: { cantiere_id: Number(cantiereId) },
+    orderBy: [{ parent_id: 'asc' }, { id: 'asc' }],
+  });
+}
+
+export async function createWbsNode({ cantiere_id, nome, budget_preventivato = null, parent_id = null }) {
+  return prisma.wbsNode.create({
+    data: {
+      cantiere_id: Number(cantiere_id),
+      nome,
+      budget_preventivato: decimalOrNull(budget_preventivato),
+      parent_id: parent_id ? Number(parent_id) : null,
+    },
+  });
+}
+
+export async function updateWbsNode(id, fields) {
+  const allowed = ['nome', 'budget_preventivato'];
+  const data = {};
+  for (const k of allowed) if (fields[k] !== undefined) data[k] = fields[k];
+  if (data.budget_preventivato !== undefined) data.budget_preventivato = decimalOrNull(data.budget_preventivato);
+  if (Object.keys(data).length > 0) {
+    await prisma.wbsNode.update({ where: { id: Number(id) }, data });
+  }
+}
+
+export async function deleteWbsNode(id) {
+  const nodeId = Number(id);
+  // Verifica dipendenze prima di eliminare
+  const [entryCount, spesaCount, childCount] = await Promise.all([
+    prisma.reportEntry.count({ where: { wbs_node_id: nodeId } }),
+    prisma.spesa.count({ where: { wbs_node_id: nodeId } }),
+    prisma.wbsNode.count({ where: { parent_id: nodeId } }),
+  ]);
+  if (entryCount > 0 || spesaCount > 0) {
+    throw new Error(`Impossibile eliminare: il nodo ha ${entryCount} ore e ${spesaCount} spese collegate.`);
+  }
+  if (childCount > 0) {
+    throw new Error(`Impossibile eliminare: il nodo ha ${childCount} sottofasi. Elimina prima le sottofasi.`);
+  }
+  await prisma.wbsNode.delete({ where: { id: nodeId } });
+}
+
+/**
+ * Restituisce il burn data per ogni nodo WBS del cantiere.
+ * Per ogni nodo calcola: ore_tot, costo_manodopera (ore × tariffa), costo_materiali (spese), totale.
+ * Usa Tariffa più recente (valido_dal DESC) per la tariffa oraria.
+ */
+export async function getWbsBurnData(cantiereId) {
+  const id = Number(cantiereId);
+
+  // Carica tutte le ReportEntry verificate per questo cantiere
+  const entries = await prisma.reportEntry.findMany({
+    where: {
+      cantiere_id: id,
+      stato_validazione: { in: ['verified', 'VERIFIED'] },
+      wbs_node_id: { not: null },
+    },
+    include: {
+      report: {
+        include: {
+          employee: {
+            include: { tariffe: { orderBy: { valido_dal: 'desc' }, take: 1 } },
+          },
+        },
+      },
+    },
+  });
+
+  // Carica tutte le Spese non rifiutate per questo cantiere
+  const spese = await prisma.spesa.findMany({
+    where: {
+      cantiere_id: id,
+      wbs_node_id: { not: null },
+      NOT: {
+        OR: [
+          { stato_validazione: { in: ['rejected', 'REJECTED'] } },
+          { status: { in: ['rejected', 'REJECTED'] } },
+        ],
+      },
+    },
+  });
+
+  // Aggrega per nodo
+  const burnMap = new Map(); // wbs_node_id -> { ore_tot, costo_manodopera, costo_materiali }
+
+  for (const entry of entries) {
+    const nodeId = entry.wbs_node_id;
+    const ore = entry.ore_lavorate ?? 0;
+    const tariffa = decimalToNumber(entry.report?.employee?.tariffe?.[0]?.costo_orario) ?? 0;
+    const costo = ore * tariffa;
+    const cur = burnMap.get(nodeId) ?? { ore_tot: 0, costo_manodopera: 0, costo_materiali: 0 };
+    cur.ore_tot += ore;
+    cur.costo_manodopera += costo;
+    burnMap.set(nodeId, cur);
+  }
+
+  for (const spesa of spese) {
+    const nodeId = spesa.wbs_node_id;
+    const importo = decimalToNumber(spesa.importo) ?? 0;
+    const cur = burnMap.get(nodeId) ?? { ore_tot: 0, costo_manodopera: 0, costo_materiali: 0 };
+    cur.costo_materiali += importo;
+    burnMap.set(nodeId, cur);
+  }
+
+  // Converti in oggetto id->burn per il controller
+  const result = {};
+  for (const [nodeId, data] of burnMap.entries()) {
+    result[nodeId] = {
+      ore_tot: Math.round(data.ore_tot * 100) / 100,
+      costo_manodopera: Math.round(data.costo_manodopera * 100) / 100,
+      costo_materiali: Math.round(data.costo_materiali * 100) / 100,
+      totale: Math.round((data.costo_manodopera + data.costo_materiali) * 100) / 100,
+    };
+  }
+  return result;
+}
+
+/** Restituisce le fasi WBS attive (non-root, max 3 livelli) per la selezione Bot */
+export async function getWbsFasiAttive(cantiereId) {
+  return prisma.wbsNode.findMany({
+    where: {
+      cantiere_id: Number(cantiereId),
+      parent_id: { not: null },  // escludi la radice
+    },
+    orderBy: [{ parent_id: 'asc' }, { id: 'asc' }],
+    select: { id: true, nome: true, parent_id: true },
+  });
 }

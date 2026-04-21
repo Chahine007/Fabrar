@@ -4,6 +4,7 @@ import { initDb, getDb } from "./db/index.js";
 import { createApp } from "./app.js";
 import { scheduleDbBackups } from "./cron/backup.js";
 import { scheduleDraftsCleanup } from "./cron/drafts.js";
+import { initSockets } from "./sockets/index.js";
 
 const required = ["TELEGRAM_BOT_TOKEN", "OPENAI_API_KEY", "BASE_URL", "JWT_SECRET", "TELEGRAM_SECRET"];
 for (const key of required) {
@@ -13,6 +14,18 @@ for (const key of required) {
   }
 }
 
+// Global crash handlers
+process.on("unhandledRejection", (reason, promise) => {
+  logger.fatal({ promise, reason, event: "unhandled_rejection" }, "unhandled_rejection — process exit");
+  // Permetti al logger di scrivere prima di uscire
+  setTimeout(() => process.exit(1), 500);
+});
+
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err, event: "uncaught_exception" }, "uncaught_exception — process exit");
+  setTimeout(() => process.exit(1), 500);
+});
+
 await initDb();
 scheduleDbBackups();
 scheduleDraftsCleanup();
@@ -20,9 +33,13 @@ scheduleDraftsCleanup();
 const app = createApp();
 const port = Number(process.env.PORT || 3000);
 
-const server = app.listen(port, () => {
-  logger.info({ event: "server_start", port }, "server_start");
+// Start server
+const server = app.listen(port, "0.0.0.0", () => {
+    logger.info({ event: "server_start", port }, "server_start");
 });
+
+// Initialize Socket.io after server is listening
+const io = initSockets(server);
 
 process.on("SIGTERM", async () => {
   logger.info("SIGTERM received, shutting down gracefully");
