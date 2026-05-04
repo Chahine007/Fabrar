@@ -12,10 +12,11 @@ import { motion } from 'motion/react';
 import {
   Bot, Clock, Banknote, MapPin, RefreshCw, Download,
   CheckCircle2, XCircle, Search, Filter, Mic, Camera, MessageCircle,
-  ChevronDown, ChevronUp, Eye,
+  ChevronDown, ChevronUp, Eye, Loader2,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useTelegramFeed, useApproveTelegramEntry } from '../hooks/api/useTelegramAudit';
+import { useExportCsv } from '../hooks/api/useHr';
 import type { AuditEntry, AuditStatus } from '../hooks/api/useHr';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
@@ -354,8 +355,26 @@ const AuditTable = ({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function TelegramAuditPage() {
-  const { feed, logs, isLoading, error, refetch } = useTelegramFeed();
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo]     = useState('');
+  const { feed, logs, isLoading, error, refetch } = useTelegramFeed({
+    from: dateFrom || undefined,
+    to:   dateTo   || undefined,
+  });
   const [activeSection, setActiveSection] = useState<'audit' | 'logs'>('audit');
+  const { downloadCsv } = useExportCsv();
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    try {
+      setExporting(true);
+      await downloadCsv({ start: dateFrom || undefined, end: dateTo || undefined });
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="flex-1 overflow-y-auto bg-background transition-colors duration-300">
@@ -370,6 +389,24 @@ export default function TelegramAuditPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Date range filter */}
+          <div className="hidden md:flex items-center gap-2">
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-border bg-background text-sm text-text-primary outline-none focus:ring-2 focus:ring-accent/20 transition-all"
+              title="Data inizio"
+            />
+            <span className="text-text-secondary text-sm">→</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-border bg-background text-sm text-text-primary outline-none focus:ring-2 focus:ring-accent/20 transition-all"
+              title="Data fine"
+            />
+          </div>
           <button
             onClick={refetch}
             className="p-2 rounded-xl border border-border text-text-secondary hover:bg-background transition-all"
@@ -377,8 +414,13 @@ export default function TelegramAuditPage() {
           >
             <RefreshCw size={16} />
           </button>
-          <button className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-background transition-all">
-            <Download size={14} /> Esporta CSV
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-background transition-all disabled:opacity-50"
+          >
+            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            {exporting ? 'Esportazione...' : 'Esporta CSV'}
           </button>
         </div>
       </div>

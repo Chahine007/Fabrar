@@ -2,6 +2,7 @@ import { getDb, getCantieriStatus, formatDateOnly, parseDateOnly } from "../db/i
 import { round2, toNumber, isPendingSpesa } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { getPendingSummary } from "./hr.controller.js";
+import { ValidationStatus } from "../constants.js";
 
 export const getRadar = asyncHandler(async (req, res) => {
     const prisma = getDb();
@@ -54,3 +55,220 @@ export const getRadar = asyncHandler(async (req, res) => {
         operaiAttivi: new Set(activeEntries.map(e => e.report?.employee_id).filter(Boolean)).size,
     });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUSINESS INTELLIGENCE — Sprint 11
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/dashboard/bi/finance
+ * Margine Globale, Top 3 cantieri burn-rate, CPI medio.
+ */
+export const getFinanceKPIs = asyncHandler(async (req, res) => {
+    const prisma = getDb();
+
+    const [cantieri, spese] = await Promise.all([
+        prisma.cantiere.findMany({
+            where: { attivo: 1 },
+            select: { id: true, nome: true, budget: true },
+        }),
+        prisma.spesa.findMany({
+            where: { NOT: { stato_validazione: ValidationStatus.REJECTED } },
+            select: { cantiere_id: true, importo: true },
+        }),
+    ]);
+
+    // Spese per cantiere
+    const speseByCantiere = {};
+    for (const s of spese) {
+        speseByCantiere[s.cantiere_id] = (speseByCantiere[s.cantiere_id] ?? 0) + toNumber(s.importo);
+    }
+
+    const budgetTotale = cantieri.reduce((s, c) => s + toNumber(c.budget), 0);
+    const speseTotali  = Object.values(speseByCantiere).reduce((s, v) => s + v, 0);
+    const margine      = round2(budgetTotale - speseTotali);
+
+    // Burn rate per cantiere e CPI
+    const cantieriAnalysis = cantieri
+        .map(c => {
+            const budget = toNumber(c.budget);
+            const costo  = speseByCantiere[c.id] ?? 0;
+            const burnRate = budget > 0 ? round2(costo / budget) : 0;
+            const cpi      = costo > 0 ? round2(budget / costo) : null; // CPI = EV/AC (simplified)
+            return { id: c.id, nome: c.nome, budget: round2(budget), costo: round2(costo), burnRate, cpi };
+        })
+        .filter(c => c.budget > 0);
+
+    const top3BurnRate = [...cantieriAnalysis].sort((a, b) => b.burnRate - a.burnRate).slice(0, 3);
+    const avgCPI = cantieriAnalysis.filter(c => c.cpi !== null).length > 0
+        ? round2(cantieriAnalysis.filter(c => c.cpi !== null).reduce((s, c) => s + c.cpi, 0) / cantieriAnalysis.filter(c => c.cpi !== null).length)
+        : null;
+
+    res.json({
+        budgetTotale: round2(budgetTotale),
+        speseTotali:  round2(speseTotali),
+        margine,
+        marginePct:   budgetTotale > 0 ? round2((margine / budgetTotale) * 100) : null,
+        cpiMedio:     avgCPI,
+        top3BurnRate,
+    });
+});
+
+/**
+ * GET /api/dashboard/bi/warehouse
+ * Capitale immobilizzato, dead stock (articoli senza movimenti recenti).
+ */
+export const getWarehouseKPIs = asyncHandler(async (req, res) => {
+    const prisma = getDb();
+
+    const [giacenze, movimenti] = await Promise.all([
+        prisma.giacenza.findMany({
+            include: { articolo: { select: { descrizione: true, costo_medio: true, codice_sku: true } } },
+        }),
+        prisma.movimentoMagazzino.findMany({
+            orderBy: { data_movimento: 'desc' },
+            select: { articolo_id: true, data_movimento: true },
+        }),
+    ]);
+
+    // Capitale immobilizzato = Σ (quantità * costo_medio)
+    let capitaleImmobilizzato = 0;
+    let totalArticoli = 0;
+    for (const g of giacenze) {
+        const qty   = toNumber(g.quantita_disponibile) + toNumber(g.quantita_riservata);
+        const costo = toNumber(g.articolo.costo_medio);
+        capitaleImmobilizzato += qty * costo;
+        if (qty > 0) totalArticoli++;
+    }
+
+    // Ultimo movimento per articolo
+    const lastMove = {};
+    for (const m of movimenti) {
+        if (!lastMove[m.articolo_id]) lastMove[m.articolo_id] = m.data_movimento;
+    }
+
+    // Dead stock: articoli con giacenza > 0 ma ultimo movimento > 60 giorni fa (o mai)
+    const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000);
+    const deadStock = giacenze
+        .filter(g => (toNumber(g.quantita_disponibile) + toNumber(g.quantita_riservata)) > 0)
+        .map(g => ({
+            articolo_id:   g.articolo_id,
+            codice_sku:    g.articolo.codice_sku,
+            descrizione:   g.articolo.descrizione,
+            quantita:      round2(toNumber(g.quantita_disponibile)),
+            valore:        round2(toNumber(g.quantita_disponibile) * toNumber(g.articolo.costo_medio)),
+            ultimo_movimento: lastMove[g.articolo_id] ?? null,
+        }))
+        .filter(g => !g.ultimo_movimento || new Date(g.ultimo_movimento) < sixtyDaysAgo)
+        .sort((a, b) => b.valore - a.valore)
+        .slice(0, 5);
+
+    res.json({
+        capitaleImmobilizzato: round2(capitaleImmobilizzato),
+        totalArticoli,
+        totalMovimenti: movimenti.length,
+        deadStock,
+    });
+});
+
+/**
+ * GET /api/dashboard/bi/hr
+ * Costo orario medio, % ore fatturabili (con WBS), ore e costo HR mese.
+ */
+export const getHrKPIs = asyncHandler(async (req, res) => {
+    const prisma = getDb();
+
+    const now        = new Date();
+    const monthStart = parseDateOnly(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`);
+    const nextMonth  = new Date(monthStart);
+    nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+
+    const [tariffe, entriesMese] = await Promise.all([
+        // Tariffe attive (ultima per ogni dipendente)
+        prisma.tariffa.findMany({ orderBy: { valido_dal: 'desc' } }),
+        // Entry del mese corrente (non rifiutate)
+        prisma.reportEntry.findMany({
+            where: {
+                NOT: { stato_validazione: ValidationStatus.REJECTED },
+                report: { report_date: { gte: monthStart, lt: nextMonth } },
+            },
+            select: { ore_lavorate: true, wbs_node_id: true },
+        }),
+    ]);
+
+    // Costo orario medio (solo ultima tariffa per dipendente)
+    const seen = new Set();
+    const tariffeUniche = tariffe.filter(t => {
+        if (!t.employee_id || seen.has(t.employee_id)) return false;
+        seen.add(t.employee_id);
+        return true;
+    });
+    const costoOrarioMedio = tariffeUniche.length > 0
+        ? round2(tariffeUniche.reduce((s, t) => s + toNumber(t.costo_orario), 0) / tariffeUniche.length)
+        : 0;
+
+    // Ore mese
+    const oreTotaliMese = round2(entriesMese.reduce((s, e) => s + toNumber(e.ore_lavorate), 0));
+    const oreConWbs     = round2(entriesMese.filter(e => e.wbs_node_id != null).reduce((s, e) => s + toNumber(e.ore_lavorate), 0));
+    const pctFatturabili = oreTotaliMese > 0 ? round2((oreConWbs / oreTotaliMese) * 100) : 0;
+    const costoHrMese    = round2(oreTotaliMese * costoOrarioMedio);
+
+    res.json({
+        costoOrarioMedio,
+        oreTotaliMese,
+        oreConWbs,
+        pctFatturabili,
+        costoHrMese,
+        dipendentiConTariffa: tariffeUniche.length,
+    });
+});
+
+/**
+ * GET /api/dashboard/bi/operations
+ * Time-to-approval medio, tasso rifiuto.
+ */
+export const getOpsKPIs = asyncHandler(async (req, res) => {
+    const prisma = getDb();
+
+    const [verifiedWithTime, totalVerifiedCount, rejected, total] = await Promise.all([
+        // Solo le verified CON timestamp admin → per calcolo time-to-approval
+        prisma.reportEntry.findMany({
+            where: {
+                stato_validazione: ValidationStatus.VERIFIED,
+                modified_by_admin_at: { not: null },
+            },
+            select: { created_at: true, modified_by_admin_at: true },
+        }),
+        // TUTTE le verified → per conteggio corretto pending
+        prisma.reportEntry.count({ where: { stato_validazione: ValidationStatus.VERIFIED } }),
+        prisma.reportEntry.count({ where: { stato_validazione: ValidationStatus.REJECTED } }),
+        prisma.reportEntry.count(),
+    ]);
+
+    // Time-to-approval medio in ore
+    let totalHours = 0;
+    let countValid = 0;
+    for (const v of verifiedWithTime) {
+        if (v.created_at && v.modified_by_admin_at) {
+            const diff = new Date(v.modified_by_admin_at).getTime() - new Date(v.created_at).getTime();
+            if (diff > 0) {
+                totalHours += diff / (1000 * 60 * 60);
+                countValid++;
+            }
+        }
+    }
+    const avgApprovalHours = countValid > 0 ? round2(totalHours / countValid) : null;
+
+    // Tasso rifiuto
+    const tassoRifiuto = total > 0 ? round2((rejected / total) * 100) : 0;
+
+    res.json({
+        avgApprovalHours,
+        totalVerified:    totalVerifiedCount,
+        totalRejected:    rejected,
+        totalEntries:     total,
+        tassoRifiuto,
+        totalPending:     total - totalVerifiedCount - rejected,
+    });
+});
+

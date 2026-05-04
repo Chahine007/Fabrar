@@ -5,8 +5,10 @@ import { DateTime } from "luxon";
 import logger from "../logger.js";
 import {
     cantiereExists,
+    getCantieriAttivi,
     ensureDailyReportHeader,
     createReportEntry,
+    upsertReportEntry,
     updateReportHeader,
     listReportEntriesByEmployeeAndDate,
     updateEmployee,
@@ -17,7 +19,7 @@ import {
 import { tgSendMessage, tgGetFile, tgDownloadFile } from "./telegram.js";
 import { transcribeAudio, extractReport, getOpenAIUserFacingMessage } from "./openai.js";
 import { maybeConvertToWav } from "./audio.js";
-import { DB_STATUS } from "../constants.js";
+import { ValidationStatus } from "../constants.js";
 
 const TIMEZONE = process.env.TIMEZONE || "Europe/Rome";
 
@@ -143,13 +145,29 @@ async function safeUnlink(filePath) {
 export async function saveManualReportRows(employeeId, reportDate, extracted, originalText, fonte) {
     const reportId = await ensureDailyReportHeader(employeeId, reportDate);
     let cantiereId = null;
+
+    // 1) Priorità: cantiere_id esplicito dall'AI
     if (extracted.cantiere_id != null) {
         const ok = await cantiereExists(extracted.cantiere_id);
         if (ok) cantiereId = extracted.cantiere_id;
     }
+
+    // 2) Fallback: fuzzy-match sul luogo_cantiere testuale estratto dall'AI
+    //    (es. "cantiere via Roma" → cerca tra i cantieri attivi quello più simile)
+    if (!cantiereId && extracted.luogo_cantiere) {
+        const cantieri = await getCantieriAttivi();
+        const luogo = extracted.luogo_cantiere.toLowerCase().trim();
+        const match = cantieri.find(c => {
+            const nome = c.nome.toLowerCase();
+            return nome.includes(luogo) || luogo.includes(nome);
+        });
+        if (match) cantiereId = match.id;
+    }
+
     const oreCalcolate = calcOreFromOrari(extracted);
     const oreLavorate = extracted.ore_totali ?? oreCalcolate;
-    await createReportEntry({
+    // Usa upsert: aggiorna la entry esistente per (report+cantiere+fonte) invece di crearne una nuova
+    await upsertReportEntry({
         report_id: reportId,
         cantiere_id: cantiereId,
         wbs_node_id: extracted.wbs_node_id ?? null,
@@ -162,13 +180,14 @@ export async function saveManualReportRows(employeeId, reportDate, extracted, or
         luogo_cantiere: extracted.luogo_cantiere ?? null,
         problemi_riscontrati: extracted.problemi_riscontrati ?? null,
         testo_originale: originalText,
-        stato_validazione: DB_STATUS.PENDING,
+        stato_validazione: ValidationStatus.PENDING,
         fonte
     });
     await updateReportHeader(reportId, {
         data_utc: new Date().toISOString(),
         testo_originale: originalText,
-        stato_validazione: DB_STATUS.PENDING,
+        stato_validazione: ValidationStatus.PENDING,
+        ...(cantiereId ? { cantiere_id: cantiereId } : {}),
     });
 }
 

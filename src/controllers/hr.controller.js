@@ -18,14 +18,16 @@ import {
     normalizeOptionalText,
     round2,
     toNumber,
-    mapAuditStatusToDb,
     normalizeStatus,
     resolveEntryStatus,
     resolveSpesaStatus,
     formatEmployeeName,
+    parseIdParam,
 } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { AUDIT_TYPE, DB_STATUS, STATUS } from "../constants.js";
+import { AUDIT_TYPE, ValidationStatus } from "../constants.js";
+import { bulkUpdateItems } from "../domain/hr/auditService.js";
+import { domainBus, EVENTS } from "../domain/events/domainBus.js";
 
 const MAX_DAILY_HOURS_ALERT = 12;
 
@@ -35,14 +37,13 @@ export async function getPendingSummary(prisma) {
             where: {
                 OR: [
                     { stato_validazione: "" },
-                    { stato_validazione: { equals: STATUS.PENDING, mode: "insensitive" } },
+                    { stato_validazione: ValidationStatus.PENDING },
                 ],
             },
         }),
         prisma.spesa.findMany({
             select: {
                 stato_validazione: true,
-                status: true,
             },
         }),
     ]);
@@ -57,7 +58,8 @@ function mapAuditOreRow(entry) {
     return {
         id: entry.id,
         type: AUDIT_TYPE.ORE,
-        status: resolveEntryStatus(entry),
+        // Lowercase per uniformità col frontend (AuditStatus type)
+        status: resolveEntryStatus(entry).toLowerCase(),
         input_method: normalizeOptionalText(entry.fonte) || normalizeOptionalText(entry.report?.input_method) || "manual",
         date: formatDateOnly(entry.report?.report_date),
         value: toNumber(entry.ore_lavorate),
@@ -65,7 +67,10 @@ function mapAuditOreRow(entry) {
         nome: entry.report?.employee?.nome || null,
         cognome: entry.report?.employee?.cognome || null,
         note: entry.attivita_svolte || null,
-        cantiere_nome: entry.cantiere?.nome || entry.report?.cantiere?.nome || null,
+        // Priorità: cantiere diretto sull'entry → cantiere del report header → null
+        cantiere_nome: entry.cantiere?.nome || entry.report?.cantiere?.nome || entry.luogo_cantiere || null,
+        cantiere_id:   entry.cantiere_id || entry.report?.cantiere_id || null,
+        luogo_cantiere: entry.luogo_cantiere || null,
         report_id: entry.report_id,
     };
 }
@@ -74,7 +79,8 @@ function mapAuditSpesaRow(spesa) {
     return {
         id: spesa.id,
         type: AUDIT_TYPE.SPESE,
-        status: resolveSpesaStatus(spesa),
+        // Lowercase per uniformità col frontend (AuditStatus type)
+        status: resolveSpesaStatus(spesa).toLowerCase(),
         input_method: normalizeOptionalText(spesa.input_method) || normalizeOptionalText(spesa.fonte) || "manual",
         date: spesa.timestamp_utc,
         value: toNumber(spesa.importo),
@@ -83,6 +89,7 @@ function mapAuditSpesaRow(spesa) {
         cognome: spesa.employee?.cognome || null,
         note: spesa.descrizione || null,
         cantiere_nome: spesa.cantiere?.nome || null,
+        cantiere_id:   spesa.cantiere_id || null,
     };
 }
 
@@ -96,7 +103,7 @@ export const getAlerts = asyncHandler(async (req, res) => {
     const [entries, recentReports] = await Promise.all([
         prisma.reportEntry.findMany({
             where: {
-                NOT: { stato_validazione: { in: [STATUS.REJECTED, DB_STATUS.REJECTED] } },
+                NOT: { stato_validazione: ValidationStatus.REJECTED },
             },
             select: {
                 ore_lavorate: true,
@@ -163,6 +170,243 @@ export const getAlerts = asyncHandler(async (req, res) => {
     });
 });
 
+// ─── Employees with KPIs ──────────────────────────────────────────────────────
+
+/**
+ * Restituisce la lista di tutti gli Employee con:
+ *   - tariffa corrente (costo_orario)
+ *   - ore_mese: totale ore approvate nell'ultimo mese
+ *   - costo_mese: ore_mese * costo_orario
+ */
+export const getEmployeesWithKPIs = asyncHandler(async (req, res) => {
+    const prisma = getDb();
+
+    const now          = new Date();
+    const monthStart   = parseDateOnly(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`);
+    const nextMonth    = new Date(monthStart);
+    nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+
+    // Carica tutti gli employee con tariffa corrente e report del mese
+    const employees = await prisma.employee.findMany({
+        orderBy: [{ cognome: 'asc' }, { nome: 'asc' }],
+        include: {
+            tariffe: {
+                orderBy: { valido_dal: 'desc' },
+                take: 1,
+            },
+            reports: {
+                where: { report_date: { gte: monthStart, lt: nextMonth } },
+                include: {
+                    entries: {
+                        where: {
+                            stato_validazione: { in: [ValidationStatus.VERIFIED] },
+                        },
+                        select: { ore_lavorate: true },
+                    },
+                },
+            },
+        },
+    });
+
+    const result = employees.map((emp) => {
+        const tariffa     = emp.tariffe[0] ?? null;
+        const costoOrario = toNumber(tariffa?.costo_orario);
+
+        const oreMese = round2(
+            emp.reports.flatMap((r) => r.entries)
+                       .reduce((sum, e) => sum + toNumber(e.ore_lavorate), 0)
+        );
+
+        return {
+            id:          emp.id,
+            nome:        emp.nome,
+            cognome:     emp.cognome,
+            ruolo:       emp.ruolo,
+            telegram_id: emp.telegram_id,
+            telefono:         emp.telefono ?? emp.telefono_personale ?? null,
+            email_personale:  emp.email_personale ?? null,
+            dipartimento:     emp.dipartimento ?? null,
+            data_assunzione:  emp.data_assunzione ?? null,
+            costo_orario: costoOrario,
+            ore_mese:     oreMese,
+            costo_mese:   round2(oreMese * costoOrario),
+        };
+    });
+
+    res.json(result);
+});
+
+// ─── Employee Detail ──────────────────────────────────────────────────────────
+
+/**
+ * GET /api/hr/employees/:id
+ * Restituisce l'intero record del dipendente con tariffa corrente e KPI globali.
+ */
+export const getEmployeeDetail = asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const prisma = getDb();
+
+    const emp = await prisma.employee.findUnique({
+        where: { id },
+        include: {
+            tariffe: { orderBy: { valido_dal: 'desc' }, take: 1 },
+            reports: {
+                include: {
+                    entries: {
+                        where: { stato_validazione: ValidationStatus.VERIFIED },
+                        select: { ore_lavorate: true },
+                    },
+                },
+            },
+        },
+    });
+
+    if (!emp) return res.status(404).json({ error: 'Dipendente non trovato.' });
+
+    const tariffa      = emp.tariffe[0] ?? null;
+    const costoOrario  = toNumber(tariffa?.costo_orario);
+    const oreTotali    = round2(emp.reports.flatMap(r => r.entries).reduce((s, e) => s + toNumber(e.ore_lavorate), 0));
+    const costoTotale  = round2(oreTotali * costoOrario);
+
+    // Rimuovi campi interni / relazioni pesanti prima di serializzare
+    const { reports, tariffe, pending_json, pending_text, pending_date, pending_report_date, ...employeeData } = emp;
+
+    res.json({
+        ...employeeData,
+        telegram_id: employeeData.telegram_id?.toString() ?? null,
+        chat_id:     employeeData.chat_id?.toString() ?? null,
+        costo_orario: costoOrario,
+        valido_dal:   tariffa?.valido_dal ?? null,
+        ore_totali:   oreTotali,
+        costo_totale: costoTotale,
+    });
+});
+
+// ─── Generate CV (JSON) ───────────────────────────────────────────────────────
+
+/**
+ * GET /api/hr/employees/:id/cv
+ * Restituisce un JSON strutturato con i dati dell'employee formattati per un CV.
+ */
+export const generateEmployeeCV = asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const prisma = getDb();
+
+    const emp = await prisma.employee.findUnique({
+        where: { id },
+        include: {
+            tariffe: { orderBy: { valido_dal: 'desc' }, take: 1 },
+            reports: {
+                include: {
+                    entries: {
+                        where: { stato_validazione: ValidationStatus.VERIFIED },
+                        include: { cantiere: { select: { nome: true } } },
+                    },
+                },
+            },
+        },
+    });
+
+    if (!emp) return res.status(404).json({ error: 'Dipendente non trovato.' });
+
+    // Cantieri unici su cui ha lavorato
+    const cantieriLavorati = [...new Set(
+        emp.reports.flatMap(r => r.entries)
+            .filter(e => e.cantiere?.nome)
+            .map(e => e.cantiere.nome)
+    )];
+
+    const oreTotali = round2(
+        emp.reports.flatMap(r => r.entries)
+                   .reduce((s, e) => s + toNumber(e.ore_lavorate), 0)
+    );
+
+    // Competenze: prova JSON, fallback su skills stringa
+    let competenze = [];
+    if (emp.competenze) {
+        try { competenze = Array.isArray(emp.competenze) ? emp.competenze : JSON.parse(emp.competenze); } catch { competenze = []; }
+    } else if (emp.skills) {
+        competenze = emp.skills.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    res.json({
+        generato_il: new Date().toISOString(),
+        anagrafica: {
+            nome:              emp.nome,
+            cognome:           emp.cognome,
+            codice_fiscale:    emp.codice_fiscale ?? null,
+            data_nascita:      emp.data_nascita ?? null,
+            indirizzo:         [emp.indirizzo, emp.cap, emp.citta].filter(Boolean).join(', ') || null,
+            telefono:          emp.telefono ?? emp.telefono_personale ?? null,
+            email:             emp.email_personale ?? null,
+        },
+        professionale: {
+            ruolo:             emp.ruolo ?? 'Operaio',
+            dipartimento:      emp.dipartimento ?? null,
+            data_assunzione:   emp.data_assunzione ?? null,
+            tariffa_oraria:    toNumber(emp.tariffe[0]?.costo_orario),
+        },
+        competenze,
+        esperienza: {
+            ore_totali_lavorate: oreTotali,
+            cantieri_lavorati:   cantieriLavorati,
+        },
+    });
+});
+
+// ─── Update Employee (anagrafica) ─────────────────────────────────────────────
+
+/**
+ * PATCH /api/hr/employees/:id
+ * Aggiorna i campi anagrafici di un dipendente.
+ */
+export const updateEmployeeCtrl = asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const prisma = getDb();
+
+    const existing = await prisma.employee.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Dipendente non trovato.' });
+
+    // Whitelist campi modificabili
+    const allowed = [
+        'nome', 'cognome', 'ruolo', 'telefono', 'skills', 'note_admin',
+        'codice_fiscale', 'indirizzo', 'citta', 'cap',
+        'telefono_personale', 'email_personale', 'dipartimento',
+    ];
+    const dateFields = ['data_nascita', 'data_assunzione'];
+
+    const data = {};
+    for (const k of allowed) {
+        if (req.body[k] !== undefined) {
+            data[k] = req.body[k] === '' ? null : req.body[k];
+        }
+    }
+    for (const k of dateFields) {
+        if (req.body[k] !== undefined) {
+            data[k] = req.body[k] ? parseDateOnly(req.body[k]) : null;
+        }
+    }
+    // Competenze: accetta array o stringa CSV
+    if (req.body.competenze !== undefined) {
+        const val = req.body.competenze;
+        if (Array.isArray(val)) {
+            data.competenze = val;
+        } else if (typeof val === 'string') {
+            data.competenze = val.split(',').map(s => s.trim()).filter(Boolean);
+        } else {
+            data.competenze = null;
+        }
+    }
+
+    if (Object.keys(data).length === 0) {
+        return res.status(400).json({ error: 'Nessun campo valido fornito.' });
+    }
+
+    await prisma.employee.update({ where: { id }, data });
+
+    res.json({ ok: true, updated: Object.keys(data) });
+});
+
 export const getUserKpi = asyncHandler(async (req, res) => {
     const employeeId = req.params.id; // Validato da Zod
 
@@ -175,12 +419,12 @@ export const getUserKpi = asyncHandler(async (req, res) => {
 
     const [entries, employeeSpese, tariffa] = await Promise.all([
         prisma.reportEntry.findMany({
-            where: { NOT: { stato_validazione: { in: [STATUS.REJECTED, DB_STATUS.REJECTED] } }, report: { is: { employee_id: Number(employeeId), report_date: { gte: monthStart, lt: nextMonthStart } } } },
+            where: { NOT: { stato_validazione: ValidationStatus.REJECTED }, report: { is: { employee_id: Number(employeeId), report_date: { gte: monthStart, lt: nextMonthStart } } } },
             select: { ore_lavorate: true, fonte: true },
         }),
         prisma.spesa.findMany({
             where: { employee_id: Number(employeeId) },
-            select: { stato_validazione: true, status: true },
+            select: { stato_validazione: true },
         }),
         prisma.tariffa.findFirst({
             where: { employee_id: Number(employeeId) },
@@ -211,9 +455,15 @@ export const getUserKpi = asyncHandler(async (req, res) => {
 
 export const getAudit = asyncHandler(async (req, res) => {
     const prisma = getDb();
-    const { type, status, employee_id } = req.query; // Validati da Zod
+    const { type, status, employee_id, cantiere_id } = req.query; // Validati da Zod
 
-    const employeeId = employee_id ? Number(employee_id) : null;
+    const isPrivilegedRole = req.user?.role === "ADMIN" || req.user?.role === "HR";
+    const scopedEmployeeId = !isPrivilegedRole ? parseIdParam(req.user?.employee_id) : null;
+    if (!isPrivilegedRole && scopedEmployeeId == null) {
+        return res.status(403).json({ error: "Accesso negato: privilegi insufficienti" });
+    }
+    const employeeId  = scopedEmployeeId ?? (employee_id ? Number(employee_id) : null);
+    const cantiereId  = cantiere_id  ? Number(cantiere_id)  : null;
     const statusValue = status ? normalizeStatus(status) : null;
     let allData = [];
 
@@ -221,7 +471,13 @@ export const getAudit = asyncHandler(async (req, res) => {
         const oreRows = await prisma.reportEntry.findMany({
             where: {
                 ...(employeeId ? { report: { is: { employee_id: employeeId } } } : {}),
-                ...(statusValue ? (statusValue === STATUS.PENDING ? {} : { stato_validazione: { equals: statusValue, mode: "insensitive" } }) : {}),
+                ...(cantiereId ? {
+                    OR: [
+                        { cantiere_id: cantiereId },
+                        { report: { is: { cantiere_id: cantiereId } } },
+                    ],
+                } : {}),
+                ...(statusValue ? (statusValue === ValidationStatus.PENDING ? {} : { stato_validazione: { equals: statusValue, mode: "insensitive" } }) : {}),
             },
             include: {
                 report: { include: { employee: { select: { nome: true, cognome: true } }, cantiere: { select: { nome: true } } } },
@@ -230,20 +486,21 @@ export const getAudit = asyncHandler(async (req, res) => {
             orderBy: [{ created_at: "desc" }, { id: "desc" }],
         });
 
-        allData = allData.concat(oreRows.map(mapAuditOreRow).filter((row) => (statusValue === STATUS.PENDING ? row.status === STATUS.PENDING : true)));
+        allData = allData.concat(oreRows.map(mapAuditOreRow).filter((row) => (statusValue === ValidationStatus.PENDING ? row.status === ValidationStatus.PENDING : true)));
     }
 
     if (!type || type === AUDIT_TYPE.SPESE) {
         const speseRows = await prisma.spesa.findMany({
             where: {
-                ...(employeeId ? { employee_id: employeeId } : {}),
-                ...(statusValue ? (statusValue === STATUS.PENDING ? {} : { OR: [{ stato_validazione: { equals: statusValue, mode: "insensitive" } }, { status: { equals: statusValue, mode: "insensitive" } }] }) : {}),
+                ...(employeeId  ? { employee_id: employeeId }  : {}),
+                ...(cantiereId  ? { cantiere_id: cantiereId }  : {}),
+                ...(statusValue ? (statusValue === ValidationStatus.PENDING ? {} : { stato_validazione: { equals: statusValue, mode: "insensitive" } }) : {}),
             },
             include: { employee: { select: { nome: true, cognome: true } }, cantiere: { select: { nome: true } } },
             orderBy: [{ timestamp_utc: "desc" }, { id: "desc" }],
         });
 
-        allData = allData.concat(speseRows.map(mapAuditSpesaRow).filter((row) => (statusValue === STATUS.PENDING ? row.status === STATUS.PENDING : true)));
+        allData = allData.concat(speseRows.map(mapAuditSpesaRow).filter((row) => (statusValue === ValidationStatus.PENDING ? row.status === ValidationStatus.PENDING : true)));
     }
 
     allData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -252,61 +509,8 @@ export const getAudit = asyncHandler(async (req, res) => {
 
 export const bulkUpdateAudit = asyncHandler(async (req, res) => {
     const prisma = getDb();
-    const iso = new Date().toISOString();
-
-    const result = await prisma.$transaction(async (tx) => {
-        let items = req.body?.items;
-
-        if (!items) {
-            const ids = req.body?.ids || [];
-            const action = req.body?.action;
-            if (!ids || ids.length === 0 || !action) throw new Error("Formato non valido.");
-
-            const reportEntries = await tx.reportEntry.findMany({ where: { id: { in: ids } }, select: { id: true } });
-            const spese = await tx.spesa.findMany({ where: { id: { in: ids } }, select: { id: true } });
-
-            const reportEntryIds = new Set(reportEntries.map((row) => row.id));
-            const spesaIds = new Set(spese.map((row) => row.id));
-            const defaultStatus = action === "verify" ? STATUS.VERIFIED : action === "reject" ? STATUS.REJECTED : action;
-
-            items = ids.map((id) => {
-                const inReportEntries = reportEntryIds.has(id);
-                const inSpese = spesaIds.has(id);
-                if (inReportEntries && inSpese) throw new Error(`ID ambiguo presente sia in ore che in spese: ${id}`);
-                if (!inReportEntries && !inSpese) throw new Error(`Voce audit non trovata: ${id}`);
-
-                return { id, type: inReportEntries ? AUDIT_TYPE.ORE : AUDIT_TYPE.SPESE, newStatus: defaultStatus };
-            });
-        }
-
-        if (!Array.isArray(items) || items.length === 0) throw new Error("Formato non valido.");
-
-        for (const rawItem of items) {
-            const id = rawItem.id;
-            const newSt = mapAuditStatusToDb(rawItem.newStatus);
-
-            if (rawItem.type === AUDIT_TYPE.ORE) {
-                const entry = await tx.reportEntry.findUnique({ where: { id }, select: { report_id: true, report: { select: { employee_id: true } } } });
-                if (!entry) throw new Error(`Riga ore non trovata: ${id}`);
-
-                if (newSt === DB_STATUS.VERIFIED) {
-                    const tariffaCount = await tx.tariffa.count({ where: { employee_id: entry.report?.employee_id } });
-                    if (tariffaCount === 0) throw new Error("Impossibile approvare: il dipendente non ha una tariffa oraria valida nel sistema (Policy 4.2).");
-                }
-
-                await tx.reportEntry.update({ where: { id }, data: { stato_validazione: newSt, modified_by_admin_at: iso } });
-                continue;
-            }
-
-            if (rawItem.type === AUDIT_TYPE.SPESE) {
-                await tx.spesa.update({ where: { id }, data: { stato_validazione: newSt, status: newSt.toLowerCase(), modified_by_admin_at: iso } });
-                continue;
-            }
-            throw new Error(`Tipo audit non supportato: ${rawItem.type}`);
-        }
-        return items.length;
-    });
-    res.json({ success: true, count: result });
+    const count  = await bulkUpdateItems(prisma, req.body);
+    res.json({ success: true, count });
 });
 
 export const createUserCost = asyncHandler(async (req, res) => {
@@ -325,13 +529,58 @@ export const updateReportEntryCtrl = asyncHandler(async (req, res) => {
     res.json({ success: true });
 });
 
+/**
+ * updateReportEntryAdminCtrl — Modifica admin di una timbratura (ore + cantiere + wbs).
+ * Se la entry era VERIFIED, emette REPORT_ENTRY_VERIFIED per ricalcolare i costi.
+ */
+export const updateReportEntryAdminCtrl = asyncHandler(async (req, res) => {
+    const id     = Number(req.params.id);
+    const prisma = getDb();
+
+    // Leggi lo stato attuale prima di modificare
+    const entry = await prisma.reportEntry.findUnique({
+        where:  { id },
+        select: { stato_validazione: true, cantiere_id: true },
+    });
+    if (!entry) return res.status(404).json({ error: 'Timbratura non trovata.' });
+
+    const wasVerified = entry.stato_validazione === ValidationStatus.VERIFIED;
+
+    // Campi permessi al solo admin
+    const allowed = ['ore_lavorate', 'cantiere_id', 'wbs_node_id', 'attivita_svolte'];
+    const updateData = Object.fromEntries(
+        Object.entries(req.body).filter(([k]) => allowed.includes(k))
+    );
+    if (updateData.cantiere_id === '' || updateData.cantiere_id === null)
+        updateData.cantiere_id = null;
+    if (updateData.wbs_node_id === '' || updateData.wbs_node_id === null)
+        updateData.wbs_node_id = null;
+    updateData.modified_by_admin_at = new Date().toISOString();
+
+    await prisma.reportEntry.update({ where: { id }, data: updateData });
+
+    // Se la entry era già approvata, ricalcola i costi del cantiere
+    if (wasVerified) {
+        const targetCantiereId = updateData.cantiere_id ?? entry.cantiere_id;
+        if (targetCantiereId) {
+            domainBus.emit(EVENTS.REPORT_ENTRY_VERIFIED, {
+                entryId:    id,
+                cantiereId: targetCantiereId,
+            });
+        }
+    }
+
+    res.json({ success: true });
+});
+
 export const updateReportCtrl = asyncHandler(async (req, res) => {
     const reportId = Number(req.params.id);
     const data = { ...req.body, modified_by_admin_at: new Date().toISOString() };
     if (data.status !== undefined) {
-        data.stato_validazione = mapAuditStatusToDb(data.status);
+        data.stato_validazione = normalizeStatus(data.status);
+        delete data.status; // status column removed from schema
     }
-    if (data.cantiere_id === "") data.cantiere_id = null;
+    if (data.cantiere_id === '') data.cantiere_id = null;
     await updateReportHeader(reportId, data);
     res.json({ success: true });
 });
@@ -340,7 +589,8 @@ export const updateSpesaCtrl = asyncHandler(async (req, res) => {
     const spesaId = Number(req.params.id);
     const data = { ...req.body, modified_by_admin_at: new Date().toISOString() };
     if (data.status !== undefined) {
-        data.stato_validazione = mapAuditStatusToDb(data.status);
+        data.stato_validazione = normalizeStatus(data.status);
+        delete data.status; // status column removed from schema
     }
     await dbUpdateSpesa(spesaId, data);
     res.json({ success: true });
@@ -348,7 +598,12 @@ export const updateSpesaCtrl = asyncHandler(async (req, res) => {
 
 export const listReportsCtrl = asyncHandler(async (req, res) => {
     const { start, end } = req.query;
-    const rows = await dbListReportsWithEntries({ start, end });
+    const isPrivilegedRole = req.user?.role === "ADMIN" || req.user?.role === "HR";
+    const employeeId = !isPrivilegedRole ? parseIdParam(req.user?.employee_id) : null;
+    if (!isPrivilegedRole && employeeId == null) {
+        return res.status(403).json({ error: "Accesso negato: privilegi insufficienti" });
+    }
+    const rows = await dbListReportsWithEntries({ start, end, employeeId });
     res.json(rows);
 });
 

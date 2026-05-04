@@ -32,7 +32,9 @@ L.Icon.Default.mergeOptions({
 });
 
 import SmartActionMenu from '../components/SmartActionMenu';
-
+import WbsTab from '../components/WbsTab';
+import CantiereSettingsTab from '../components/CantiereSettingsTab';
+import MaterialiTab from '../components/MaterialiTab';
 import ShareModal from '../components/ShareModal';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
@@ -40,6 +42,7 @@ import ErrorMessage from '../components/ErrorMessage';
 import {
   useCantieri, useCantiereDetail, useFinancialTimeline,
   useTasks, useCreateTask, useDocuments, useGenyaImport,
+  useUploadDocument, useUpdateGps,
 } from '../hooks/api/useCantieri';
 import { useTelegramFeed } from '../hooks/api/useTelegramAudit';
 import {
@@ -49,7 +52,6 @@ import {
   useWbsTree, useCreateWbsNode, useUpdateWbsNode, useDeleteWbsNode,
 } from '../hooks/api/useWbs';
 import { UI_LABELS } from '../lib/labels';
-import CantiereSettingsTab from '../components/CantiereSettingsTab';
 
 
 // ─── Tab Configuration ────────────────────────────────────────────────────────
@@ -59,12 +61,11 @@ const TABS = [
   { id: 'activities',  label: 'Attività' },
   { id: 'hours',      label: '⏱️ Ore' },
   { id: 'wbs',        label: '⚙️ Struttura / WBS' },
-  { id: 'messages',   label: '💬 Messaggi' },
+  { id: 'materiali',  label: '📦 Materiali' },
   { id: 'documents',   label: 'Documenti' },
-  { id: 'warehouse',   label: 'Magazzino' },
   { id: 'invoices',    label: 'Fatture' },
   { id: 'telegram',    label: '🤖 Feed / Log' },
-  { id: 'settings',    label: '⚙️ Impostazioni' },
+  { id: 'settings',   label: '⚙️ Impostazioni' }
 ];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -81,6 +82,44 @@ const MetricCard = ({ title, value, sub, trend }: {
     )}>{sub}</p>
   </div>
 );
+
+// Mini-componente per impostare le coordinate GPS dal frontend
+const GpsSetButton = ({ cantiereId }: { cantiereId: number }) => {
+  const updateGps = useUpdateGps(cantiereId);
+  const [lat, setLat] = React.useState('');
+  const [lng, setLng] = React.useState('');
+  const [open, setOpen] = React.useState(false);
+
+  const handleSave = async () => {
+    const latN = parseFloat(lat);
+    const lngN = parseFloat(lng);
+    if (isNaN(latN) || isNaN(lngN)) { alert('Inserisci valori numerici validi.'); return; }
+    try {
+      await updateGps.mutateAsync({ lat: latN, lng: lngN });
+      setOpen(false);
+    } catch (e) { alert((e as Error).message); }
+  };
+
+  return open ? (
+    <div className="flex flex-col gap-2 p-4 bg-card border border-border rounded-2xl w-full max-w-xs">
+      <p className="text-xs font-bold text-text-secondary">Imposta coordinate manualmente</p>
+      <input value={lat} onChange={e => setLat(e.target.value)} placeholder="Latitudine (es. 45.4654)" className="px-3 py-2 rounded-xl border border-border bg-background text-sm outline-none" />
+      <input value={lng} onChange={e => setLng(e.target.value)} placeholder="Longitudine (es. 9.1859)" className="px-3 py-2 rounded-xl border border-border bg-background text-sm outline-none" />
+      <div className="flex gap-2">
+        <button onClick={handleSave} disabled={updateGps.isPending} className="flex-1 py-2 bg-accent text-white text-xs font-bold rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-50">
+          {updateGps.isPending ? 'Salvataggio...' : 'Salva'}
+        </button>
+        <button onClick={() => setOpen(false)} className="px-3 py-2 bg-background border border-border text-xs rounded-xl hover:bg-card transition-colors">
+          Annulla
+        </button>
+      </div>
+    </div>
+  ) : (
+    <button onClick={() => setOpen(true)} className="px-4 py-2 bg-accent/10 text-accent border border-accent/20 text-xs font-bold rounded-xl hover:bg-accent/20 transition-colors">
+      📍 Imposta Coordinate
+    </button>
+  );
+};
 
 // ─── Tab: Overview ────────────────────────────────────────────────────────────
 
@@ -160,9 +199,10 @@ const OverviewTab = ({ cantiereId }: { cantiereId: number }) => {
                 </MapContainer>
               </div>
             ) : (
-              <div className="flex-1 rounded-2xl border-2 border-dashed border-border bg-background flex flex-col items-center justify-center text-text-secondary text-sm">
-                 <AlertCircle className="mb-2 opacity-50" size={32} />
+              <div className="flex-1 rounded-2xl border-2 border-dashed border-border bg-background flex flex-col items-center justify-center text-text-secondary text-sm gap-3">
+                 <AlertCircle className="opacity-50" size={32} />
                  <span>Coordinate GPS non impostate.</span>
+                 <GpsSetButton cantiereId={cantiereId} />
               </div>
             )}
           </div>
@@ -313,16 +353,40 @@ const HoursTab = ({ cantiereId }: { cantiereId: number }) => {
 
 const DocumentsTab = ({ cantiereId }: { cantiereId: number }) => {
   const { data: docs, isLoading, error, refetch } = useDocuments(cantiereId);
+  const uploadDoc = useUploadDocument(cantiereId);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      await uploadDoc.mutateAsync({ file });
+    } catch (err: unknown) {
+      alert(`❌ ${err instanceof Error ? err.message : 'Errore upload'}`);
+    }
+    e.target.value = '';
+  };
+
+  const handleDownload = (docId: number) => {
+    window.open(`/api/cantieri/${cantiereId}/documents/${docId}/download`, '_blank');
+  };
 
   if (isLoading) return <div className="py-12"><Spinner label="Caricamento documenti..." /></div>;
   if (error || !docs) return <div className="py-12"><ErrorMessage error={(error as Error)?.message ?? 'Errore'} onRetry={refetch} /></div>;
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <input ref={fileInputRef} type="file" hidden onChange={handleFileSelected}
+        accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx" />
       <div className="flex items-center justify-between">
         <h3 className="text-xl font-bold text-text-primary">Documenti di Progetto</h3>
-        <button className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-xl text-sm font-bold shadow-lg shadow-accent/20 hover:bg-accent/90 transition-colors">
-          <UploadCloud size={16} /> Carica File
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploadDoc.isPending}
+          className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-xl text-sm font-bold shadow-lg shadow-accent/20 hover:bg-accent/90 transition-colors disabled:opacity-60"
+        >
+          <UploadCloud size={16} />
+          {uploadDoc.isPending ? 'Caricamento...' : 'Carica File'}
         </button>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -332,14 +396,18 @@ const DocumentsTab = ({ cantiereId }: { cantiereId: number }) => {
               <div className={cn('p-3 rounded-xl', doc.type === 'pdf' ? 'bg-danger-bg text-danger-text' : doc.type === 'image' ? 'bg-info-bg text-info-text' : 'bg-success-bg text-success-text')}>
                 {doc.type === 'image' ? <ImageIcon size={24} /> : <FileTextIcon size={24} />}
               </div>
-              <button className="p-2 text-text-secondary hover:text-accent opacity-0 group-hover:opacity-100 transition-all">
+              <button
+                onClick={() => handleDownload(doc.id)}
+                className="p-2 text-text-secondary hover:text-accent opacity-0 group-hover:opacity-100 transition-all"
+                title="Scarica documento"
+              >
                 <Download size={18} />
               </button>
             </div>
             <p className="font-bold text-text-primary text-sm truncate mb-1">{doc.name}</p>
             <div className="flex items-center justify-between mt-auto pt-4 text-xs text-text-secondary">
               <span>{doc.size}</span>
-              <span>{doc.date}</span>
+              <span>{new Date(doc.created_at).toLocaleDateString('it-IT')}</span>
             </div>
           </div>
         ))}

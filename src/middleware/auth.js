@@ -48,3 +48,6 @@ export function verifyTokenAndRole(allowedRoles = []) {
     }
   };
 }
+
+/** Backward-compat: middleware JWT without role restrictions */
+export const verifyToken = verifyTokenAndRole();

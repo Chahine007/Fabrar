@@ -4,6 +4,14 @@
  * Pattern: ogni modulo ha un factory che produce array di chiavi.
  */
 
+export const magazzinoKeys = {
+  all:        () => ['magazzino'] as const,
+  articoli:   () => [...magazzinoKeys.all(), 'articoli'] as const,
+  ubicazioni: () => [...magazzinoKeys.all(), 'ubicazioni'] as const,
+  giacenze:   () => [...magazzinoKeys.all(), 'giacenze'] as const,
+  cantiere:   (id: number) => [...magazzinoKeys.all(), 'cantiere', id] as const,
+};
+
 export const cantierKeys = {
   all:    ()                => ['cantieri'] as const,
   list:   ()                => [...cantierKeys.all(), 'list'] as const,
@@ -22,8 +30,9 @@ export const hrKeys = {
 };
 
 export const employeeKeys = {
-  all:  ()                  => ['employees'] as const,
-  list: ()                   => [...employeeKeys.all(), 'list'] as const,
+  all:    ()              => ['employees'] as const,
+  list:   ()              => [...employeeKeys.all(), 'list'] as const,
+  detail: (id: number)    => [...employeeKeys.all(), 'detail', id] as const,
 };
 
 export const conversationKeys = {
@@ -46,4 +55,10 @@ export const dashboardKeys = {
 export const wbsKeys = {
   all:  ()                  => ['wbs'] as const,
   tree: (cantiereId: number) => [...wbsKeys.all(), 'tree', cantiereId] as const,
+};
+
+export const taskKeys = {
+  all:    ()                     => ['tasks'] as const,
+  list:   (filters?: object)     => [...taskKeys.all(), 'list', filters ?? {}] as const,
+  detail: (id: number)           => [...taskKeys.all(), 'detail', id] as const,
 };

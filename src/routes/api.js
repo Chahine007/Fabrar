@@ -7,6 +7,8 @@ import hrRoutes from "./hr.routes.js";
 import employeesRoutes from "./employees.routes.js"; // Se esiste
 import dashboardRoutes from "./dashboard.routes.js";
 import conversationsRoutes from "./conversations.routes.js";
+import magazzinoRoutes from "./magazzino.routes.js";
+import userRoutes from "./user.routes.js";
 import { errorHandler } from "../middleware/errorHandler.js";
 
 const router = express.Router();
@@ -24,6 +26,8 @@ router.use(hrRoutes);
 router.use(employeesRoutes);
 router.use(dashboardRoutes);
 router.use(conversationsRoutes);
+router.use("/api/magazzino", magazzinoRoutes);
+router.use("/api/user", userRoutes);
 
 // Handler Globale per errori (deve essere SEMPRE alla fine di tutte le rotte)
 router.use(errorHandler);

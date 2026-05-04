@@ -1,7 +1,7 @@
-﻿# ðŸ” Env (segreti)
+# 🔐 Env (segreti)
 .env
 
-# ðŸ“¦ Dependencies
+# 📦 Dependencies
 node_modules/
 
 # Database artifacts
@@ -13,5 +13,8 @@ backups/
 # Local data directories
 data/
 
-/src/generated/prisma
+# Uploads cantieri (PDF aziendali — non committare su git)
+uploads/
+!uploads/.gitkeep
 
+/src/generated/prisma

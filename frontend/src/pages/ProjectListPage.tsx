@@ -373,6 +373,18 @@ export default function ProjectListPage() {
     return matchSearch && matchStatus;
   });
 
+  // Apri la modale automaticamente se arriva con ?new=1 (es. dal bottone Dashboard)
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setModalOpen(true);
+      setSearchParams(prev => {
+        const p = new URLSearchParams(prev);
+        p.delete('new');
+        return p;
+      }, { replace: true });
+    }
+  }, []);
+
   if (isLoading) return <Spinner fullScreen label="Caricamento progetti..." />;
   if (error)     return <ErrorMessage error={(error as Error)?.message ?? 'Errore'} onRetry={refetch} />;
 

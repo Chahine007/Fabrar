@@ -11,6 +11,9 @@ export const getAuditSchema = z.object({
         type: z.enum(["ore", "spese"]).optional().nullable(),
         status: z.string().optional().nullable(),
         employee_id: z.coerce.number().optional().nullable(),
+        cantiere_id: z.coerce.number().optional().nullable(),
+        from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+        to:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
     }).partial(),
 });
 
@@ -68,4 +71,24 @@ export const updateSpesaSchema = z.object({
         importo: z.number().optional(),
         descrizione: z.string().optional().nullable(),
     }).partial(),
+});
+
+/**
+ * Schema per la modifica admin di una timbratura.
+ * Permette di cambiare: ore lavorate, cantiere assegnato, nodo WBS, note.
+ */
+export const updateReportEntryAdminSchema = z.object({
+    params: z.object({
+        id: z.coerce.number().positive(),
+    }),
+    body: z.object({
+        ore_lavorate:    z.coerce.number().min(0).max(24).optional(),
+        cantiere_id:     z.coerce.number().positive().optional().nullable()
+                          .or(z.literal('').transform(() => null)),
+        wbs_node_id:     z.coerce.number().positive().optional().nullable()
+                          .or(z.literal('').transform(() => null)),
+        attivita_svolte: z.string().max(500).optional().nullable(),
+    }).refine(data => Object.keys(data).length > 0, {
+        message: 'Nessun campo da aggiornare.',
+    }),
 });

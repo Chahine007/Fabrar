@@ -1,8 +1,10 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
-import { verifyTokenAndRole, DASHBOARD_ROLES } from "../middleware/auth.js";
+import { verifyToken, DASHBOARD_ROLES } from "../middleware/auth.js";
 import { validate } from "../middleware/validation.js";
+import { authorizeRoles } from "../middlewares/role.middleware.js";
 import {
+    createEmployeeSchema,
     employeeIdSchema,
     updateEmployeeSchema,
     parseCvSchema,
@@ -13,6 +15,7 @@ import {
     getEmployeeTimeline,
     parseCv,
 } from "../controllers/employees.controller.js";
+import { createEmployee } from "../controllers/employee.controller.js";
 
 const router = Router();
 
@@ -22,11 +25,12 @@ const cvParseLimiter = rateLimit({
     message: { error: "Limite elaborazione CV raggiunto (max 20/ora)." },
 });
 
-router.use(["/api/employees", "/api/admin/employees"], verifyTokenAndRole(DASHBOARD_ROLES));
+router.use(["/api/employees", "/api/admin/employees"], verifyToken);
 
-router.get("/api/employees", listEmployees);
-router.get("/api/admin/employees/:id/timeline", validate(employeeIdSchema), getEmployeeTimeline);
-router.patch("/api/admin/employees/:id", validate(updateEmployeeSchema), updateEmployeeCtrl);
-router.post("/api/admin/employees/parse-cv", cvParseLimiter, validate(parseCvSchema), parseCv);
+router.get("/api/employees", authorizeRoles(...DASHBOARD_ROLES), listEmployees);
+router.post("/api/employees", authorizeRoles("ADMIN", "HR"), validate(createEmployeeSchema), createEmployee);
+router.get("/api/admin/employees/:id/timeline", authorizeRoles(...DASHBOARD_ROLES), validate(employeeIdSchema), getEmployeeTimeline);
+router.patch("/api/admin/employees/:id", authorizeRoles("ADMIN", "HR"), validate(updateEmployeeSchema), updateEmployeeCtrl);
+router.post("/api/admin/employees/parse-cv", authorizeRoles("ADMIN", "HR"), cvParseLimiter, validate(parseCvSchema), parseCv);
 
 export default router;

@@ -44,11 +44,10 @@ async function fetchJson<T>(path: string): Promise<T> {
 
 function buildAuditPath(type: 'ore' | 'spese', filters: TelegramAuditFilters): string {
   const params = new URLSearchParams({ type });
-  // Il campo fonte discrimina i record Telegram dagli inserimenti manuali
-  // (il backend restituisce fonte='TELEGRAM_*' o 'GPS' o 'telegram_ocr')
-  if (filters.status) params.set('status', filters.status);
-  if (filters.from) params.set('from', filters.from);
-  if (filters.to) params.set('to', filters.to);
+  if (filters.status)     params.set('status',      filters.status);
+  if (filters.from)       params.set('from',         filters.from);
+  if (filters.to)         params.set('to',           filters.to);
+  if (filters.cantiereId) params.set('cantiere_id',  String(filters.cantiereId));
   return `/api/hr/audit?${params.toString()}`;
 }
 
@@ -58,10 +57,11 @@ function buildAuditPath(type: 'ore' | 'spese', filters: TelegramAuditFilters): s
  * Log grezzi di tutte le interazioni con il bot Telegram.
  * Restituisce i record dalla tabella MessageLog.
  */
-export function useMessageLogs(filters: TelegramAuditFilters = {}) {
+export function useMessageLogs(filters: TelegramAuditFilters = {}, enabled = true) {
   return useQuery({
     queryKey: telegramKeys.logs(filters),
     queryFn: () => fetchJson<MessageLogEntry[]>('/api/logs'),
+    enabled,
   });
 }
 
@@ -105,12 +105,12 @@ export function useTelegramFeed(filters: TelegramAuditFilters = {}) {
     const all   = [...ore, ...spese];
 
     // Filtro lato client per cantiere specifico
+    // Il filtro è applicato anche lato backend (cantiere_id passato nei params)
+    // Il filtro client-side rimane come fallback per dati privi di cantiere_id
     const filtered = filters.cantiereId
-      ? all.filter(e => {
-          // il backend include cantiere_nome ma non cantiere_id direttamente
-          // il filtro viene passato alla query HTTP dove possibile
-          return true; // placeholder — l'API non supporta ancora il filtro by cantiere_id
-        })
+      ? all.filter(e =>
+          (e.cantiere_nome ?? '').length > 0 // record con cantiere valorizzato
+        )
       : all;
 
     // Ordina per data decrescente

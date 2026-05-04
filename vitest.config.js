@@ -2,7 +2,9 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    environment: "node",
-    setupFiles: ["./tests/setup.js"],
+    environment: 'node',
+    include:     ['tests/**/*.test.js'],
+    reporters:   ['verbose'],
+    setupFiles:  ['./tests/setup.js'],
   },
 });

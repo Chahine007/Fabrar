@@ -5,6 +5,7 @@ import { createApp } from "./app.js";
 import { scheduleDbBackups } from "./cron/backup.js";
 import { scheduleDraftsCleanup } from "./cron/drafts.js";
 import { initSockets } from "./sockets/index.js";
+import { registerKpiListeners } from "./sockets/kpiListener.js";
 
 const required = ["TELEGRAM_BOT_TOKEN", "OPENAI_API_KEY", "BASE_URL", "JWT_SECRET", "TELEGRAM_SECRET"];
 for (const key of required) {
@@ -40,6 +41,7 @@ const server = app.listen(port, "0.0.0.0", () => {
 
 // Initialize Socket.io after server is listening
 const io = initSockets(server);
+registerKpiListeners(io);
 
 process.on("SIGTERM", async () => {
   logger.info("SIGTERM received, shutting down gracefully");

@@ -28,29 +28,49 @@ model Employee {
   note_admin          String?
   documenti           String?
 
-  users               User[]
+  // ── Sprint 10: Anagrafica profonda ─────────────────────────────────────────
+  codice_fiscale      String?
+  data_nascita        DateTime?
+  indirizzo           String?
+  citta               String?
+  cap                 String?
+  telefono_personale  String?
+  email_personale     String?
+  data_assunzione     DateTime?
+  dipartimento        String?
+  competenze          Json?     // Array di skill: ["Ponteggiatore", "Saldatore", ...]
+
+  // ── Sprint 12: Frictionless Onboarding ────────────────────────────────────
+  invite_code         String?   @unique   // Codice invito 6-char generato dall'Admin
+  telegram_pairing_code String? @unique   // Codice pairing per collegare il bot Telegram
+  user_id             Int?      @unique   // 1:1 link al record User (web login)
+
+  user                User?     @relation(fields: [user_id], references: [id])
   reports             Report[]
   spese               Spesa[]
   tariffe             Tariffa[]
   message_logs        MessageLog[]
   messages            Message[]
+  bot_sessions        BotSession[]
 }
+
 
 model User {
   id            Int       @id @default(autoincrement())
-  employee_id   Int
   username      String    @unique
-  password_hash String
+  password_hash String?   // Opzionale: null per utenti Google-only
+  email         String?   @unique
+  google_id     String?   @unique
   role          String    // ADMIN, HR, EXTERNAL_PM, ecc.
   is_active     Int       @default(1)
   created_at    DateTime  @default(now())
   last_login_at DateTime?
 
-  employee      Employee  @relation(fields: [employee_id], references: [id])
+  employee      Employee? // 1:1 inverso — la FK è su Employee.user_id
   cantieri_pm   Cantiere[] @relation("CantierePM")
   cantieri_sm   Cantiere[] @relation("CantiereSiteManager")
+  movimenti_magazzino MovimentoMagazzino[]
 
-  @@index([employee_id])
   @@index([role, is_active])
 }
 
@@ -85,6 +105,7 @@ model Cantiere {
   reports           Report[]
   tasks             Task[]
   documents         Document[]
+  movimenti_magazzino MovimentoMagazzino[]
 }
 
 // NEW ERP TABLE: WBS Nodes
@@ -102,6 +123,7 @@ model WbsNode {
 
   report_entries      ReportEntry[]
   spese               Spesa[]
+  movimenti_magazzino MovimentoMagazzino[]
 }
 
 model Report {
@@ -121,7 +143,6 @@ model Report {
   testo_originale      String?
   stato_validazione    String    @default("PENDING")
   fonte                String?
-  status               String?   @default("verified")
   input_method         String?   @default("timer")
   admin_note           String?
   modified_by_admin_at DateTime?
@@ -171,7 +192,6 @@ model Spesa {
   quantita             Decimal?  @db.Decimal(10, 2)
   stato_validazione    String    @default("PENDING")
   fonte                String?   @default("TELEGRAM")
-  status               String?   @default("verified")
   input_method         String?   @default("telegram_ocr")
   fattura_rif          String?
   documento_id         Int?      // Link opzionale al Documento (es. fattura)
@@ -230,7 +250,8 @@ model Task {
 model Document {
   id               Int      @id @default(autoincrement())
   cantiere_id      Int
-  name             String
+  name             String   // Nome originale del file (display)
+  file_path        String?  // Percorso relativo su disco: cantieri/{id}/{filename}
   type             String
   size             String
   uploader         String
@@ -268,4 +289,97 @@ model Message {
 
   conversation    Conversation @relation(fields: [conversation_id], references: [id])
   sender          Employee?    @relation(fields: [sender_id], references: [id])
+}
+
+// ==========================================
+// MAGAZZINO E LOGISTICA
+// ==========================================
+
+model Articolo {
+  id              Int       @id @default(autoincrement())
+  codice_sku      String    @unique
+  descrizione     String
+  unita_misura    String
+  costo_medio     Decimal   @db.Decimal(10, 2) @default(0) // Costo Medio Ponderato
+  
+  giacenze        Giacenza[]
+  movimenti       MovimentoMagazzino[]
+}
+
+model Ubicazione {
+  id              Int       @id @default(autoincrement())
+  codice          String    @unique
+  descrizione     String?
+
+  giacenze        Giacenza[]
+  movimenti_da    MovimentoMagazzino[] @relation("MovimentiDa")
+  movimenti_a     MovimentoMagazzino[] @relation("MovimentiA")
+}
+
+model Giacenza {
+  id                   Int       @id @default(autoincrement())
+  articolo_id          Int
+  ubicazione_id        Int
+  quantita_disponibile Decimal   @db.Decimal(10, 2) @default(0)
+  quantita_riservata   Decimal   @db.Decimal(10, 2) @default(0)
+
+  articolo             Articolo   @relation(fields: [articolo_id], references: [id])
+  ubicazione           Ubicazione @relation(fields: [ubicazione_id], references: [id])
+
+  @@unique([articolo_id, ubicazione_id])
+}
+
+enum TipoMovimento {
+  CARICO
+  SCARICO_CANTIERE
+  TRASFERIMENTO
+  RESO
+}
+
+model MovimentoMagazzino {
+  id               Int       @id @default(autoincrement())
+  tipo_movimento   TipoMovimento
+  articolo_id      Int
+  quantita         Decimal   @db.Decimal(10, 2)
+  
+  // Riferimenti Magazzino
+  ubicazione_da_id Int?
+  ubicazione_a_id  Int?
+  
+  // Riferimenti Job Costing
+  cantiere_id      Int?
+  wbs_node_id      Int?
+
+  // Valori Fiscali
+  costo_unitario   Decimal   @db.Decimal(10, 2)
+  valore_totale    Decimal   @db.Decimal(10, 2)
+  
+  // Audit
+  esecutore_id     Int
+  data_movimento   DateTime  @default(now())
+
+  articolo         Articolo    @relation(fields: [articolo_id], references: [id])
+  ubicazione_da    Ubicazione? @relation("MovimentiDa", fields: [ubicazione_da_id], references: [id])
+  ubicazione_a     Ubicazione? @relation("MovimentiA", fields: [ubicazione_a_id], references: [id])
+  cantiere         Cantiere?   @relation(fields: [cantiere_id], references: [id])
+  wbs_node         WbsNode?    @relation(fields: [wbs_node_id], references: [id])
+  esecutore        User        @relation(fields: [esecutore_id], references: [id])
+}
+
+// ==========================================
+// BOT SESSION (replaces in-process Map)
+// ==========================================
+
+model BotSession {
+  id           String   @id @default(uuid())
+  employee_id  Int
+  type         String   // 'pending_expense'
+  payload_json String
+  expires_at   DateTime
+  created_at   DateTime @default(now())
+
+  employee     Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@index([employee_id, type])
+  @@index([expires_at])
 }

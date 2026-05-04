@@ -115,8 +115,12 @@ describe("bot flow", () => {
       cognome: "Rossi",
       stato_registrazione: "registrato",
     });
-    expect(telegramMocks.tgSendMessage).toHaveBeenCalledTimes(1);
-    expect(telegramMocks.tgSendMessage.mock.calls[0][1]).toContain("INFORMATIVA PRIVACY");
+    // Il bot invia: (1) informativa GDPR, (2) conferma registrazione
+    expect(telegramMocks.tgSendMessage).toHaveBeenCalledTimes(2);
+    const gdprMsg = telegramMocks.tgSendMessage.mock.calls[0][1];
+    expect(gdprMsg).toContain("INFORMATIVA PRIVACY");
+    const confirmMsg = telegramMocks.tgSendMessage.mock.calls[1][1];
+    expect(confirmMsg).toContain("accetto_gdpr");
   });
 
   it("utente registrato senza gdpr non puo usare /edit e riceve solo informativa", async () => {

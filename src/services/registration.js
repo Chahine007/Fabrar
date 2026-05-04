@@ -28,35 +28,6 @@ export async function sendGdprNotice(chatId) {
     await tgSendMessage(chatId, GDPR_NOTICE_MESSAGE);
 }
 
-export async function handleStartCommand(employee, telegramId, chatId) {
-    if (!employee) {
-        await createEmployee(telegramId, chatId);
-        await tgSendMessage(chatId, "👋 Benvenuto! Inviami Nome e Cognome...");
-        return true; // Indica che il flusso è stato gestito
-    }
-    if (employee.stato_registrazione === "in_attesa_nome") {
-        await tgSendMessage(chatId, "👋 Benvenuto! Inviami Nome e Cognome...");
-        return true;
-    }
-    if (employee.gdpr_accettato !== 1) {
-        await sendGdprNotice(chatId);
-        return true;
-    }
-    await tgSendMessage(chatId, "ℹ️ Sei già registrato. Inviami il report di oggi (testo o vocale).");
-    return true;
-}
-
-export async function handleNameRegistration(employee, text, chatId) {
-    const parts = text.split(" ").filter(Boolean);
-    await updateEmployee(employee.id, {
-        nome: parts[0] || null,
-        cognome: parts.slice(1).join(" ") || null,
-        stato_registrazione: "registrato",
-    });
-    await sendGdprNotice(chatId);
-    await tgSendMessage(chatId, "✅ Registrazione completata. Ora invia /accetto_gdpr per accettare l'informativa privacy e GDPR; poi potrai inviare report, spese e posizione.");
-}
-
 export async function handleGdprAccept(employee, chatId) {
     await updateEmployee(employee.id, { gdpr_accettato: 1, chat_id: chatId });
     await tgSendMessage(chatId, "✅ Grazie. Hai accettato l'informativa. Ora puoi inviare report (testo o vocale), spese e posizione.");

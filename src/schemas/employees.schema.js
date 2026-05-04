@@ -1,8 +1,23 @@
 import { z } from "zod";
 
+const employeeRoles = ["WORKER", "ADMIN", "PROJECT_MANAGER", "HR"];
+
 export const employeeIdSchema = z.object({
     params: z.object({
         id: z.coerce.number().positive("ID dipendente non valido."),
+    }),
+});
+
+export const createEmployeeSchema = z.object({
+    body: z.object({
+        firstName: z.string().trim().min(1, "Il nome e' obbligatorio."),
+        lastName: z.string().trim().min(1, "Il cognome e' obbligatorio."),
+        role: z.enum(employeeRoles, { message: "Ruolo non valido." }),
+        hourly_rate: z.coerce.number().min(0, "Il costo orario non puo' essere negativo.").optional(),
+        email: z
+            .union([z.string().trim().email("Email non valida."), z.literal("")])
+            .optional()
+            .transform((value) => (value === "" ? undefined : value)),
     }),
 });
 

@@ -26,12 +26,13 @@ export function createApp() {
       useDefaults: false,
       directives: {
         "default-src": ["'self'"],
-        "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        "script-src-elem": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://accounts.google.com", "https://apis.google.com"],
+        "script-src-elem": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://accounts.google.com", "https://apis.google.com"],
+        "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://accounts.google.com"],
         "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
-        "img-src": ["'self'", "data:", "blob:", "https://ui-avatars.com", "https://*.tile.openstreetmap.org", "https://cdnjs.cloudflare.com"],
-        "connect-src": ["'self'", "ws:", "wss:", "https://gestionale.myfabdar.com"],
+        "img-src": ["'self'", "data:", "blob:", "https://ui-avatars.com", "https://*.tile.openstreetmap.org", "https://cdnjs.cloudflare.com", "https://lh3.googleusercontent.com"],
+        "connect-src": ["'self'", "ws:", "wss:", "https://gestionale.myfabdar.com", "https://accounts.google.com", "https://oauth2.googleapis.com"],
+        "frame-src": ["https://accounts.google.com"],
         "base-uri": ["'self'"],
         "form-action": ["'self'"],
         "frame-ancestors": ["'self'"],
@@ -39,8 +40,9 @@ export function createApp() {
         "upgrade-insecure-requests": [],
       },
     },
-    crossOriginOpenerPolicy: { policy: "same-origin" },
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
     crossOriginResourcePolicy: { policy: "same-origin" },
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
   }));
 
   app.use(pinoHttp({ logger }));

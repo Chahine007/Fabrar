@@ -137,6 +137,51 @@ export function useDocuments(cantiereId: number | null, tag?: string) {
   });
 }
 
+export function useUploadDocument(cantiereId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { file: File; tag?: string; numero_fattura?: string }) => {
+      const fd = new FormData();
+      fd.append('file', payload.file);
+      if (payload.tag)            fd.append('tag',            payload.tag);
+      if (payload.numero_fattura) fd.append('numero_fattura', payload.numero_fattura);
+      const res = await apiFetch(`/api/cantieri/${cantiereId}/documents/upload`, {
+        method:  'POST',
+        headers: {},   // lascia che FormData imposti il Content-Type con il boundary
+        body:    fd,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as any).error ?? 'Errore durante il caricamento del file');
+      }
+      return res.json() as Promise<ProjectDocument>;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: cantierKeys.docs(cantiereId) });
+    },
+  });
+}
+
+export function useUpdateGps(cantiereId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ lat, lng }: { lat: number; lng: number }) => {
+      const res = await apiFetch(`/api/cantieri/${cantiereId}/gps`, {
+        method: 'PATCH',
+        body:   JSON.stringify({ lat, lng }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as any).error ?? 'Errore aggiornamento GPS');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: cantierKeys.detail(cantiereId) });
+    },
+  });
+}
+
 // ─── Genya bulk import ───────────────────────────────────────────────────────
 
 export function useCreateCantiere() {

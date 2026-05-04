@@ -4,6 +4,7 @@ import pg from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import logger from '../logger.js';
 import dotenv from 'dotenv';
+import { ValidationStatus } from '../constants.js';
 
 dotenv.config();
 
@@ -226,16 +227,19 @@ export async function listReports({ start, end } = {}) {
   }));
 }
 
-export async function listReportsWithEntries({ start, end } = {}) {
+export async function listReportsWithEntries({ start, end, employeeId } = {}) {
   const reports = await prisma.report.findMany({
-    where: start || end
-      ? {
-        report_date: {
-          ...(start ? { gte: parseDateOnly(start) } : {}),
-          ...(end ? { lte: parseDateOnly(end) } : {})
-        }
-      }
-      : undefined,
+    where: {
+      ...(employeeId ? { employee_id: Number(employeeId) } : {}),
+      ...(start || end
+        ? {
+            report_date: {
+              ...(start ? { gte: parseDateOnly(start) } : {}),
+              ...(end ? { lte: parseDateOnly(end) } : {})
+            }
+          }
+        : {}),
+    },
     orderBy: { data_utc: 'desc' },
     include: { employee: true, entries: { orderBy: { id: 'asc' } } }
   });
@@ -313,17 +317,12 @@ export async function getCantieriStatus({ activeOnly = true } = {}) {
     ...(activeOnly ? { where: { attivo: 1 } } : {}),
     include: {
       report_entries: {
-        where: { stato_validazione: { in: ['verified', 'VERIFIED'] } },
+        where: { stato_validazione: { in: ['VERIFIED'] } },
         include: { report: { include: { employee: { include: { tariffe: { orderBy: { valido_dal: 'desc' }, take: 1 } } } } } }
       },
       spese: {
         where: {
-          NOT: {
-            OR: [
-              { stato_validazione: { in: ["rejected", "REJECTED"] } },
-              { status: { in: ["rejected", "REJECTED"] } },
-            ],
-          },
+          NOT: { stato_validazione: ValidationStatus.REJECTED },
         }
       }
     },
@@ -463,7 +462,11 @@ export async function findUserById(id) {
   return prisma.user.findUnique({ where: { id } });
 }
 export async function findUserByEmployeeId(employeeId) {
-  return prisma.user.findFirst({ where: { employee_id: employeeId } });
+  const emp = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    include: { user: true },
+  });
+  return emp?.user ?? null;
 }
 export async function listUsers() {
   const users = await prisma.user.findMany({
@@ -472,13 +475,13 @@ export async function listUsers() {
   });
   return users.map(u => ({ ...u, nome: u.employee?.nome, cognome: u.employee?.cognome }));
 }
-export async function createUser({ employee_id, username, password_hash, role, is_active = 1 }) {
+export async function createUser({ username, password_hash, email, google_id, role, is_active = 1 }) {
   return prisma.user.create({
-    data: { employee_id, username, password_hash, role, is_active }
+    data: { username, password_hash, email, google_id, role, is_active }
   });
 }
 export async function updateUser(id, fields) {
-  const allowed = ["employee_id", "username", "password_hash", "role", "is_active"];
+  const allowed = ["username", "password_hash", "email", "google_id", "role", "is_active"];
   const data = {};
   for (const k of allowed) if (fields[k] !== undefined) data[k] = fields[k];
   if (Object.keys(data).length > 0) {
@@ -506,6 +509,68 @@ export async function createReportEntry(fields) {
   const created = await prisma.reportEntry.create({ data });
   return created.id;
 }
+
+/**
+ * upsertReportEntry — Comportamento idempotente per i messaggi del bot.
+ *
+ * Cerca una ReportEntry esistente per (report_id, cantiere_id, fonte).
+ * - Se trovata: accumula le ore e aggiorna i campi testuali (attivita_svolte, orari, note).
+ * - Se non trovata: crea una nuova riga (delega a createReportEntry).
+ *
+ * Questo garantisce che ogni re-invio dell'utente aggiorni la entry del giorno
+ * invece di creare entry duplicate nel tabulato.
+ */
+export async function upsertReportEntry(fields) {
+  const { report_id, cantiere_id, fonte, ore_lavorate, ...rest } = fields;
+
+  // Cerca entry esistente per questo report+cantiere+fonte
+  const existing = await prisma.reportEntry.findFirst({
+    where: {
+      report_id,
+      cantiere_id: cantiere_id ?? null,
+      fonte: fonte ?? null,
+      // Escludi le entry GPS (sempre nuove, sono timestamp di check-in)
+      NOT: { fonte: 'GPS' },
+    },
+  });
+
+  if (existing) {
+    // Accumula ore se fornite
+    const newOre = ore_lavorate != null
+      ? (existing.ore_lavorate ?? 0) + ore_lavorate
+      : existing.ore_lavorate;
+
+    // Wbs: risolvi se cantiere è cambiato
+    let wbs_node_id = rest.wbs_node_id ?? existing.wbs_node_id;
+    if (cantiere_id && !rest.wbs_node_id) {
+      const wbs = await prisma.wbsNode.findFirst({ where: { cantiere_id, parent_id: null } });
+      wbs_node_id = wbs ? wbs.id : null;
+    }
+
+    await prisma.reportEntry.update({
+      where: { id: existing.id },
+      data: {
+        ore_lavorate:          newOre,
+        cantiere_id:           cantiere_id ?? existing.cantiere_id,
+        wbs_node_id,
+        ingresso:              rest.ingresso              ?? existing.ingresso,
+        pausa_inizio:          rest.pausa_inizio          ?? existing.pausa_inizio,
+        pausa_fine:            rest.pausa_fine            ?? existing.pausa_fine,
+        uscita:                rest.uscita                ?? existing.uscita,
+        attivita_svolte:       rest.attivita_svolte       ?? existing.attivita_svolte,
+        luogo_cantiere:        rest.luogo_cantiere        ?? existing.luogo_cantiere,
+        problemi_riscontrati:  rest.problemi_riscontrati  ?? existing.problemi_riscontrati,
+        testo_originale:       rest.testo_originale       ?? existing.testo_originale,
+        fonte:                 fonte                      ?? existing.fonte,
+      },
+    });
+    return existing.id;
+  }
+
+  // Nessuna entry esistente → crea nuova
+  return createReportEntry({ report_id, cantiere_id, fonte, ore_lavorate, ...rest });
+}
+
 
 export async function getReportEntryById(id) {
   return prisma.reportEntry.findUnique({ where: { id } });
@@ -544,7 +609,7 @@ export async function deleteReportEntriesByReportId(reportId) {
 // Report Header
 export async function getReportById(id) { return prisma.report.findUnique({ where: { id } }); }
 export async function updateReportHeader(id, fields) {
-  const allowed = ["data_utc", "report_date", "employee_id", "cantiere_id", "ore_lavorate", "ingresso", "pausa_inizio", "pausa_fine", "uscita", "attivita_svolte", "luogo_cantiere", "problemi_riscontrati", "testo_originale", "stato_validazione", "fonte", "status", "input_method", "admin_note", "modified_by_admin_at"];
+  const allowed = ["data_utc", "report_date", "employee_id", "cantiere_id", "ore_lavorate", "ingresso", "pausa_inizio", "pausa_fine", "uscita", "attivita_svolte", "luogo_cantiere", "problemi_riscontrati", "testo_originale", "stato_validazione", "fonte", "input_method", "admin_note", "modified_by_admin_at"];
   const data = {};
   for (const k of allowed) if (fields[k] !== undefined) data[k] = fields[k];
   if (data.data_utc) data.data_utc = new Date(data.data_utc);
@@ -556,7 +621,7 @@ export async function updateReportHeader(id, fields) {
 // Spese
 export async function getSpesaById(id) { return prisma.spesa.findUnique({ where: { id } }); }
 export async function updateSpesa(id, fields) {
-  const allowed = ["timestamp_utc", "employee_id", "cantiere_id", "importo", "fornitore", "descrizione", "fonte", "fattura_rif", "pricebook_id", "quantita", "stato_validazione", "status", "input_method", "admin_note", "modified_by_admin_at", "wbs_node_id"];
+  const allowed = ["timestamp_utc", "employee_id", "cantiere_id", "importo", "fornitore", "descrizione", "fonte", "fattura_rif", "pricebook_id", "quantita", "stato_validazione", "input_method", "admin_note", "modified_by_admin_at", "wbs_node_id"];
   const data = {};
   for (const k of allowed) if (fields[k] !== undefined) data[k] = fields[k];
   if (data.timestamp_utc) data.timestamp_utc = new Date(data.timestamp_utc);
@@ -692,12 +757,7 @@ export async function getWbsBurnData(cantiereId) {
     where: {
       cantiere_id: id,
       wbs_node_id: { not: null },
-      NOT: {
-        OR: [
-          { stato_validazione: { in: ['rejected', 'REJECTED'] } },
-          { status: { in: ['rejected', 'REJECTED'] } },
-        ],
-      },
+      NOT: { stato_validazione: ValidationStatus.REJECTED },
     },
   });
 

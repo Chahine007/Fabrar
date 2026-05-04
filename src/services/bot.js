@@ -5,7 +5,6 @@ import { DateTime } from "luxon";
 import logger from "../logger.js";
 import {
   findEmployeeByTelegramId,
-  createEmployee,
   updateEmployee,
   insertMessageLog,
   cantiereExists,
@@ -22,11 +21,11 @@ import { tgSendMessage, tgGetFile, tgDownloadFile, tgEditMessageText, tgAnswerCa
 import { transcribeAudio, extractReport, extractSpesaFromImage, getOpenAIUserFacingMessage } from "./openai.js";
 import { maybeConvertToWav } from "./audio.js";
 import { calculateDistance } from "../utils/geo.js";
-import { handleStartCommand, handleNameRegistration, handleGdprAccept, sendGdprNotice } from "./registration.js";
+import { handleGdprAccept, sendGdprNotice } from "./registration.js";
 import { handleReport, saveManualReportRows, buildConfirmMessage, calcOreFromOrari, buildWbsKeyboard } from "./reportHandler.js";
 
-import { handleExpensePhoto, getPendingExpenses } from "./expenseHandler.js";
-import { DB_STATUS } from "../constants.js";
+import { handleExpensePhoto, consumePendingExpense } from "./expenseHandler.js";
+import { ValidationStatus } from "../constants.js";
 
 const log = logger.child({ module: "bot" });
 const TIMEZONE = process.env.TIMEZONE || "Europe/Rome";
@@ -114,12 +113,13 @@ export async function handleCallbackQuery(cq) {
 
   if (data.startsWith("spesa:")) {
     const parts = data.split(":");
+    // Format: spesa:<sessionId (UUID with dashes)>:<cantiereId>
+    // UUID has 4 dashes → parts.length >= 6. cantiereId is last part.
     if (parts.length < 3) return;
-    const refMsgId = parts[1];
-    const cantiereId = parseInt(parts[2], 10);
+    const cantiereId = parseInt(parts[parts.length - 1], 10);
+    const sessionId  = parts.slice(1, parts.length - 1).join(":");
 
-    const pendingExpenses = getPendingExpenses();
-    const expenseData = pendingExpenses.get(refMsgId);
+    const expenseData = await consumePendingExpense(sessionId);
     if (!expenseData) {
       await tgAnswerCallbackQuery(cq.id, "Sessione scaduta o spesa già assegnata.");
       await tgEditMessageText(chatId, messageId, "⌛ Scontrino: sessione scaduta.");
@@ -136,10 +136,6 @@ export async function handleCallbackQuery(cq) {
         "TELEGRAM_OCR",
         null
       );
-
-      clearTimeout(expenseData.timeoutId);
-      pendingExpenses.delete(refMsgId);
-
       await tgEditMessageText(chatId, messageId, `💶 Spesa di ${expenseData.importo}€ salvata e assegnata al cantiere!`);
       await tgAnswerCallbackQuery(cq.id, "Spesa salvata!");
     } catch (err) {
@@ -244,13 +240,36 @@ export async function handleTelegramUpdate(update) {
 
   let employee = await findEmployeeByTelegramId(telegramId);
 
-  if (text === "/start") {
-    await handleStartCommand(employee, telegramId, chatId);
+  if (!employee) {
+    if (text.toUpperCase().startsWith("TG-")) {
+      const { getDb } = await import("../db/index.js");
+      const code = text.toUpperCase();
+      const empByCode = await getDb().employee.findUnique({ where: { telegram_pairing_code: code } });
+      if (empByCode) {
+        await updateEmployee(empByCode.id, { 
+          telegram_id: telegramId, 
+          chat_id: chatId, 
+          telegram_pairing_code: null,
+          stato_registrazione: "registrato"
+        });
+        await tgSendMessage(chatId, `✅ Account collegato con successo! Benvenuto ${empByCode.nome || "Dipendente"}. Usa /accetto_gdpr per continuare.`);
+        return;
+      } else {
+        await tgSendMessage(chatId, "❌ Codice non valido o scaduto.");
+        return;
+      }
+    }
+
+    await tgSendMessage(chatId, "Account non riconosciuto. Vai sulla Web App Fabrar, entra in 'Il mio Account', genera un codice Telegram e scrivilo qui per collegare il tuo profilo.");
     return;
   }
 
-  if (!employee) {
-    await tgSendMessage(chatId, "Prima registrati con /start.");
+  if (text === "/start") {
+    if (employee.gdpr_accettato !== 1) {
+      await sendGdprNotice(chatId);
+      return;
+    }
+    await tgSendMessage(chatId, "ℹ️ Sei già collegato e registrato. Inviami il report di oggi (testo o vocale).");
     return;
   }
 
@@ -287,10 +306,7 @@ export async function handleTelegramUpdate(update) {
     return;
   }
 
-  if (employee.stato_registrazione === "in_attesa_nome") {
-    await handleNameRegistration(employee, text, chatId);
-    return;
-  }
+
 
   if (text.toLowerCase() === "/accetto_gdpr") {
     await handleGdprAccept(employee, chatId);
@@ -306,6 +322,28 @@ export async function handleTelegramUpdate(update) {
 
   const reportDate = employee.pending_report_date || localReportDate();
 
+  // ── F9: Comando /imposta_gps — solo admin/PM verificati via tabella User ──
+  if (text.toLowerCase() === '/imposta_gps') {
+    const { getDb } = await import('../db/index.js');
+    const adminUser = await getDb().user.findFirst({
+      where: {
+        employee_id: employee.id,
+        is_active:   1,
+        role:        { in: ['ADMIN', 'EXTERNAL_PM'] },
+      },
+    });
+    if (!adminUser) {
+      await tgSendMessage(chatId, '\u26d4 Comando riservato agli amministratori e ai Project Manager.');
+      return;
+    }
+    // Salva il flag nel pending_json
+    await updateEmployee(employee.id, {
+      pending_json: JSON.stringify({ __awaiting_gps_admin: true }),
+    });
+    await tgSendMessage(chatId, '\ud83d\udccd Invia la tua posizione GPS. Le coordinate verranno assegnate al cantiere pi\u00f9 vicino tra quelli esistenti.');
+    return;
+  }
+
   if (message.location) {
     const userLat = message.location.latitude;
     const userLng = message.location.longitude;
@@ -313,6 +351,40 @@ export async function handleTelegramUpdate(update) {
     let targetCantiere = null;
     let dist = Infinity;
     let pendingData = null;
+
+    // ── F9: Check admin GPS override (\/imposta_gps) ──
+    if (employee.pending_json) {
+      try {
+        const parsed = JSON.parse(employee.pending_json);
+        if (parsed.__awaiting_gps_admin) {
+          // Trova il cantiere più vicino tra tutti quelli attivi
+          const allCantieri = await getCantieriConCoordinate();
+          let nearestId = null;
+          let nearestNome = 'N/D';
+          let nearestDist = Infinity;
+          for (const c of allCantieri) {
+            const d = calculateDistance(userLat, userLng, c.lat, c.lng);
+            if (d < nearestDist) { nearestDist = d; nearestId = c.id; nearestNome = c.nome; }
+          }
+          // Aggiorna le coordinate anche se già presenti (override esplicito admin)
+          const { getDb } = await import('../db/index.js');
+          const cantieriAll = await getDb().cantiere.findMany({ where: { attivo: 1 }, select: { id: true, nome: true } });
+          // Prendi il cantiere più vicino con coordinate O il primo senza coordinate
+          let targetId = nearestId;
+          let targetNome = nearestNome;
+          if (!targetId && cantieriAll.length > 0) { targetId = cantieriAll[0].id; targetNome = cantieriAll[0].nome; }
+          if (targetId) {
+            await getDb().cantiere.update({ where: { id: targetId }, data: { lat: userLat, lng: userLng } });
+            log.info({ cantiereId: targetId, lat: userLat, lng: userLng }, 'cantiere_gps_admin_set');
+            await tgSendMessage(chatId, `\u2705 Coordinate aggiornate per il cantiere \u00ab${targetNome}\u00bb (${userLat.toFixed(6)}, ${userLng.toFixed(6)}).`);
+          } else {
+            await tgSendMessage(chatId, '\u26a0\ufe0f Nessun cantiere trovato nel sistema. Creane uno prima di impostare le coordinate.');
+          }
+          await updateEmployee(employee.id, { pending_json: null });
+          return;
+        }
+      } catch (e) { }
+    }
 
     if (employee.pending_json) {
       try {
@@ -366,10 +438,28 @@ export async function handleTelegramUpdate(update) {
     await createReportEntry({
       report_id: reportId,
       cantiere_id: targetCantiere.id,
-      stato_validazione: DB_STATUS.VERIFIED,
+      stato_validazione: ValidationStatus.VERIFIED,
       fonte: "GPS",
     });
     await updateReportHeader(reportId, { data_utc: new Date().toISOString() });
+
+    // ── F9: Auto-update GPS — imposta le coordinate del cantiere se non le ha ancora ──
+    if (!targetCantiere.lat || !targetCantiere.lng) {
+      try {
+        const { getDb } = await import('../db/index.js');
+        await getDb().cantiere.update({
+          where: { id: targetCantiere.id },
+          data:  { lat: userLat, lng: userLng },
+        });
+        log.info({ cantiereId: targetCantiere.id, lat: userLat, lng: userLng }, 'cantiere_gps_auto_set');
+        // Notifica solo per check-in generico (non interrompere il flusso WBS pending)
+        if (!pendingData) {
+          await tgSendMessage(chatId, `📍 Coordinate GPS del cantiere «${targetCantiere.nome}» impostate automaticamente da questo check-in.`);
+        }
+      } catch (gpsErr) {
+        log.warn({ err: gpsErr, cantiereId: targetCantiere.id }, 'cantiere_gps_auto_set_failed');
+      }
+    }
 
     if (pendingData) {
       // proceed to WBS
