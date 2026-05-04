@@ -41,6 +41,7 @@ const server = app.listen(port, "0.0.0.0", () => {
 
 // Initialize Socket.io after server is listening
 const io = initSockets(server);
+app.set("io", io);
 registerKpiListeners(io);
 
 process.on("SIGTERM", async () => {

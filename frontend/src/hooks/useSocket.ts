@@ -27,17 +27,23 @@ export const useSocket = (userId?: number) => {
     useEffect(() => {
         if (!userId) return;
 
-        // Register user
-        socket.emit('user_online', userId);
+        const registerUser = () => {
+            socket.emit('user_online', userId);
+        };
 
-        // Periodically refresh online list (or on event)
         const handleOnlineList = (users: (string | number)[]) => {
             setOnlineUsers(new Set(users.map(String)));
         };
 
+        if (socket.connected) {
+            registerUser();
+        }
+
+        socket.on('connect', registerUser);
         socket.on('online_users_list', handleOnlineList);
 
         return () => {
+            socket.off('connect', registerUser);
             socket.off('online_users_list', handleOnlineList);
         };
     }, [userId, socket]);

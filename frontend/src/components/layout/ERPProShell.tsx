@@ -24,7 +24,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
 import { cn } from '../../lib/utils';
-import { useConversations, useTotalUnread } from '../../hooks/api/useConversations';
+import { useChatSockets, useTotalUnread } from '../../hooks/api/useConversations';
 import { useHrAlerts } from '../../hooks/api/useHr';
 import { useAuthContext } from '../../context/AuthContext';
 import { RoleGuard } from '../auth/RoleGuard';
@@ -473,6 +473,8 @@ const Header = ({ onMenuClick, onLogout }: { onMenuClick: () => void, onLogout: 
 
 export default function ERPProShell({ onLogout }: { onLogout: () => void }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user } = useAuthContext();
+  useChatSockets(user);
 
   return (
     <div className="flex h-screen bg-background overflow-hidden selection:bg-accent/20">

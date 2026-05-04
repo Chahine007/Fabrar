@@ -45,3 +45,46 @@ export const createEmployee = asyncHandler(async (req, res) => {
 
   res.status(201).json(mapCreatedEmployeeResponse(created.employee, created.tariffa));
 });
+
+export const searchEmployees = asyncHandler(async (req, res) => {
+  const prisma = getDb();
+  const query = String(req.query.q ?? "").trim();
+  const currentEmployeeId = Number(req.user?.employee_id);
+
+  if (!query) {
+    return res.json([]);
+  }
+
+  const employees = await prisma.employee.findMany({
+    where: {
+      attivo: 1,
+      id: Number.isInteger(currentEmployeeId) && currentEmployeeId > 0
+        ? { not: currentEmployeeId }
+        : undefined,
+      OR: [
+        { nome: { contains: query, mode: "insensitive" } },
+        { cognome: { contains: query, mode: "insensitive" } },
+      ],
+    },
+    select: {
+      id: true,
+      nome: true,
+      cognome: true,
+      ruolo: true,
+    },
+    orderBy: [
+      { nome: "asc" },
+      { cognome: "asc" },
+    ],
+    take: 10,
+  });
+
+  res.json(
+    employees.map((employee) => ({
+      id: employee.id,
+      firstName: employee.nome ?? "",
+      lastName: employee.cognome ?? "",
+      role: employee.ruolo ?? "WORKER",
+    }))
+  );
+});

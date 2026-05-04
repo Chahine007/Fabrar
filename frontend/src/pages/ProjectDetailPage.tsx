@@ -533,7 +533,7 @@ const MessagesTab = ({ cantiereId, cantierNome }: { cantiereId: number; cantierN
 
   const conversationId = conversation?.id ?? null;
   const { data: messages, isLoading: loadingMsgs, error } = useMessages(conversationId);
-  const sendMsg = useSendMessage(conversationId ?? '');
+  const sendMsg = useSendMessage(conversationId);
 
   const [input, setInput] = useState('');
 
@@ -578,11 +578,9 @@ const MessagesTab = ({ cantiereId, cantierNome }: { cantiereId: number; cantierN
         </div>
         <div>
           <p className="font-bold text-text-primary text-sm">{conversation.name}</p>
-          <p className="text-[11px] text-text-secondary">
-            Aggiornamento automatico ogni 5s
-          </p>
+            <p className="text-[11px] text-text-secondary">Aggiornamento in tempo reale</p>
+          </div>
         </div>
-      </div>
 
       {/* Area messaggi */}
       <div className="flex-1 overflow-y-auto px-5 py-4 no-scrollbar space-y-4">

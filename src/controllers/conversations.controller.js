@@ -1,115 +1,301 @@
 import { getDb } from "../db/index.js";
+import { getActiveSockets } from "../sockets/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
-// Utility locale per formattare l'ora in stile "14:30"
 function formatMessageTime(dateStr) {
     if (!dateStr) return "";
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return "";
-    return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return "";
+    return date.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+}
+
+function getCurrentEmployeeId(req, res) {
+    const employeeId = Number(req.user?.employee_id);
+    if (!Number.isInteger(employeeId) || employeeId <= 0) {
+        res.status(403).json({ error: "Accesso negato: profilo dipendente non associato." });
+        return null;
+    }
+    return employeeId;
+}
+
+function buildEmployeeName(employee) {
+    const fullName = `${employee?.nome || ""} ${employee?.cognome || ""}`.trim();
+    if (fullName) return fullName;
+    if (employee?.id) return `Utente ${employee.id}`;
+    return "Conversazione";
+}
+
+function buildAvatar(name, type) {
+    if (type === "system") {
+        return "https://ui-avatars.com/api/?name=S&background=6366f1&color=fff";
+    }
+
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || "U")}&background=random`;
+}
+
+function mapConversationSummary(conversation, currentEmployeeId) {
+    const conversationType = String(conversation.type || "system").toLowerCase();
+    const lastMessage = conversation.messages?.[0] ?? null;
+    const currentParticipant = conversation.participants?.find(
+        (participant) => participant.employee_id === currentEmployeeId
+    ) ?? null;
+    const otherParticipant = conversationType === "direct"
+        ? conversation.participants?.find((participant) => participant.employee_id !== currentEmployeeId) ?? null
+        : null;
+
+    const displayName = otherParticipant?.employee
+        ? buildEmployeeName(otherParticipant.employee)
+        : conversation.name || "Conversazione";
+
+    return {
+        id: conversation.id,
+        name: displayName,
+        preview: lastMessage ? lastMessage.content : "Nessun messaggio",
+        timestamp: lastMessage ? formatMessageTime(lastMessage.created_at) : "",
+        unreadCount: currentParticipant?.unread_count || 0,
+        type: conversationType,
+        avatar: buildAvatar(displayName, conversationType),
+        isPinned: !!conversation.isPinned,
+        projectContext: conversation.cantiere_id ? { status: "In Corso", team: "Staff Progetto" } : undefined,
+        participants: (conversation.participants || []).map((participant) => ({
+            employee_id: participant.employee_id,
+            unread_count: participant.unread_count,
+            joined_at: participant.joined_at,
+        })),
+    };
+}
+
+async function ensureSystemConversationForEmployee(prisma, employeeId) {
+    let assistanceConversation = await prisma.conversation.findFirst({
+        where: { type: "system", name: "Assistenza Tecnica" },
+        select: { id: true },
+    });
+
+    if (!assistanceConversation) {
+        assistanceConversation = await prisma.conversation.create({
+            data: {
+                name: "Assistenza Tecnica",
+                type: "system",
+                isPinned: true,
+                messages: {
+                    create: {
+                        type: "system_task",
+                        content: "Benvenuto nel sistema ERP Fabrar. Qui riceverai notifiche e assistenza.",
+                    },
+                },
+            },
+            select: { id: true },
+        });
+    }
+
+    await prisma.conversationParticipant.upsert({
+        where: {
+            conversation_id_employee_id: {
+                conversation_id: assistanceConversation.id,
+                employee_id: employeeId,
+            },
+        },
+        update: {},
+        create: {
+            conversation_id: assistanceConversation.id,
+            employee_id: employeeId,
+        },
+    });
+}
+
+async function loadConversationSummary(prisma, conversationId, currentEmployeeId) {
+    const conversation = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        include: {
+            messages: {
+                orderBy: { created_at: "desc" },
+                take: 1,
+            },
+            participants: {
+                select: {
+                    employee_id: true,
+                    unread_count: true,
+                    joined_at: true,
+                    employee: {
+                        select: {
+                            id: true,
+                            nome: true,
+                            cognome: true,
+                        },
+                    },
+                },
+            },
+        },
+    });
+
+    return conversation ? mapConversationSummary(conversation, currentEmployeeId) : null;
 }
 
 export const listConversations = asyncHandler(async (req, res) => {
     const prisma = getDb();
+    const currentEmployeeId = getCurrentEmployeeId(req, res);
+    if (currentEmployeeId == null) return;
 
-    let convs = await prisma.conversation.findMany({
+    await ensureSystemConversationForEmployee(prisma, currentEmployeeId);
+
+    const conversations = await prisma.conversation.findMany({
+        where: {
+            participants: {
+                some: { employee_id: currentEmployeeId },
+            },
+        },
         include: {
             messages: {
-                orderBy: { created_at: 'desc' },
-                take: 1
-            }
+                orderBy: { created_at: "desc" },
+                take: 1,
+            },
+            participants: {
+                select: {
+                    employee_id: true,
+                    unread_count: true,
+                    joined_at: true,
+                    employee: {
+                        select: {
+                            id: true,
+                            nome: true,
+                            cognome: true,
+                        },
+                    },
+                },
+            },
         },
-        orderBy: { isPinned: 'desc' }
+        orderBy: [{ isPinned: "desc" }, { created_at: "desc" }],
     });
 
-    // Se la tabella è vuota o mancano chat di sistema, creiamole
-    if (convs.length === 0) {
-        await prisma.conversation.create({
-            data: {
-                name: 'Assistenza Tecnica',
-                type: 'system',
-                isPinned: true,
-                messages: {
-                    create: {
-                        type: 'system_task',
-                        content: 'Benvenuto nel sistema ERP Fabrar. Qui riceverai notifiche e assistenza.'
-                    }
-                }
-            }
-        });
-        // Ripeti il query per avere i dati dopo il seed
-        convs = await prisma.conversation.findMany({
-            include: { messages: { orderBy: { created_at: 'desc' }, take: 1 } },
-            orderBy: { isPinned: 'desc' }
-        });
+    res.json(conversations.map((conversation) => mapConversationSummary(conversation, currentEmployeeId)));
+});
+
+export const findOrCreateDirectConversation = asyncHandler(async (req, res) => {
+    const prisma = getDb();
+    const currentEmployeeId = getCurrentEmployeeId(req, res);
+    if (currentEmployeeId == null) return;
+
+    const targetEmployeeId = Number(req.body.targetEmployeeId);
+    if (!Number.isInteger(targetEmployeeId) || targetEmployeeId <= 0) {
+        return res.status(400).json({ error: "ID dipendente destinatario non valido." });
     }
 
-    const mapped = convs.map(c => {
-        const lastMsg = c.messages && c.messages[0];
-        let timestamp = "";
-        try {
-            timestamp = lastMsg ? formatMessageTime(lastMsg.created_at) : "";
-        } catch (e) {
-            timestamp = "";
-        }
+    if (targetEmployeeId === currentEmployeeId) {
+        return res.status(400).json({ error: "Non puoi creare una chat diretta con te stesso." });
+    }
 
-        return {
-            id: c.id,
-            name: c.name || "Conversazione",
-            preview: lastMsg ? lastMsg.content : "Nessun messaggio",
-            timestamp,
-            unreadCount: c.unreadCount || 0,
-            type: c.type || "system",
-            avatar: c.type === 'system'
-                ? 'https://ui-avatars.com/api/?name=S&background=6366f1&color=fff'
-                : `https://ui-avatars.com/api/?name=${encodeURIComponent(c.name || 'U')}&background=random`,
-            isPinned: !!c.isPinned,
-            projectContext: c.cantiere_id ? { status: 'In Corso', team: 'Staff Progetto' } : undefined
-        };
+    const targetEmployee = await prisma.employee.findUnique({
+        where: { id: targetEmployeeId },
+        select: {
+            id: true,
+            nome: true,
+            cognome: true,
+            attivo: true,
+        },
     });
 
-    res.json(mapped);
+    if (!targetEmployee || targetEmployee.attivo !== 1) {
+        return res.status(404).json({ error: "Dipendente destinatario non trovato." });
+    }
+
+    const existingConversation = await prisma.conversation.findFirst({
+        where: {
+            AND: [
+                { type: { in: ["DIRECT", "direct"] } },
+                { participants: { some: { employee_id: currentEmployeeId } } },
+                { participants: { some: { employee_id: targetEmployeeId } } },
+                { participants: { every: { employee_id: { in: [currentEmployeeId, targetEmployeeId] } } } },
+            ],
+        },
+        select: { id: true },
+    });
+
+    if (existingConversation) {
+        const summary = await loadConversationSummary(prisma, existingConversation.id, currentEmployeeId);
+        return res.json(summary);
+    }
+
+    const directConversation = await prisma.conversation.create({
+        data: {
+            name: buildEmployeeName(targetEmployee),
+            type: "DIRECT",
+            participants: {
+                create: [
+                    { employee_id: currentEmployeeId },
+                    { employee_id: targetEmployeeId },
+                ],
+            },
+        },
+        select: { id: true },
+    });
+
+    const summary = await loadConversationSummary(prisma, directConversation.id, currentEmployeeId);
+    res.status(201).json(summary);
 });
 
 export const getConversationMessages = asyncHandler(async (req, res) => {
     const { id } = req.params;
     const prisma = getDb();
-    const currentUserId = req.user?.employee_id;
+    const currentUserId = getCurrentEmployeeId(req, res);
+    if (currentUserId == null) return;
 
-    // Azzera il contatore dei messaggi non letti quando la chat viene aperta
-    await prisma.conversation.update({
-        where: { id: id },
-        data: { unreadCount: 0 }
+    const participant = await prisma.conversationParticipant.findUnique({
+        where: {
+            conversation_id_employee_id: {
+                conversation_id: id,
+                employee_id: currentUserId,
+            },
+        },
     });
 
-    const messages = await prisma.message.findMany({
-        where: { conversation_id: id },
-        orderBy: { created_at: 'asc' },
-        include: {
-            sender: {
-                select: {
-                    nome: true,
-                    cognome: true,
-                }
-            }
-        }
+    if (!participant) {
+        return res.status(403).json({ error: "Accesso negato: non partecipi a questa conversazione." });
+    }
+
+    const messages = await prisma.$transaction(async (tx) => {
+        await tx.conversationParticipant.update({
+            where: {
+                conversation_id_employee_id: {
+                    conversation_id: id,
+                    employee_id: currentUserId,
+                },
+            },
+            data: { unread_count: 0 },
+        });
+
+        return tx.message.findMany({
+            where: { conversation_id: id },
+            orderBy: { created_at: "asc" },
+            include: {
+                sender: {
+                    select: {
+                        nome: true,
+                        cognome: true,
+                    },
+                },
+            },
+        });
     });
 
-    const mapped = messages.map(m => {
-        const senderName = m.sender ? `${m.sender.nome || ''} ${m.sender.cognome || ''}`.trim() || `Utente ${m.sender_id}` : 'Sistema';
-        const senderAvatar = m.sender ? `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=random` : '';
+    const mapped = messages.map((message) => {
+        const senderName = message.sender
+            ? `${message.sender.nome || ""} ${message.sender.cognome || ""}`.trim() || `Utente ${message.sender_id}`
+            : "Sistema";
+        const senderAvatar = message.sender
+            ? `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=random`
+            : "";
 
         return {
-            id: m.id,
-            senderId: m.sender_id ? String(m.sender_id) : 'system',
+            id: message.id,
+            senderId: message.sender_id ? String(message.sender_id) : "system",
             senderName,
             senderAvatar,
-            type: m.type,
-            content: m.content,
-            timestamp: formatMessageTime(m.created_at),
-            isMe: currentUserId && m.sender_id === currentUserId,
-            status: 'read',
-            metadata: null
+            type: message.type,
+            content: message.content,
+            timestamp: formatMessageTime(message.created_at),
+            isMe: currentUserId && message.sender_id === currentUserId,
+            status: "read",
+            metadata: null,
         };
     });
 
@@ -119,21 +305,76 @@ export const getConversationMessages = asyncHandler(async (req, res) => {
 export const createMessage = asyncHandler(async (req, res) => {
     const { id } = req.params;
     const { content, type } = req.body;
-    const currentUserId = req.user?.employee_id;
-
     const prisma = getDb();
+    const currentUserId = getCurrentEmployeeId(req, res);
+    if (currentUserId == null) return;
 
-    const [newMessage] = await prisma.$transaction([
-        prisma.message.create({
+    const participant = await prisma.conversationParticipant.findUnique({
+        where: {
+            conversation_id_employee_id: {
+                conversation_id: id,
+                employee_id: currentUserId,
+            },
+        },
+    });
+
+    if (!participant) {
+        return res.status(403).json({ error: "Accesso negato: non partecipi a questa conversazione." });
+    }
+
+    const { newMessage, participants } = await prisma.$transaction(async (tx) => {
+        const createdMessage = await tx.message.create({
             data: {
                 conversation_id: id,
                 sender_id: currentUserId,
                 type,
                 content,
+            },
+        });
+
+        await tx.conversationParticipant.updateMany({
+            where: {
+                conversation_id: id,
+                employee_id: { not: currentUserId },
+            },
+            data: {
+                unread_count: { increment: 1 },
+            },
+        });
+
+        const updatedParticipants = await tx.conversationParticipant.findMany({
+            where: { conversation_id: id },
+            select: {
+                employee_id: true,
+                unread_count: true,
+            },
+        });
+
+        return {
+            newMessage: createdMessage,
+            participants: updatedParticipants,
+        };
+    });
+
+    const io = req.app.get("io");
+    if (io) {
+        for (const conversationParticipant of participants) {
+            const activeSockets = getActiveSockets(conversationParticipant.employee_id);
+            if (activeSockets.length === 0) continue;
+
+            for (const socketId of activeSockets) {
+                io.to(socketId).emit("new_message", {
+                    conversationId: id,
+                    message: newMessage,
+                });
+
+                io.to(socketId).emit("conversation_updated", {
+                    conversationId: id,
+                    unreadCount: conversationParticipant.unread_count,
+                });
             }
-        }),
-        prisma.conversation.update({ where: { id }, data: { unreadCount: { increment: 1 } } })
-    ]);
+        }
+    }
 
     res.status(201).json(newMessage);
 });

@@ -33,12 +33,13 @@ export const employeeKeys = {
   all:    ()              => ['employees'] as const,
   list:   ()              => [...employeeKeys.all(), 'list'] as const,
   detail: (id: number)    => [...employeeKeys.all(), 'detail', id] as const,
+  search: (query: string) => [...employeeKeys.all(), 'search', query] as const,
 };
 
 export const conversationKeys = {
   all:      ()              => ['conversations'] as const,
-  list:     ()              => [...conversationKeys.all(), 'list'] as const,
-  messages: (id: string)    => [...conversationKeys.all(), 'messages', id] as const,
+  list:     ()              => ['conversations'] as const,
+  messages: (id: string)    => ['messages', id] as const,
 };
 
 export const telegramKeys = {

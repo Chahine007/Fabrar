@@ -1,7 +1,33 @@
 import { Server } from "socket.io";
 import logger from "../logger.js";
 
-const onlineUsers = new Map(); // employee_id -> socket_id
+const userSockets = new Map(); // employee_id -> Set<socket_id>
+
+function getOrCreateSocketSet(employeeId) {
+    const normalizedEmployeeId = Number(employeeId);
+    if (!userSockets.has(normalizedEmployeeId)) {
+        userSockets.set(normalizedEmployeeId, new Set());
+    }
+    return userSockets.get(normalizedEmployeeId);
+}
+
+function removeSocketFromUser(employeeId, socketId) {
+    const normalizedEmployeeId = Number(employeeId);
+    const sockets = userSockets.get(normalizedEmployeeId);
+    if (!sockets) return false;
+
+    sockets.delete(socketId);
+    if (sockets.size === 0) {
+        userSockets.delete(normalizedEmployeeId);
+    }
+
+    return true;
+}
+
+export function getActiveSockets(employeeId) {
+    const sockets = userSockets.get(Number(employeeId));
+    return sockets ? Array.from(sockets) : [];
+}
 
 export function initSockets(server) {
     const io = new Server(server, {
@@ -30,11 +56,25 @@ export function initSockets(server) {
         logger.info({ socketId: socket.id }, "Socket connected");
 
         socket.on("user_online", (employeeId) => {
-            if (!employeeId) return;
-            onlineUsers.set(Number(employeeId), socket.id);
-            logger.info({ employeeId, event: "user_online" }, "user_online");
+            const normalizedEmployeeId = Number(employeeId);
+            if (!Number.isInteger(normalizedEmployeeId) || normalizedEmployeeId <= 0) return;
+
+            const sockets = getOrCreateSocketSet(normalizedEmployeeId);
+            sockets.add(socket.id);
+            socket.data.employeeId = normalizedEmployeeId;
+
+            logger.info(
+                {
+                    employeeId: normalizedEmployeeId,
+                    socketId: socket.id,
+                    activeSocketCount: sockets.size,
+                    event: "user_online"
+                },
+                "user_online"
+            );
+
             // Broadcast the list of online employee IDs
-            io.emit("online_users_list", Array.from(onlineUsers.keys()));
+            io.emit("online_users_list", Array.from(userSockets.keys()));
         });
 
         socket.on("typing_start", (data) => {
@@ -48,14 +88,21 @@ export function initSockets(server) {
         });
 
         socket.on("disconnect", () => {
-            for (const [employeeId, socketId] of onlineUsers.entries()) {
-                if (socketId === socket.id) {
-                    onlineUsers.delete(employeeId);
-                    logger.info({ employeeId, event: "user_offline" }, "user_offline");
-                    break;
-                }
+            const employeeId = Number(socket.data.employeeId);
+            if (Number.isInteger(employeeId) && employeeId > 0) {
+                removeSocketFromUser(employeeId, socket.id);
+                logger.info(
+                    {
+                        employeeId,
+                        socketId: socket.id,
+                        remainingSocketCount: getActiveSockets(employeeId).length,
+                        event: "user_offline"
+                    },
+                    "user_offline"
+                );
             }
-            io.emit("online_users_list", Array.from(onlineUsers.keys()));
+
+            io.emit("online_users_list", Array.from(userSockets.keys()));
             logger.info({ socketId: socket.id }, "Socket disconnected");
         });
     });

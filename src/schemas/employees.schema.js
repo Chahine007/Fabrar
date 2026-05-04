@@ -47,3 +47,9 @@ export const parseCvSchema = z.object({
         text: z.string().min(20, "Testo CV troppo corto o mancante (minimo 20 caratteri)."),
     }),
 });
+
+export const searchEmployeesSchema = z.object({
+    query: z.object({
+        q: z.string().trim().min(1, "Parametro di ricerca obbligatorio."),
+    }),
+});

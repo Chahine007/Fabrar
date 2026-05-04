@@ -2,30 +2,25 @@ import React, { useState } from 'react';
 import { X, Send, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { useConversations } from '../hooks/api/useConversations';
 
 interface ShareModalProps {
   isOpen: boolean;
   onClose: () => void;
-  itemToShare: any; // The item being shared
+  itemToShare: any;
   onShare: (conversationId: string, message: string, item: any) => void;
 }
 
-// Mock conversations for sharing
-const MOCK_CONVERSATIONS = [
-  { id: '1', name: 'Cantiere Milano Nord', type: 'project' },
-  { id: '2', name: 'Squadra Manutenzione', type: 'team' },
-  { id: '3', name: 'Marco Rossi', type: 'direct' },
-];
-
 export default function ShareModal({ isOpen, onClose, itemToShare, onShare }: ShareModalProps) {
+  const { data: conversations = [] } = useConversations();
   const [selectedConv, setSelectedConv] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
   if (!isOpen) return null;
 
-  const filteredConvs = MOCK_CONVERSATIONS.filter(c => 
-    c.name.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredConvs = conversations.filter((conversation) =>
+    conversation.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const handleShare = () => {
@@ -86,7 +81,7 @@ export default function ShareModal({ isOpen, onClose, itemToShare, onShare }: Sh
                 />
               </div>
               <div className="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                {filteredConvs.map(conv => (
+                {filteredConvs.map((conv) => (
                   <button
                     key={conv.id}
                     onClick={() => setSelectedConv(conv.id)}
@@ -97,10 +92,15 @@ export default function ShareModal({ isOpen, onClose, itemToShare, onShare }: Sh
                         : "bg-background border-border hover:border-accent/50 text-text-primary"
                     )}
                   >
-                    <span className="font-medium text-sm">{conv.name}</span>
-                    <span className="text-[10px] uppercase tracking-wider opacity-60">{conv.type}</span>
-                  </button>
+                      <span className="font-medium text-sm">{conv.name}</span>
+                      <span className="text-[10px] uppercase tracking-wider opacity-60">{conv.type}</span>
+                    </button>
                 ))}
+                {filteredConvs.length === 0 && (
+                  <div className="px-3 py-4 text-sm text-text-secondary text-center">
+                    Nessuna conversazione disponibile
+                  </div>
+                )}
               </div>
             </div>
 

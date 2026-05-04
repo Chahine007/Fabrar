@@ -15,3 +15,9 @@ export const createMessageSchema = z.object({
         type: z.string().optional().default("text"),
     }),
 });
+
+export const createConversationSchema = z.object({
+    body: z.object({
+        targetEmployeeId: z.coerce.number().int().positive("ID dipendente non valido."),
+    }),
+});

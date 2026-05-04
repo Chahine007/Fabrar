@@ -35,6 +35,13 @@ export interface CreateEmployeePayload {
   email?: string;
 }
 
+export interface EmployeeSearchResult {
+  id: number;
+  firstName: string;
+  lastName: string;
+  role: string;
+}
+
 /** Record completo del dipendente (dettaglio) */
 export interface EmployeeDetail {
   id:          number;
@@ -164,6 +171,17 @@ export function useEmployees() {
     queryKey: employeeKeys.list(),
     queryFn:  () => fetchJson<EmployeeWithKPI[]>('/api/employees'),
     staleTime: 60_000,
+  });
+}
+
+export function useSearchEmployees(query: string, enabled = true) {
+  const normalizedQuery = query.trim();
+
+  return useQuery({
+    queryKey: employeeKeys.search(normalizedQuery),
+    queryFn: () => fetchJson<EmployeeSearchResult[]>(`/api/employees/search?q=${encodeURIComponent(normalizedQuery)}`),
+    enabled: enabled && normalizedQuery.length > 0,
+    staleTime: 30_000,
   });
 }
 

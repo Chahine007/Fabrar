@@ -8,6 +8,7 @@ import {
     employeeIdSchema,
     updateEmployeeSchema,
     parseCvSchema,
+    searchEmployeesSchema,
 } from "../schemas/employees.schema.js";
 import {
     listEmployees,
@@ -15,7 +16,7 @@ import {
     getEmployeeTimeline,
     parseCv,
 } from "../controllers/employees.controller.js";
-import { createEmployee } from "../controllers/employee.controller.js";
+import { createEmployee, searchEmployees } from "../controllers/employee.controller.js";
 
 const router = Router();
 
@@ -27,6 +28,7 @@ const cvParseLimiter = rateLimit({
 
 router.use(["/api/employees", "/api/admin/employees"], verifyToken);
 
+router.get("/api/employees/search", validate(searchEmployeesSchema), searchEmployees);
 router.get("/api/employees", authorizeRoles(...DASHBOARD_ROLES), listEmployees);
 router.post("/api/employees", authorizeRoles("ADMIN", "HR"), validate(createEmployeeSchema), createEmployee);
 router.get("/api/admin/employees/:id/timeline", authorizeRoles(...DASHBOARD_ROLES), validate(employeeIdSchema), getEmployeeTimeline);

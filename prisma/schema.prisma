@@ -51,6 +51,7 @@ model Employee {
   tariffe             Tariffa[]
   message_logs        MessageLog[]
   messages            Message[]
+  conversation_participants ConversationParticipant[]
   bot_sessions        BotSession[]
 }
 
@@ -268,15 +269,15 @@ model Document {
 }
 
 model Conversation {
-  id         String   @id @default(uuid())
-  name       String
-  type       String   // project, team, direct, system
-  isPinned   Boolean  @default(false)
+  id          String   @id @default(uuid())
+  name        String
+  type        String   // project, team, direct, system
+  isPinned    Boolean  @default(false)
   cantiere_id Int?
-  created_at DateTime @default(now())
-  unreadCount Int      @default(0)
+  created_at  DateTime @default(now())
 
-  messages   Message[]
+  messages     Message[]
+  participants ConversationParticipant[]
 }
 
 model Message {
@@ -289,6 +290,19 @@ model Message {
 
   conversation    Conversation @relation(fields: [conversation_id], references: [id])
   sender          Employee?    @relation(fields: [sender_id], references: [id])
+}
+
+model ConversationParticipant {
+  id              Int          @id @default(autoincrement())
+  conversation_id String
+  employee_id     Int
+  unread_count    Int          @default(0)
+  joined_at       DateTime     @default(now())
+
+  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  employee        Employee     @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@unique([conversation_id, employee_id])
 }
 
 // ==========================================
