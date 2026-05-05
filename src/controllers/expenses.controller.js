@@ -2,6 +2,12 @@ import { insertSpesa, listPricebook, getDb } from "../db/index.js";
 import { normalizeOptionalText, parseIdParam } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ValidationStatus } from "../constants.js";
+import {
+    ensureCantiereActive,
+    ensureTaskBelongsToCantiere,
+    ensureWbsBelongsToCantiere,
+    getRootWbsId,
+} from "../domain/shared/linkValidators.js";
 
 const WEB_SOURCE = "WEB";
 const MUTABLE_STATUSES = new Set([ValidationStatus.PENDING, ValidationStatus.REJECTED]);
@@ -24,36 +30,6 @@ function buildExpenseInclude() {
     };
 }
 
-async function ensureCantiereActive(prisma, cantiereId) {
-    const cantiere = await prisma.cantiere.findFirst({
-        where: { id: Number(cantiereId), attivo: 1 },
-        select: { id: true },
-    });
-    return Boolean(cantiere);
-}
-
-async function ensureTaskBelongsToCantiere(prisma, taskId, cantiereId) {
-    if (taskId == null) return true;
-
-    const task = await prisma.task.findUnique({
-        where: { id: Number(taskId) },
-        select: { id: true, cantiere_id: true },
-    });
-
-    return Boolean(task && task.cantiere_id === Number(cantiereId));
-}
-
-async function ensureWbsBelongsToCantiere(prisma, wbsNodeId, cantiereId) {
-    if (wbsNodeId == null) return true;
-
-    const node = await prisma.wbsNode.findUnique({
-        where: { id: Number(wbsNodeId) },
-        select: { id: true, cantiere_id: true },
-    });
-
-    return Boolean(node && node.cantiere_id === Number(cantiereId));
-}
-
 async function ensureDocumentBelongsToCantiere(prisma, documentId, cantiereId) {
     if (documentId == null) return true;
 
@@ -63,14 +39,6 @@ async function ensureDocumentBelongsToCantiere(prisma, documentId, cantiereId) {
     });
 
     return Boolean(document && document.cantiere_id === Number(cantiereId));
-}
-
-async function getRootWbsId(prisma, cantiereId) {
-    const root = await prisma.wbsNode.findFirst({
-        where: { cantiere_id: Number(cantiereId), parent_id: null },
-        select: { id: true },
-    });
-    return root?.id ?? null;
 }
 
 async function validateExpenseLinks(prisma, { cantiereId, taskId, wbsNodeId, documentId }) {

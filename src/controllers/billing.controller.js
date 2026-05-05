@@ -2,6 +2,7 @@ import { getDb } from "../db/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { normalizeOptionalText, parseIdParam, round2, toNumber } from "../utils/helpers.js";
 import { getProjectFinancials } from "../domain/finance/financeService.js";
+import { ensureWbsBelongsToCantiere } from "../domain/shared/linkValidators.js";
 
 const INSTALLMENT_STATUSES = ["PENDING", "INVOICED", "PAID"];
 const INVOICE_STATUSES = ["DRAFT", "ISSUED", "PAID"];
@@ -93,20 +94,6 @@ async function ensureCantiereExists(prisma, cantiereId) {
   });
 
   return cantiere;
-}
-
-async function ensureWbsBelongsToCantiere(prisma, wbsNodeId, cantiereId) {
-  if (wbsNodeId == null) return true;
-
-  const node = await prisma.wbsNode.findFirst({
-    where: {
-      id: wbsNodeId,
-      cantiere_id: cantiereId,
-    },
-    select: { id: true },
-  });
-
-  return Boolean(node);
 }
 
 async function ensureDocumentBelongsToCantiere(prisma, documentId, cantiereId) {

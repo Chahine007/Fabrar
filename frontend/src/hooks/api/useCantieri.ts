@@ -5,6 +5,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, api } from '../../lib/api';
 import { cantierKeys } from './queryKeys';
+import type { ProjectDocument } from '../../types/project-detail';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -67,22 +68,22 @@ export interface Task {
   due: string;
 }
 
-export interface ProjectDocument {
-  id: number;
-  name: string;
-  type: string;
-  size: string;
-  date: string;
-  uploader: string;
-}
-
 // ─── Fetch helpers ───────────────────────────────────────────────────────────
+
+function getErrorMessage(body: unknown, fallback: string) {
+  return typeof body === 'object' &&
+    body !== null &&
+    'error' in body &&
+    typeof body.error === 'string'
+    ? body.error
+    : fallback;
+}
 
 async function fetchJson<T>(path: string): Promise<T> {
   const res = await apiFetch(path);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as any).error ?? `Errore ${res.status}`);
+    throw new Error(getErrorMessage(body, `Errore ${res.status}`));
   }
   return res.json() as Promise<T>;
 }
@@ -164,7 +165,7 @@ export function useUploadDocument(cantiereId: number) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? 'Errore durante il caricamento del file');
+        throw new Error(getErrorMessage(body, 'Errore durante il caricamento del file'));
       }
       return res.json() as Promise<ProjectDocument>;
     },
@@ -184,7 +185,7 @@ export function useUpdateGps(cantiereId: number) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? 'Errore aggiornamento GPS');
+        throw new Error(getErrorMessage(body, 'Errore aggiornamento GPS'));
       }
       return res.json();
     },
@@ -214,7 +215,7 @@ export function useCreateCantiere() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? 'Errore creazione cantiere');
+        throw new Error(getErrorMessage(body, 'Errore creazione cantiere'));
       }
       return res.json();
     },
@@ -240,7 +241,7 @@ export function useGenyaImport() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? `Errore ${res.status}`);
+        throw new Error(getErrorMessage(body, `Errore ${res.status}`));
       }
       return res.json() as Promise<{ inserted: number }>;
     },
