@@ -64,6 +64,11 @@ export const dashboardKeys = {
   kpi: ()                   => [...dashboardKeys.all(), 'kpi'] as const,
 };
 
+export const billingKeys = {
+  all: () => ['billing'] as const,
+  project: (cantiereId: number) => [...billingKeys.all(), cantiereId] as const,
+};
+
 export const wbsKeys = {
   all:  ()                  => ['wbs'] as const,
   tree: (cantiereId: number) => [...wbsKeys.all(), 'tree', cantiereId] as const,

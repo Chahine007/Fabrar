@@ -112,6 +112,8 @@ model Cantiere {
   tasks               Task[]
   documents           Document[]
   richieste_materiali RichiestaMateriale[]
+  fatture             Fattura[]
+  rate                Rata[]
 }
 
 // NEW ERP TABLE: WBS Nodes
@@ -130,6 +132,7 @@ model WbsNode {
   report_entries      ReportEntry[]
   spese               Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
+  rate                Rata[]
 }
 
 model Report {
@@ -304,6 +307,59 @@ model Document {
   cantiere            Cantiere             @relation(fields: [cantiere_id], references: [id])
   spese_collegate     Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
+  fatture             Fattura[]
+}
+
+enum InstallmentStatus {
+  PENDING
+  INVOICED
+  PAID
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+}
+
+model Fattura {
+  id              Int           @id @default(autoincrement())
+  cantiere_id     Int
+  numero_fattura  String?
+  data_emissione  DateTime?     @db.Date
+  importo_totale  Decimal       @db.Decimal(10, 2)
+  stato           InvoiceStatus @default(DRAFT)
+  documento_id    Int?
+  note            String?
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+
+  cantiere  Cantiere  @relation(fields: [cantiere_id], references: [id])
+  documento Document? @relation(fields: [documento_id], references: [id])
+  rate      Rata[]
+
+  @@index([cantiere_id, stato])
+}
+
+model Rata {
+  id                     Int                @id @default(autoincrement())
+  cantiere_id            Int
+  wbs_node_id            Int?
+  nome                   String
+  percentuale            Decimal?           @db.Decimal(5, 2)
+  importo_previsto       Decimal            @db.Decimal(10, 2)
+  data_scadenza_prevista DateTime?          @db.Date
+  stato                  InstallmentStatus  @default(PENDING)
+  fattura_id             Int?
+  created_at             DateTime           @default(now())
+  updated_at             DateTime           @updatedAt
+
+  cantiere Cantiere @relation(fields: [cantiere_id], references: [id])
+  wbs_node WbsNode? @relation(fields: [wbs_node_id], references: [id])
+  fattura  Fattura? @relation(fields: [fattura_id], references: [id])
+
+  @@index([cantiere_id, stato])
+  @@index([cantiere_id, wbs_node_id])
 }
 
 model Conversation {

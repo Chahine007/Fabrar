@@ -19,6 +19,46 @@ function getEntryHourlyCost(entry) {
   return toNumber(entry?.report?.employee?.tariffe?.[0]?.costo_orario);
 }
 
+async function getProjectBillingSummary(prisma, cantiereId) {
+  const [cantiere, billedAgg, collectedAgg] = await Promise.all([
+    prisma.cantiere.findUnique({
+      where: { id: cantiereId },
+      select: {
+        id: true,
+        budget: true,
+        valore_contratto: true,
+      },
+    }),
+    prisma.fattura.aggregate({
+      where: {
+        cantiere_id: cantiereId,
+        stato: { in: ["ISSUED", "PAID"] },
+      },
+      _sum: { importo_totale: true },
+    }),
+    prisma.fattura.aggregate({
+      where: {
+        cantiere_id: cantiereId,
+        stato: "PAID",
+      },
+      _sum: { importo_totale: true },
+    }),
+  ]);
+
+  const totaleContratto = round2(toNumber(cantiere?.valore_contratto ?? cantiere?.budget));
+  const totaleFatturato = round2(toNumber(billedAgg._sum.importo_totale));
+  const totaleIncassato = round2(toNumber(collectedAgg._sum.importo_totale));
+
+  return {
+    totaleContratto,
+    totaleFatturato,
+    totaleIncassato,
+    ricaviFatturati: totaleFatturato,
+    ricaviReali: totaleIncassato,
+    daFatturare: round2(totaleContratto - totaleFatturato),
+  };
+}
+
 /**
  * Calcola il costo reale operativo di un cantiere o di un singolo task.
  *
@@ -88,5 +128,27 @@ export async function calculateTrueCost(cantiere_id, task_id = null) {
     costoMateriali,
     costoSpese,
     costoTotale,
+  };
+}
+
+export async function getProjectFinancials(cantiere_id) {
+  const prisma = getDb();
+  const cantiereId = parseOptionalId(cantiere_id);
+
+  if (!cantiereId) {
+    throw new Error("cantiere_id non valido per il calcolo finanziario.");
+  }
+
+  const [costs, billing] = await Promise.all([
+    calculateTrueCost(cantiereId),
+    getProjectBillingSummary(prisma, cantiereId),
+  ]);
+
+  return {
+    ...costs,
+    ...billing,
+    marginePrevisto: round2(billing.totaleContratto - costs.costoTotale),
+    margineFatturato: round2(billing.totaleFatturato - costs.costoTotale),
+    margineIncassato: round2(billing.totaleIncassato - costs.costoTotale),
   };
 }

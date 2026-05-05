@@ -38,6 +38,7 @@ import MaterialiTab from '../components/MaterialiTab';
 import ShareModal from '../components/ShareModal';
 import TaskModal from '../components/tasks/TaskModal';
 import JobCostingTab from '../components/projects/JobCostingTab';
+import BillingTab from '../components/projects/BillingTab';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import { useAuthContext } from '../context/AuthContext';
@@ -70,10 +71,10 @@ const TABS = [
   { id: 'activities',  label: 'Attività' },
   { id: 'hours',      label: '⏱️ Ore' },
   { id: 'job-costing', label: '💶 Job Costing' },
+  { id: 'billing',    label: '🧾 Fatturazione' },
   { id: 'wbs',        label: '⚙️ Struttura / WBS' },
   { id: 'materiali',  label: '📦 Materiali' },
   { id: 'documents',   label: 'Documenti' },
-  { id: 'invoices',    label: 'Fatture' },
   { id: 'telegram',    label: '🤖 Feed / Log' },
   { id: 'settings',   label: '⚙️ Impostazioni' }
 ];
@@ -1228,8 +1229,10 @@ export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const cantiereId = id ? parseInt(id, 10) : null;
+  const detailCantiereId = Number.isInteger(cantiereId) ? cantiereId : null;
 
   const { data: cantieri, isLoading: loadingList } = useCantieri();
+  const { data: projectDetail } = useCantiereDetail(detailCantiereId);
   const genyaImport = useGenyaImport();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1238,6 +1241,10 @@ export default function ProjectDetailPage() {
   const [itemToShare, setItemToShare] = useState<unknown>(null);
 
   const cantiere = cantieri?.find(c => c.id === cantiereId) ?? null;
+  const headerContractValue = projectDetail?.cantiere?.valore_contratto ?? cantiere?.valore_contratto ?? cantiere?.budget ?? 0;
+  const headerRealCost = projectDetail?.kpi?.costoTotale ?? cantiere?.costo_reale ?? 0;
+  const headerInvoiced = projectDetail?.kpi?.totaleFatturato ?? 0;
+  const headerCollected = projectDetail?.kpi?.totaleIncassato ?? 0;
 
   const handleShare = (item: unknown) => { setItemToShare(item); setShareModalOpen(true); };
 
@@ -1274,12 +1281,12 @@ export default function ProjectDetailPage() {
       case 'activities': return <ActivitiesTab cantiereId={cantiereId} onShare={handleShare} />;
       case 'hours':      return <HoursTab cantiereId={cantiereId} />;
       case 'job-costing': return <JobCostingTab cantiereId={cantiereId} />;
+      case 'billing':    return <BillingTab cantiereId={cantiereId} />;
       case 'wbs':        return <WbsTab cantiereId={cantiereId} />;
       case 'materiali':  return <MaterialiTab cantiereId={cantiereId} />;
       case 'messages':   return <MessagesTab cantiereId={cantiereId} cantierNome={cantiere?.nome ?? ''} />;
       case 'documents':  return <DocumentsTab cantiereId={cantiereId} />;
       case 'warehouse':  return <MaterialiTab cantiereId={cantiereId} />;
-      case 'invoices':   return <InvoicesTab cantiereId={cantiereId} />;
       case 'telegram':   return <TelegramFeedTab cantiereId={cantiereId} />;
       case 'settings':   return <CantiereSettingsTab cantiereId={cantiereId} />;
       default:           return null;
@@ -1318,11 +1325,19 @@ export default function ProjectDetailPage() {
             <div className="flex flex-wrap items-center gap-6 text-sm text-text-secondary font-medium">
               <div className="flex items-center gap-2">
                 <Building2 size={16} className="opacity-60" />
-                Budget: €{(cantiere?.budget ?? 0).toLocaleString('it-IT')}
+                Contratto: €{headerContractValue.toLocaleString('it-IT', { minimumFractionDigits: 2 })}
               </div>
               <div className="flex items-center gap-2">
                 <Users size={16} className="opacity-60" />
-                Costo: €{(cantiere?.costo_reale ?? 0).toLocaleString('it-IT', { minimumFractionDigits: 2 })}
+                Costo: €{headerRealCost.toLocaleString('it-IT', { minimumFractionDigits: 2 })}
+              </div>
+              <div className="flex items-center gap-2">
+                <FileText size={16} className="opacity-60" />
+                Fatturato: €{headerInvoiced.toLocaleString('it-IT', { minimumFractionDigits: 2 })}
+              </div>
+              <div className="flex items-center gap-2">
+                <Euro size={16} className="opacity-60" />
+                Incassato: €{headerCollected.toLocaleString('it-IT', { minimumFractionDigits: 2 })}
               </div>
             </div>
           </div>

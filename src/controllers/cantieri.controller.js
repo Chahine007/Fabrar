@@ -29,7 +29,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ValidationStatus } from "../constants.js";
 import { syncCantiereBudget, computeFinancialTimeline, computeFinancialKpis } from "../domain/cantiere/cantiereService.js";
 import { buildWbsTree, validateNodeDepth } from "../domain/cantiere/wbsService.js";
-import { calculateTrueCost } from "../domain/finance/financeService.js";
+import { getProjectFinancials } from "../domain/finance/financeService.js";
 
 async function loadCantiereCostDataset(prisma, cantiereId) {
     const cantiere = await prisma.cantiere.findUnique({
@@ -126,18 +126,25 @@ export const getDetails = asyncHandler(async (req, res) => {
     if (!dataset) return res.status(404).json({ error: "Cantiere non trovato." });
 
     const { kpi: legacyKpi, perDipendente } = computeFinancialKpis(dataset);
-    const trueCost = await calculateTrueCost(cantiereId);
+    const financials = await getProjectFinancials(cantiereId);
     const budget = toNumber(dataset.cantiere.valore_contratto ?? dataset.cantiere.budget);
     const nMesi = legacyKpi.nMesi ?? 1;
     const kpi = {
         ...legacyKpi,
         budget,
-        costoTotale: trueCost.costoTotale,
-        costoManodopera: trueCost.costoManodopera,
-        costoMateriali: trueCost.costoMateriali,
-        costoSpese: trueCost.costoSpese,
-        margine: round2(budget - trueCost.costoTotale),
-        burnRate: round2(trueCost.costoTotale / Math.max(nMesi, 1)),
+        costoTotale: financials.costoTotale,
+        costoManodopera: financials.costoManodopera,
+        costoMateriali: financials.costoMateriali,
+        costoSpese: financials.costoSpese,
+        totaleFatturato: financials.totaleFatturato,
+        totaleIncassato: financials.totaleIncassato,
+        daFatturare: financials.daFatturare,
+        ricaviFatturati: financials.ricaviFatturati,
+        ricaviReali: financials.ricaviReali,
+        margine: round2(budget - financials.costoTotale),
+        margineFatturato: financials.margineFatturato,
+        margineIncassato: financials.margineIncassato,
+        burnRate: round2(financials.costoTotale / Math.max(nMesi, 1)),
         nMesi,
     };
     const { report_entries: _e, spese: _s, ...cantiere } = dataset.cantiere;

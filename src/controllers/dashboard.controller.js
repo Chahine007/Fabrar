@@ -3,7 +3,7 @@ import { round2, toNumber } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { getPendingSummary } from "./hr.controller.js";
 import { ValidationStatus } from "../constants.js";
-import { calculateTrueCost } from "../domain/finance/financeService.js";
+import { getProjectFinancials } from "../domain/finance/financeService.js";
 
 export const getRadar = asyncHandler(async (req, res) => {
     const prisma = getDb();
@@ -75,8 +75,14 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
 
     const cantieriAnalysis = await Promise.all(
         cantieri.map(async (c) => {
-            const ricavoPrevisto = toNumber(c.valore_contratto);
-            const costi = await calculateTrueCost(c.id);
+            const financials = await getProjectFinancials(c.id);
+            const ricavoPrevisto = financials.totaleContratto;
+            const costi = {
+                costoTotale: financials.costoTotale,
+                costoManodopera: financials.costoManodopera,
+                costoMateriali: financials.costoMateriali,
+                costoSpese: financials.costoSpese,
+            };
             const burnRate = ricavoPrevisto > 0 ? round2(costi.costoTotale / ricavoPrevisto) : 0;
             const cpi = costi.costoTotale > 0 ? round2(ricavoPrevisto / costi.costoTotale) : null;
             const margine = round2(ricavoPrevisto - costi.costoTotale);
@@ -94,6 +100,13 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
                 costoSpese: costi.costoSpese,
                 margine,
                 marginePct,
+                totaleFatturato: financials.totaleFatturato,
+                totaleIncassato: financials.totaleIncassato,
+                daFatturare: financials.daFatturare,
+                ricaviFatturati: financials.ricaviFatturati,
+                ricaviReali: financials.ricaviReali,
+                margineFatturato: financials.margineFatturato,
+                margineIncassato: financials.margineIncassato,
                 burnRate,
                 cpi,
             };
@@ -103,6 +116,9 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
     const budgetTotale = round2(cantieriAnalysis.reduce((s, c) => s + c.valoreContratto, 0));
     const costiTotali = round2(cantieriAnalysis.reduce((s, c) => s + c.costo, 0));
     const margine = round2(budgetTotale - costiTotali);
+    const totaleFatturato = round2(cantieriAnalysis.reduce((s, c) => s + c.totaleFatturato, 0));
+    const totaleIncassato = round2(cantieriAnalysis.reduce((s, c) => s + c.totaleIncassato, 0));
+    const daFatturare = round2(cantieriAnalysis.reduce((s, c) => s + c.daFatturare, 0));
 
     const topCantieri = cantieriAnalysis
         .filter((c) => c.valoreContratto > 0)
@@ -124,8 +140,15 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
         costoManodoperaTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoManodopera, 0)),
         costoMaterialiTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoMateriali, 0)),
         costoSpeseTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoSpese, 0)),
+        totaleFatturato,
+        totaleIncassato,
+        daFatturare,
+        ricaviFatturati: totaleFatturato,
+        ricaviReali: totaleIncassato,
         margine,
         marginePct:   budgetTotale > 0 ? round2((margine / budgetTotale) * 100) : null,
+        margineFatturato: round2(totaleFatturato - costiTotali),
+        margineIncassato: round2(totaleIncassato - costiTotali),
         cpiMedio:     avgCPI,
         topCantieri,
         top3BurnRate,

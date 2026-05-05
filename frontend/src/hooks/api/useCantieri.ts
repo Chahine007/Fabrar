@@ -18,6 +18,8 @@ export interface Cantiere {
   costo_reale: number | null;
   indirizzo?: string | null;
   attivo?: number;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface CantiereDetail {
@@ -29,6 +31,13 @@ export interface CantiereDetail {
     costoMateriali: number;
     costoSpese?: number;
     margine: number;
+    totaleFatturato?: number;
+    totaleIncassato?: number;
+    daFatturare?: number;
+    ricaviFatturati?: number;
+    ricaviReali?: number;
+    margineFatturato?: number;
+    margineIncassato?: number;
     burnRate: number;
     nMesi: number;
   };
