@@ -81,7 +81,7 @@ export async function bulkUpdateItems(prisma, body) {
             if (rawItem.type === AUDIT_TYPE.ORE) {
                 const entry = await tx.reportEntry.findUnique({
                     where: { id },
-                    select: { report_id: true, report: { select: { employee_id: true } } },
+                    select: { report_id: true, cantiere_id: true, report: { select: { employee_id: true } } },
                 });
                 if (!entry) throw new DomainError(`Riga ore non trovata: ${id}`, 'NOT_FOUND');
 

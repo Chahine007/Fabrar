@@ -4,6 +4,7 @@ import {
   ClipboardList, Clock, Banknote, MapPin, RefreshCw, Download,
   CheckCircle2, XCircle, Search, Mic, Camera, MessageCircle,
   ChevronDown, ChevronUp, Eye, Loader2, Pencil, X, Bot,
+  Plus, Trash2,
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -15,9 +16,18 @@ import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import { useAuthContext } from '../context/AuthContext';
 import { RoleGuard } from '../components/auth/RoleGuard';
+import TimeEntryModal from '../components/timesheets/TimeEntryModal';
+import ExpenseModal from '../components/timesheets/ExpenseModal';
+import { useDeleteMyTimeEntry } from '../hooks/api/useMyTimesheets';
+import { useDeleteMyExpense } from '../hooks/api/useMyExpenses';
 
 type TypeFilter   = 'tutti' | 'ore' | 'spese';
 type StatusFilter = 'tutti' | 'pending' | 'verified' | 'rejected';
+
+function isApprovedAuditStatus(status: AuditStatus | string | null | undefined) {
+  const raw = String(status ?? '').toUpperCase();
+  return raw === 'APPROVED' || raw === 'VERIFIED';
+}
 
 function methodBadge(method: string) {
   const m = (method ?? '').toLowerCase();
@@ -31,6 +41,7 @@ function methodBadge(method: string) {
 const StatusBadge = ({ status }: { status: AuditStatus }) => {
   const map: Record<AuditStatus, { label: string; cls: string }> = {
     pending:  { label: '⏳ In Attesa', cls: 'bg-warning-bg text-warning-text border border-warning-border' },
+    approved: { label: '✅ Approvato', cls: 'bg-success-bg text-success-text border border-success-border' },
     verified: { label: '✅ Approvato', cls: 'bg-success-bg text-success-text border border-success-border' },
     rejected: { label: '❌ Rifiutato', cls: 'bg-danger-bg text-danger-text border border-danger-border' },
   };
@@ -123,6 +134,8 @@ export default function TabulatiOrariPage() {
   const [sortDir, setSortDir]     = useState<'asc'|'desc'>('desc');
   const [selected, setSelected]   = useState<Set<number>>(new Set());
   const [editEntry, setEditEntry] = useState<AuditEntry | null>(null);
+  const [timeModal, setTimeModal] = useState<{ mode: 'create' } | { mode: 'edit'; entry: AuditEntry } | null>(null);
+  const [expenseModal, setExpenseModal] = useState<{ mode: 'create' } | { mode: 'edit'; entry: AuditEntry } | null>(null);
   const [section, setSection]     = useState<'audit'|'logs'>('audit');
   const [exporting, setExporting] = useState(false);
 
@@ -141,6 +154,8 @@ export default function TabulatiOrariPage() {
   }, canViewLogs);
   const approveMut       = useApproveTelegramEntry();
   const { downloadCsv }  = useExportCsv();
+  const deleteTimeEntry = useDeleteMyTimeEntry();
+  const deleteExpense = useDeleteMyExpense();
 
   const feed = useMemo(() => {
     let data = rawFeed;
@@ -163,6 +178,13 @@ export default function TabulatiOrariPage() {
   const toggleSort = (f: 'date'|'value') => { if (sortField===f) setSortDir(d=>d==='asc'?'desc':'asc'); else { setSortField(f); setSortDir('desc'); } };
   const toggleSel  = (id: number) => setSelected(prev => { const s=new Set(prev); s.has(id)?s.delete(id):s.add(id); return s; });
   const handleBulk = async (action: 'verify'|'reject') => { if(!selected.size) return; await approveMut.mutateAsync({ids:[...selected],action}); setSelected(new Set()); };
+  const handleDeletePersonalRecord = async (entry: AuditEntry) => {
+    if (isApprovedAuditStatus(entry.status)) return;
+    const label = entry.type === 'ore' ? 'questa registrazione ore' : 'questa spesa';
+    if (!window.confirm(`Eliminare ${label}?`)) return;
+    if (entry.type === 'ore') await deleteTimeEntry.mutateAsync(entry.id);
+    else await deleteExpense.mutateAsync(entry.id);
+  };
   const SortIcon = ({ f }: { f: 'date'|'value' }) => sortField!==f ? <ChevronDown size={13} className="opacity-30"/> : sortDir==='asc' ? <ChevronUp size={13}/> : <ChevronDown size={13}/>;
 
   const today = new Date().toISOString().slice(0,10);
@@ -188,6 +210,18 @@ export default function TabulatiOrariPage() {
             <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} className="px-3 py-2 rounded-xl border border-border bg-background text-sm outline-none focus:ring-2 focus:ring-accent/20"/>
           </div>
           <button onClick={()=>{refetch();refetchLogs();}} className="p-2 rounded-xl border border-border text-text-secondary hover:bg-background"><RefreshCw size={16}/></button>
+          <button
+            onClick={() => setTimeModal({ mode: 'create' })}
+            className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-xl text-sm font-bold hover:brightness-95"
+          >
+            <Plus size={14} /> Registra Ore
+          </button>
+          <button
+            onClick={() => setExpenseModal({ mode: 'create' })}
+            className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-xl text-sm font-bold text-text-primary hover:bg-background"
+          >
+            <Banknote size={14} /> Nuova Spesa
+          </button>
           <RoleGuard allowedRoles={['ADMIN', 'HR']}>
             <button onClick={async()=>{try{setExporting(true);await downloadCsv({start:dateFrom||undefined,end:dateTo||undefined});}catch(e){alert((e as Error).message);}finally{setExporting(false);}}}
               disabled={exporting} className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-background disabled:opacity-50">
@@ -289,6 +323,7 @@ export default function TabulatiOrariPage() {
                       <th className="px-5 py-3 text-left">Tipo</th>
                       <th className="px-5 py-3 text-left">Dipendente</th>
                       <th className="px-5 py-3 text-left">Cantiere</th>
+                      <th className="px-5 py-3 text-left">Task</th>
                       <th className="px-5 py-3 text-left cursor-pointer hover:text-text-primary select-none" onClick={()=>toggleSort('date')}>
                         <span className="flex items-center gap-1">Data <SortIcon f="date"/></span>
                       </th>
@@ -302,10 +337,14 @@ export default function TabulatiOrariPage() {
                   </thead>
                   <tbody>
                     {feed.length === 0 ? (
-                      <tr><td colSpan={9} className="text-center py-16 text-text-secondary text-sm">Nessun record trovato.</td></tr>
+                      <tr><td colSpan={10} className="text-center py-16 text-text-secondary text-sm">Nessun record trovato.</td></tr>
                     ) : feed.map(entry => {
                       const mb = methodBadge(entry.input_method);
                       const MIcon = mb.icon;
+                      const isApproved = isApprovedAuditStatus(entry.status);
+                      const isOwnRecord = user?.employee_id != null && entry.employee_id === user.employee_id;
+                      const canUsePersonalActions = isOwnRecord && !canManageAudit;
+                      const isDeleting = entry.type === 'ore' ? deleteTimeEntry.isPending : deleteExpense.isPending;
                       return (
                         <tr key={`${entry.type}-${entry.id}`}
                           className={cn('border-b border-border/50 hover:bg-background/60 transition-colors', selected.has(entry.id)&&'bg-accent/5')}>
@@ -321,6 +360,7 @@ export default function TabulatiOrariPage() {
                           </td>
                           <td className="px-5 py-3.5 font-medium text-text-primary">{`${entry.nome??''} ${entry.cognome??''}`.trim()||'—'}</td>
                           <td className="px-5 py-3.5 text-text-secondary">{entry.cantiere_nome||'—'}</td>
+                          <td className="px-5 py-3.5 text-text-secondary">{entry.task_title || '—'}</td>
                           <td className="px-5 py-3.5 text-text-secondary">{new Date(entry.date).toLocaleDateString('it-IT')}</td>
                           <td className="px-5 py-3.5 font-bold text-text-primary">
                             {entry.type==='ore'?`${entry.value}h`:`€${Number(entry.value).toLocaleString('it-IT')}`}
@@ -333,7 +373,32 @@ export default function TabulatiOrariPage() {
                           <td className="px-5 py-3.5"><StatusBadge status={entry.status}/></td>
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-1">
-                              {canManageAudit && entry.type==='ore' && (
+                              {canUsePersonalActions && (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      if (entry.type === 'ore') setTimeModal({ mode: 'edit', entry });
+                                      else setExpenseModal({ mode: 'edit', entry });
+                                    }}
+                                    disabled={isApproved}
+                                    className="p-1.5 rounded-lg bg-background border border-border text-text-secondary hover:text-accent hover:border-accent/40 transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-text-secondary disabled:hover:border-border"
+                                    title={isApproved ? 'Record approvato non modificabile' : 'Modifica'}
+                                  >
+                                    <Pencil size={14}/>
+                                  </button>
+                                  {!isApproved && (
+                                    <button
+                                      onClick={() => handleDeletePersonalRecord(entry)}
+                                      disabled={isDeleting}
+                                      className="p-1.5 rounded-lg bg-danger-bg text-danger-text hover:opacity-80 disabled:opacity-40"
+                                      title="Elimina"
+                                    >
+                                      {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14}/>}
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                              {canManageAudit && entry.type==='ore' && !isApproved && (
                                 <button id={`edit-${entry.id}`} onClick={()=>setEditEntry(entry)}
                                   className="p-1.5 rounded-lg bg-background border border-border text-text-secondary hover:text-accent hover:border-accent/40 transition-all" title="Modifica">
                                   <Pencil size={14}/>
@@ -402,6 +467,18 @@ export default function TabulatiOrariPage() {
 
       <AnimatePresence>
         {editEntry && <EditModal entry={editEntry} onClose={()=>setEditEntry(null)}/>}
+        {timeModal && (
+          <TimeEntryModal
+            entry={timeModal.mode === 'edit' ? timeModal.entry : null}
+            onClose={() => setTimeModal(null)}
+          />
+        )}
+        {expenseModal && (
+          <ExpenseModal
+            expense={expenseModal.mode === 'edit' ? expenseModal.entry : null}
+            onClose={() => setExpenseModal(null)}
+          />
+        )}
       </AnimatePresence>
     </div>
   );

@@ -277,7 +277,10 @@ export async function insertSpesa(employeeId, cantiereId, importo, fornitore, de
 
   let pricebook_id = extra?.pricebook_id ?? null;
   let quantita = extra?.quantita ?? null;
-  let stato_validazione = extra?.stato_validazione ?? "PENDING";
+  let stato_validazione = extra?.stato_validazione ?? ValidationStatus.PENDING;
+  let wbs_node_id = extra?.wbs_node_id ?? null;
+  let task_id = extra?.task_id ?? null;
+  let documento_id = extra?.documento_id ?? null;
 
   if (pricebook_id != null && quantita == null) {
     quantita = 1;
@@ -287,21 +290,26 @@ export async function insertSpesa(employeeId, cantiereId, importo, fornitore, de
   if (!ok) throw new Error("Cantiere non valido o inattivo.");
 
   // Assign to root WBS directly for older logic
-  const rootWbs = await prisma.wbsNode.findFirst({
-    where: { cantiere_id: cantiereId, parent_id: null }
-  });
+  if (wbs_node_id == null) {
+    const rootWbs = await prisma.wbsNode.findFirst({
+      where: { cantiere_id: cantiereId, parent_id: null }
+    });
+    wbs_node_id = rootWbs ? rootWbs.id : null;
+  }
 
   const created = await prisma.spesa.create({
     data: {
       timestamp_utc: new Date(),
       employee_id: employeeId,
       cantiere_id: cantiereId,
-      wbs_node_id: rootWbs ? rootWbs.id : null,
+      wbs_node_id,
+      task_id,
       importo: decimalOrNull(importo),
       fornitore,
       descrizione,
       fonte,
       fattura_rif,
+      documento_id,
       pricebook_id,
       quantita: decimalOrNull(quantita),
       stato_validazione
@@ -317,7 +325,7 @@ export async function getCantieriStatus({ activeOnly = true } = {}) {
     ...(activeOnly ? { where: { attivo: 1 } } : {}),
     include: {
       report_entries: {
-        where: { stato_validazione: { in: ['VERIFIED'] } },
+        where: { stato_validazione: { in: [ValidationStatus.APPROVED] } },
         include: { report: { include: { employee: { include: { tariffe: { orderBy: { valido_dal: 'desc' }, take: 1 } } } } } }
       },
       spese: {
@@ -418,7 +426,7 @@ export async function ensureDailyReportHeader(employeeId, reportDate) {
       data_utc: new Date(),
       report_date: parsedReportDate,
       employee_id: employeeId,
-      stato_validazione: 'PENDING'
+      stato_validazione: ValidationStatus.PENDING
     }
   });
   return created.id;
@@ -587,7 +595,7 @@ export async function listReportEntriesByEmployeeAndDate(employeeId, reportDate)
   return report.entries.map(e => ({ ...e, report_date: formatDateOnly(report.report_date), employee_id: report.employee_id }));
 }
 export async function updateReportEntry(id, fields) {
-  const allowed = ['cantiere_id', 'ore_lavorate', 'ingresso', 'pausa_inizio', 'pausa_fine', 'uscita', 'attivita_svolte', 'luogo_cantiere', 'problemi_riscontrati', 'testo_originale', 'stato_validazione', 'fonte', 'admin_note', 'modified_by_admin_at', 'wbs_node_id'];
+  const allowed = ['cantiere_id', 'ore_lavorate', 'ingresso', 'pausa_inizio', 'pausa_fine', 'uscita', 'attivita_svolte', 'luogo_cantiere', 'problemi_riscontrati', 'testo_originale', 'stato_validazione', 'fonte', 'admin_note', 'modified_by_admin_at', 'wbs_node_id', 'task_id'];
   const data = {};
   for (const k of allowed) if (fields[k] !== undefined) data[k] = fields[k];
   if (data.modified_by_admin_at) data.modified_by_admin_at = new Date(data.modified_by_admin_at);
@@ -621,7 +629,7 @@ export async function updateReportHeader(id, fields) {
 // Spese
 export async function getSpesaById(id) { return prisma.spesa.findUnique({ where: { id } }); }
 export async function updateSpesa(id, fields) {
-  const allowed = ["timestamp_utc", "employee_id", "cantiere_id", "importo", "fornitore", "descrizione", "fonte", "fattura_rif", "pricebook_id", "quantita", "stato_validazione", "input_method", "admin_note", "modified_by_admin_at", "wbs_node_id"];
+  const allowed = ["timestamp_utc", "employee_id", "cantiere_id", "importo", "fornitore", "descrizione", "fonte", "fattura_rif", "pricebook_id", "quantita", "stato_validazione", "input_method", "admin_note", "modified_by_admin_at", "wbs_node_id", "task_id", "documento_id"];
   const data = {};
   for (const k of allowed) if (fields[k] !== undefined) data[k] = fields[k];
   if (data.timestamp_utc) data.timestamp_utc = new Date(data.timestamp_utc);
@@ -738,7 +746,7 @@ export async function getWbsBurnData(cantiereId) {
   const entries = await prisma.reportEntry.findMany({
     where: {
       cantiere_id: id,
-      stato_validazione: { in: ['verified', 'VERIFIED'] },
+      stato_validazione: { in: [ValidationStatus.APPROVED] },
       wbs_node_id: { not: null },
     },
     include: {

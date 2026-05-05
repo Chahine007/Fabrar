@@ -5,7 +5,9 @@
  */
 export const ValidationStatus = Object.freeze({
     PENDING:  'PENDING',
-    VERIFIED: 'VERIFIED',
+    APPROVED: 'APPROVED',
+    // Alias applicativo legacy: vecchio codice e vecchi payload parlano ancora di VERIFIED.
+    VERIFIED: 'APPROVED',
     REJECTED: 'REJECTED',
 });
 

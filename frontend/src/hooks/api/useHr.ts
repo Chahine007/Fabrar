@@ -103,7 +103,7 @@ export interface HrAlert {
 }
 
 export type AuditType = 'ore' | 'spese';
-export type AuditStatus = 'pending' | 'verified' | 'rejected';
+export type AuditStatus = 'pending' | 'verified' | 'approved' | 'rejected';
 
 export interface AuditEntry {
   id: number;
@@ -115,9 +115,12 @@ export interface AuditEntry {
   employee_id: number;
   nome: string | null;
   cognome: string | null;
+  fornitore?: string | null;
   note: string | null;
   cantiere_nome: string | null;
   cantiere_id: number | null;
+  task_id?: number | null;
+  task_title?: string | null;
   luogo_cantiere: string | null;
   report_id?: number;
 }

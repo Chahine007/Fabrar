@@ -35,10 +35,7 @@ export async function getPendingSummary(prisma) {
     const [reports, spese] = await Promise.all([
         prisma.reportEntry.count({
             where: {
-                OR: [
-                    { stato_validazione: "" },
-                    { stato_validazione: ValidationStatus.PENDING },
-                ],
+                stato_validazione: ValidationStatus.PENDING,
             },
         }),
         prisma.spesa.findMany({
@@ -70,6 +67,8 @@ function mapAuditOreRow(entry) {
         // Priorità: cantiere diretto sull'entry → cantiere del report header → null
         cantiere_nome: entry.cantiere?.nome || entry.report?.cantiere?.nome || entry.luogo_cantiere || null,
         cantiere_id:   entry.cantiere_id || entry.report?.cantiere_id || null,
+        task_id: entry.task_id ?? null,
+        task_title: entry.task?.title ?? null,
         luogo_cantiere: entry.luogo_cantiere || null,
         report_id: entry.report_id,
     };
@@ -87,9 +86,12 @@ function mapAuditSpesaRow(spesa) {
         employee_id: spesa.employee_id,
         nome: spesa.employee?.nome || null,
         cognome: spesa.employee?.cognome || null,
+        fornitore: spesa.fornitore || null,
         note: spesa.descrizione || null,
         cantiere_nome: spesa.cantiere?.nome || null,
         cantiere_id:   spesa.cantiere_id || null,
+        task_id: spesa.task_id ?? null,
+        task_title: spesa.task?.title ?? null,
     };
 }
 
@@ -477,16 +479,17 @@ export const getAudit = asyncHandler(async (req, res) => {
                         { report: { is: { cantiere_id: cantiereId } } },
                     ],
                 } : {}),
-                ...(statusValue ? (statusValue === ValidationStatus.PENDING ? {} : { stato_validazione: { equals: statusValue, mode: "insensitive" } }) : {}),
+                ...(statusValue ? { stato_validazione: statusValue } : {}),
             },
             include: {
                 report: { include: { employee: { select: { nome: true, cognome: true } }, cantiere: { select: { nome: true } } } },
                 cantiere: { select: { nome: true } },
+                task: { select: { id: true, title: true } },
             },
             orderBy: [{ created_at: "desc" }, { id: "desc" }],
         });
 
-        allData = allData.concat(oreRows.map(mapAuditOreRow).filter((row) => (statusValue === ValidationStatus.PENDING ? row.status === ValidationStatus.PENDING : true)));
+        allData = allData.concat(oreRows.map(mapAuditOreRow));
     }
 
     if (!type || type === AUDIT_TYPE.SPESE) {
@@ -494,13 +497,17 @@ export const getAudit = asyncHandler(async (req, res) => {
             where: {
                 ...(employeeId  ? { employee_id: employeeId }  : {}),
                 ...(cantiereId  ? { cantiere_id: cantiereId }  : {}),
-                ...(statusValue ? (statusValue === ValidationStatus.PENDING ? {} : { stato_validazione: { equals: statusValue, mode: "insensitive" } }) : {}),
+                ...(statusValue ? { stato_validazione: statusValue } : {}),
             },
-            include: { employee: { select: { nome: true, cognome: true } }, cantiere: { select: { nome: true } } },
+            include: {
+                employee: { select: { nome: true, cognome: true } },
+                cantiere: { select: { nome: true } },
+                task: { select: { id: true, title: true } },
+            },
             orderBy: [{ timestamp_utc: "desc" }, { id: "desc" }],
         });
 
-        allData = allData.concat(speseRows.map(mapAuditSpesaRow).filter((row) => (statusValue === ValidationStatus.PENDING ? row.status === ValidationStatus.PENDING : true)));
+        allData = allData.concat(speseRows.map(mapAuditSpesaRow));
     }
 
     allData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());

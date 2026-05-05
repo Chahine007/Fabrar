@@ -144,7 +144,7 @@ model Report {
   luogo_cantiere       String?
   problemi_riscontrati String?
   testo_originale      String?
-  stato_validazione    String    @default("PENDING")
+  stato_validazione    ValidationStatus @default(PENDING)
   fonte                String?
   input_method         String?   @default("timer")
   admin_note           String?
@@ -162,6 +162,7 @@ model ReportEntry {
   report_id            Int
   cantiere_id          Int?
   wbs_node_id          Int?      // NEW: link to WBS per il Job Costing dettagliato
+  task_id              Int?
   ore_lavorate         Float?
   ingresso             String?
   pausa_inizio         String?
@@ -171,7 +172,7 @@ model ReportEntry {
   luogo_cantiere       String?
   problemi_riscontrati String?
   testo_originale      String?
-  stato_validazione    String    @default("PENDING")
+  stato_validazione    ValidationStatus @default(PENDING)
   fonte                String?
   admin_note           String?
   modified_by_admin_at DateTime?
@@ -180,6 +181,7 @@ model ReportEntry {
   report               Report    @relation(fields: [report_id], references: [id], onDelete: Cascade)
   cantiere             Cantiere? @relation(fields: [cantiere_id], references: [id])
   wbs_node             WbsNode?  @relation(fields: [wbs_node_id], references: [id])
+  task                 Task?     @relation(fields: [task_id], references: [id])
 }
 
 model Spesa {
@@ -188,12 +190,13 @@ model Spesa {
   employee_id          Int
   cantiere_id          Int
   wbs_node_id          Int?      // NEW: link to WBS per il Job Costing dettagliato
+  task_id              Int?
   importo              Decimal   @db.Decimal(10, 2)
   fornitore            String?
   descrizione          String?
   pricebook_id         Int?
   quantita             Decimal?  @db.Decimal(10, 2)
-  stato_validazione    String    @default("PENDING")
+  stato_validazione    ValidationStatus @default(PENDING)
   fonte                String?   @default("TELEGRAM")
   input_method         String?   @default("telegram_ocr")
   fattura_rif          String?
@@ -205,6 +208,7 @@ model Spesa {
   cantiere             Cantiere  @relation(fields: [cantiere_id], references: [id])
   pricebook            Pricebook? @relation(fields: [pricebook_id], references: [id])
   wbs_node             WbsNode?  @relation(fields: [wbs_node_id], references: [id])
+  task                 Task?     @relation(fields: [task_id], references: [id])
   documento            Document? @relation(fields: [documento_id], references: [id])
 }
 
@@ -251,6 +255,8 @@ model Task {
 
   cantiere    Cantiere     @relation(fields: [cantiere_id], references: [id])
   assignee    Employee?    @relation(fields: [assignee_id], references: [id])
+  report_entries ReportEntry[]
+  spese          Spesa[]
 }
 
 enum TaskStatus {
@@ -264,6 +270,12 @@ enum TaskPriority {
   MEDIUM
   HIGH
   CRITICAL
+}
+
+enum ValidationStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 model Document {

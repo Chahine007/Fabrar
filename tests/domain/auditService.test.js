@@ -59,7 +59,7 @@ describe('auditService.bulkUpdateItems', () => {
             expect(prisma._tx.reportEntry.update).toHaveBeenCalledWith(
                 expect.objectContaining({
                     where: { id: 10 },
-                    data:  expect.objectContaining({ stato_validazione: 'VERIFIED' }),
+                    data:  expect.objectContaining({ stato_validazione: ValidationStatus.APPROVED }),
                 })
             );
         });

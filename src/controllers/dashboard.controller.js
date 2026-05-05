@@ -19,14 +19,14 @@ export const getRadar = asyncHandler(async (req, res) => {
         getPendingSummary(prisma),
         prisma.reportEntry.findMany({
             where: {
-                NOT: { stato_validazione: { in: ["rejected", "REJECTED"] } },
+                NOT: { stato_validazione: ValidationStatus.REJECTED },
                 report: { is: { report_date: { gte: parseDateOnly(lastMondayStr) } } },
             },
             select: { ore_lavorate: true, report: { select: { report_date: true, employee_id: true } } },
         }),
         prisma.reportEntry.findMany({
             where: {
-                NOT: { stato_validazione: { in: ["rejected", "REJECTED"] } },
+                NOT: { stato_validazione: ValidationStatus.REJECTED },
                 report: { is: { report_date: { gte: parseDateOnly(sevenDaysAgoStr) } } },
             },
             select: { report: { select: { employee_id: true } } },
@@ -271,4 +271,4 @@ export const getOpsKPIs = asyncHandler(async (req, res) => {
         totalPending:     total - totalVerifiedCount - rejected,
     });
 });
-
+

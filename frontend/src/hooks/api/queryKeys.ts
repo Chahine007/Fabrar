@@ -64,6 +64,14 @@ export const taskKeys = {
   detail: (id: number)           => [...taskKeys.all(), 'detail', id] as const,
 };
 
+export const timesheetKeys = {
+  all: () => ['timesheets'] as const,
+};
+
+export const expenseKeys = {
+  all: () => ['expenses'] as const,
+};
+
 export const userKeys = {
   all:              () => ['user'] as const,
   settings:         () => [...userKeys.all(), 'settings'] as const,
