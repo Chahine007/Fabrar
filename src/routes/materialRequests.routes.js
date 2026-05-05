@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { verifyToken } from "../middleware/auth.js";
-import { authorizeRoles } from "../middlewares/role.middleware.js";
+import { authorizeRoles } from "../middleware/auth.js";
 import {
   createRequest,
   fulfillRequest,

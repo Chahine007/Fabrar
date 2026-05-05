@@ -15,14 +15,16 @@ export default function FinanceTab() {
   if (error || !data) return <p className="text-danger-text text-sm">Errore caricamento dati finanziari.</p>;
 
   const marginePositivo = data.margine >= 0;
+  const totalRevenue = data.valoreContrattoTotale ?? data.budgetTotale;
+  const totalCosts = data.costiTotali ?? data.speseTotali;
 
   return (
     <div className="space-y-6">
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Budget Totale',  value: fmt(data.budgetTotale), icon: Euro,         color: 'text-accent',      bg: 'bg-accent/10' },
-          { label: 'Spese Totali',   value: fmt(data.speseTotali),  icon: TrendingDown,  color: 'text-rose-500',    bg: 'bg-rose-500/10' },
+          { label: 'Ricavi Previsti', value: fmt(totalRevenue), icon: Euro,         color: 'text-accent',      bg: 'bg-accent/10' },
+          { label: 'Costi Totali',    value: fmt(totalCosts),   icon: TrendingDown, color: 'text-rose-500',    bg: 'bg-rose-500/10' },
           { label: 'Margine',        value: fmt(data.margine),      icon: marginePositivo ? TrendingUp : AlertTriangle, color: marginePositivo ? 'text-emerald-500' : 'text-rose-500', bg: marginePositivo ? 'bg-emerald-500/10' : 'bg-rose-500/10' },
           { label: 'CPI Medio',      value: data.cpiMedio?.toFixed(2) ?? '—', icon: Target, color: (data.cpiMedio ?? 0) >= 1 ? 'text-emerald-500' : 'text-amber-500', bg: (data.cpiMedio ?? 0) >= 1 ? 'bg-emerald-500/10' : 'bg-amber-500/10' },
         ].map(({ label, value, icon: Icon, color, bg }) => (
@@ -73,7 +75,7 @@ export default function FinanceTab() {
             <table className="w-full text-sm">
               <thead><tr className="border-b border-border text-xs text-text-secondary uppercase tracking-wider">
                 <th className="px-4 py-2 text-left">Cantiere</th><th className="px-4 py-2 text-right">Budget</th>
-                <th className="px-4 py-2 text-right">Speso</th><th className="px-4 py-2 text-right">Burn Rate</th>
+                <th className="px-4 py-2 text-right">Costo</th><th className="px-4 py-2 text-right">Burn Rate</th>
                 <th className="px-4 py-2 text-right">CPI</th>
               </tr></thead>
               <tbody>

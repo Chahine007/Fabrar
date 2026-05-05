@@ -29,6 +29,11 @@ export interface DashboardRadar {
 export interface FinanceKPIs {
   budgetTotale: number;
   speseTotali:  number;
+  costiTotali?: number;
+  valoreContrattoTotale?: number;
+  costoManodoperaTotale?: number;
+  costoMaterialiTotale?: number;
+  costoSpeseTotale?: number;
   margine:      number;
   marginePct:   number | null;
   cpiMedio:     number | null;

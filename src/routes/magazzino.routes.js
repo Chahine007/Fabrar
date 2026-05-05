@@ -1,6 +1,5 @@
 import express from "express";
-import { verifyToken } from "../middleware/auth.js";
-import { authorizeRoles } from "../middlewares/role.middleware.js";
+import { verifyTokenAndRole } from "../middleware/auth.js";
 import { 
     createMovimento, 
     getArticoli, 
@@ -14,15 +13,15 @@ import {
 const router = express.Router();
 const WAREHOUSE_MUTATION_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN"];
 
-// Tutte le rotte magazzino richiedono autenticazione
-router.use(verifyToken);
+const requireAuth = verifyTokenAndRole();
+const requireWarehouseMutationRole = verifyTokenAndRole(WAREHOUSE_MUTATION_ROLES);
 
-router.get("/articoli", getArticoli);
-router.post("/articoli", authorizeRoles(...WAREHOUSE_MUTATION_ROLES), createArticolo);
-router.get("/ubicazioni", getUbicazioni);
-router.post("/ubicazioni", authorizeRoles(...WAREHOUSE_MUTATION_ROLES), createUbicazione);
-router.get("/giacenze", getGiacenze);
-router.get("/cantiere/:cantiere_id", getMovimentiCantiere);
-router.post("/movimenti", authorizeRoles(...WAREHOUSE_MUTATION_ROLES), createMovimento);
+router.get("/articoli", requireAuth, getArticoli);
+router.post("/articoli", requireWarehouseMutationRole, createArticolo);
+router.get("/ubicazioni", requireAuth, getUbicazioni);
+router.post("/ubicazioni", requireWarehouseMutationRole, createUbicazione);
+router.get("/giacenze", requireAuth, getGiacenze);
+router.get("/cantiere/:cantiere_id", requireAuth, getMovimentiCantiere);
+router.post("/movimenti", requireWarehouseMutationRole, createMovimento);
 
 export default router;

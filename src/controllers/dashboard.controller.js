@@ -75,8 +75,8 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
 
     const cantieriAnalysis = await Promise.all(
         cantieri.map(async (c) => {
-            const ricavoPrevisto = toNumber(c.valore_contratto ?? c.budget);
-            const costi = await calculateTrueCost(c.id, null, prisma);
+            const ricavoPrevisto = toNumber(c.valore_contratto);
+            const costi = await calculateTrueCost(c.id);
             const burnRate = ricavoPrevisto > 0 ? round2(costi.costoTotale / ricavoPrevisto) : 0;
             const cpi = costi.costoTotale > 0 ? round2(ricavoPrevisto / costi.costoTotale) : null;
 
@@ -99,7 +99,10 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
     const costiTotali = round2(cantieriAnalysis.reduce((s, c) => s + c.costo, 0));
     const margine = round2(budgetTotale - costiTotali);
 
-    const top3BurnRate = [...cantieriAnalysis].sort((a, b) => b.burnRate - a.burnRate).slice(0, 3);
+    const top3BurnRate = cantieriAnalysis
+        .filter((c) => c.valoreContratto > 0)
+        .sort((a, b) => b.burnRate - a.burnRate)
+        .slice(0, 3);
     const avgCPI = cantieriAnalysis.filter(c => c.cpi !== null).length > 0
         ? round2(cantieriAnalysis.filter(c => c.cpi !== null).reduce((s, c) => s + c.cpi, 0) / cantieriAnalysis.filter(c => c.cpi !== null).length)
         : null;

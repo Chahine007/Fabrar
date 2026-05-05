@@ -2,7 +2,7 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { verifyToken, DASHBOARD_ROLES } from "../middleware/auth.js";
 import { validate } from "../middleware/validation.js";
-import { authorizeRoles } from "../middlewares/role.middleware.js";
+import { authorizeRoles } from "../middleware/auth.js";
 import {
     createEmployeeSchema,
     employeeIdSchema,

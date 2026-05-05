@@ -62,6 +62,12 @@ function decimalToNumber(value) {
   return Number(value);
 }
 
+function normalizeUserRole(role, fallback = null) {
+  if (typeof role !== "string") return fallback;
+  const normalized = role.trim().toUpperCase();
+  return normalized || fallback;
+}
+
 function normalizeReportRecord(report) {
   return {
     ...report,
@@ -369,10 +375,12 @@ export async function getAllCantieri() {
   return cantieri.map((c) => ({
     ...c,
     budget: decimalToNumber(c.budget),
+    valore_contratto: decimalToNumber(c.valore_contratto),
+    budget_spese: decimalToNumber(c.budget_spese),
   }));
 }
 
-export async function createCantiere({ nome, indirizzo, lat, lng, budget }) {
+export async function createCantiere({ nome, indirizzo, lat, lng, budget, valore_contratto, budget_spese }) {
   const c = await prisma.cantiere.create({
     data: {
       nome,
@@ -380,6 +388,8 @@ export async function createCantiere({ nome, indirizzo, lat, lng, budget }) {
       lat: lat || null,
       lng: lng || null,
       budget: decimalOrNull(budget),
+      valore_contratto: decimalOrNull(valore_contratto),
+      budget_spese: decimalOrNull(budget_spese),
       attivo: 1
     }
   });
@@ -485,13 +495,23 @@ export async function listUsers() {
 }
 export async function createUser({ username, password_hash, email, google_id, role, is_active = 1 }) {
   return prisma.user.create({
-    data: { username, password_hash, email, google_id, role, is_active }
+    data: {
+      username,
+      password_hash,
+      email,
+      google_id,
+      role: normalizeUserRole(role, "WORKER"),
+      is_active,
+    }
   });
 }
 export async function updateUser(id, fields) {
   const allowed = ["username", "password_hash", "email", "google_id", "role", "is_active"];
   const data = {};
   for (const k of allowed) if (fields[k] !== undefined) data[k] = fields[k];
+  if (data.role !== undefined) {
+    data.role = normalizeUserRole(data.role, "WORKER");
+  }
   if (Object.keys(data).length > 0) {
     await prisma.user.update({ where: { id }, data });
   }
@@ -678,10 +698,12 @@ export async function createTariffa({ employee_id, costo_orario, valido_dal }) {
 }
 
 export async function updateCantiere(id, fields) {
-  const allowed = ["nome", "indirizzo", "lat", "lng", "budget", "raggio_tolleranza", "attivo"];
+  const allowed = ["nome", "indirizzo", "lat", "lng", "budget", "valore_contratto", "budget_spese", "raggio_tolleranza", "attivo"];
   const data = {};
   for (const k of allowed) if (fields[k] !== undefined) data[k] = fields[k];
   if (data.budget !== undefined) data.budget = decimalOrNull(data.budget);
+  if (data.valore_contratto !== undefined) data.valore_contratto = decimalOrNull(data.valore_contratto);
+  if (data.budget_spese !== undefined) data.budget_spese = decimalOrNull(data.budget_spese);
   if (Object.keys(data).length > 0) {
     await prisma.cantiere.update({ where: { id }, data });
   }

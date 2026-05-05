@@ -13,6 +13,8 @@ export interface Cantiere {
   nome: string;
   status: string;
   budget: number | null;
+  valore_contratto?: number | null;
+  budget_spese?: number | null;
   costo_reale: number | null;
   indirizzo?: string | null;
   attivo?: number;
@@ -25,6 +27,7 @@ export interface CantiereDetail {
     costoTotale: number;
     costoManodopera: number;
     costoMateriali: number;
+    costoSpese?: number;
     margine: number;
     burnRate: number;
     nMesi: number;
@@ -191,6 +194,8 @@ export function useCreateCantiere() {
       nome: string;
       indirizzo?: string;
       budget?: number | null;
+      valore_contratto?: number | null;
+      budget_spese?: number | null;
       lat?: number | null;
       lng?: number | null;
     }) => {

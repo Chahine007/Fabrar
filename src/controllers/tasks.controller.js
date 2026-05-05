@@ -43,6 +43,8 @@ function mapTask(task) {
       : null,
     due: formatDateOnly(task.due_date) ?? "-",
     due_date: task.due_date,
+    budget_stimato: task.budget_stimato == null ? null : Number(task.budget_stimato),
+    costo_previsto: task.costo_previsto == null ? null : Number(task.costo_previsto),
     created_at: task.created_at,
     updated_at: task.updated_at,
     cantiere: task.cantiere
@@ -121,6 +123,8 @@ export const createTask = asyncHandler(async (req, res) => {
     priority = "MEDIUM",
     due_date = null,
     assignee_id = null,
+    budget_stimato = null,
+    costo_previsto = null,
   } = req.body;
 
   const cantiereId = Number(cantiere_id);
@@ -141,6 +145,8 @@ export const createTask = asyncHandler(async (req, res) => {
       priority,
       due_date,
       assignee_id,
+      budget_stimato,
+      costo_previsto,
     },
     include: buildTaskInclude(),
   });
@@ -166,7 +172,7 @@ export const updateTask = asyncHandler(async (req, res) => {
     ? Object.fromEntries(Object.entries(req.body).filter(([key]) => key === "status"))
     : Object.fromEntries(
         Object.entries(req.body).filter(([key]) =>
-          ["cantiere_id", "title", "description", "status", "priority", "due_date", "assignee_id"].includes(key)
+          ["cantiere_id", "title", "description", "status", "priority", "due_date", "assignee_id", "budget_stimato", "costo_previsto"].includes(key)
         )
       );
 

@@ -245,23 +245,23 @@ model MessageLog {
 }
 
 model Task {
-  id          Int          @id @default(autoincrement())
-  cantiere_id Int
-  title       String
-  description String?
-  assignee_id Int?
-  status      TaskStatus   @default(TODO)
-  priority    TaskPriority @default(MEDIUM)
-  due_date    DateTime?
-  budget_stimato Decimal? @db.Decimal(10, 2)
-  costo_previsto Decimal? @db.Decimal(10, 2)
-  created_at  DateTime     @default(now())
-  updated_at  DateTime     @updatedAt
+  id             Int          @id @default(autoincrement())
+  cantiere_id    Int
+  title          String
+  description    String?
+  assignee_id    Int?
+  status         TaskStatus   @default(TODO)
+  priority       TaskPriority @default(MEDIUM)
+  due_date       DateTime?
+  budget_stimato Decimal?     @db.Decimal(10, 2)
+  costo_previsto Decimal?     @db.Decimal(10, 2)
+  created_at     DateTime     @default(now())
+  updated_at     DateTime     @updatedAt
 
-  cantiere       Cantiere      @relation(fields: [cantiere_id], references: [id])
-  assignee       Employee?     @relation(fields: [assignee_id], references: [id])
-  report_entries ReportEntry[]
-  spese          Spesa[]
+  cantiere            Cantiere             @relation(fields: [cantiere_id], references: [id])
+  assignee            Employee?            @relation(fields: [assignee_id], references: [id])
+  report_entries      ReportEntry[]
+  spese               Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
 }
 

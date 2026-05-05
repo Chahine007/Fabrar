@@ -25,7 +25,8 @@ function getEntryHourlyCost(entry) {
  * Nota: le spese generate dal magazzino hanno fonte MAGAZZINO e vengono escluse
  * dai costi extra per evitare doppio conteggio con MovimentoMagazzino.
  */
-export async function calculateTrueCost(cantiere_id, task_id = null, prisma = getDb()) {
+export async function calculateTrueCost(cantiere_id, task_id = null) {
+  const prisma = getDb();
   const cantiereId = parseOptionalId(cantiere_id);
   const taskId = parseOptionalId(task_id);
 

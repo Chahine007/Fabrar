@@ -72,7 +72,7 @@ export const listCantieri = asyncHandler(async (req, res) => {
 
 export const createCantiere = asyncHandler(async (req, res) => {
     // La validazione e la coercizione dei tipi sono già state eseguite dal middleware Zod.
-    const { nome, indirizzo, lat, lng, budget } = req.body;
+    const { nome, indirizzo, lat, lng, budget, valore_contratto, budget_spese } = req.body;
 
     await dbCreateCantiere({
         nome,
@@ -80,6 +80,8 @@ export const createCantiere = asyncHandler(async (req, res) => {
         lat,
         lng,
         budget,
+        valore_contratto,
+        budget_spese,
     });
     res.status(201).json({ ok: true });
 });
@@ -110,7 +112,7 @@ export const getFinancialTimeline = asyncHandler(async (req, res) => {
 
     res.json({
         nome:             dataset.cantiere.nome,
-        budget:           toNumber(dataset.cantiere.budget),
+        budget:           toNumber(dataset.cantiere.valore_contratto ?? dataset.cantiere.budget),
         raggio_tolleranza: dataset.cantiere.raggio_tolleranza || 300,
         months, costoReale, costoPerMese,
     });
@@ -124,7 +126,7 @@ export const getDetails = asyncHandler(async (req, res) => {
     if (!dataset) return res.status(404).json({ error: "Cantiere non trovato." });
 
     const { kpi: legacyKpi, perDipendente } = computeFinancialKpis(dataset);
-    const trueCost = await calculateTrueCost(cantiereId, null, getDb());
+    const trueCost = await calculateTrueCost(cantiereId);
     const budget = toNumber(dataset.cantiere.valore_contratto ?? dataset.cantiere.budget);
     const nMesi = legacyKpi.nMesi ?? 1;
     const kpi = {
@@ -140,7 +142,16 @@ export const getDetails = asyncHandler(async (req, res) => {
     };
     const { report_entries: _e, spese: _s, ...cantiere } = dataset.cantiere;
 
-    res.json({ cantiere: { ...cantiere, budget: kpi.budget }, kpi, perDipendente });
+    res.json({
+        cantiere: {
+            ...cantiere,
+            budget: kpi.budget,
+            valore_contratto: toNumber(cantiere.valore_contratto),
+            budget_spese: toNumber(cantiere.budget_spese),
+        },
+        kpi,
+        perDipendente,
+    });
 });
 
 export const getCantiereMaterials = asyncHandler(async (req, res) => {
@@ -274,7 +285,7 @@ export const getCantiereSettings = asyncHandler(async (req, res) => {
             bot_checkin_gps: true, bot_anomaly_action: true, bot_wbs_prompt_thr: true,
             budget_contingency: true, kpi_warning_thr: true, kpi_critical_thr: true,
             client_name: true, client_ref_email: true, pm_id: true, site_manager_id: true,
-            budget: true,
+            budget: true, valore_contratto: true, budget_spese: true,
         }
     });
     if (!cantiere) return res.status(404).json({ error: "Cantiere non trovato." });
@@ -285,7 +296,16 @@ export const getCantiereSettings = asyncHandler(async (req, res) => {
         select: { id: true, username: true, employee: { select: { nome: true, cognome: true } } }
     });
 
-    res.json({ settings: cantiere, pms });
+    res.json({
+        settings: {
+            ...cantiere,
+            budget: toNumber(cantiere.budget),
+            valore_contratto: toNumber(cantiere.valore_contratto),
+            budget_spese: toNumber(cantiere.budget_spese),
+            budget_contingency: toNumber(cantiere.budget_contingency),
+        },
+        pms,
+    });
 });
 
 export const updateCantiereSettings = asyncHandler(async (req, res) => {

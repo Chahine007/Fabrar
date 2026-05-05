@@ -5,8 +5,13 @@ import logger from "../logger.js";
 import { getDb } from "../db/index.js";
 import { findUserByUsername, updateUserLastLogin } from "../db/index.js";
 import bcrypt from "bcrypt";
+import { normalizeRole } from "../middleware/auth.js";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+function normalizedAppRole(role, fallback = "WORKER") {
+  return normalizeRole(role, fallback);
+}
 
 // ─── Legacy login (username + password) ──────────────────────────────────────
 
@@ -40,6 +45,7 @@ export async function login(req, res) {
     }
 
     await updateUserLastLogin(user.id);
+    const normalizedRole = normalizedAppRole(user.role);
 
     // Recupera employee_id dal lato Employee
     const prisma = getDb();
@@ -49,7 +55,7 @@ export async function login(req, res) {
       {
         id: user.id,
         employee_id: emp?.id ?? null,
-        role: user.role,
+        role: normalizedRole,
         username: user.username,
       },
       process.env.JWT_SECRET,
@@ -123,8 +129,6 @@ export async function googleLoginOrRegister(req, res) {
     const payload = ticket.getPayload();
     const googleId = payload.sub;
     const email = payload.email;
-    const name = payload.name || email.split("@")[0];
-
     if (!email) {
       return res.status(400).json({ error: "L'account Google non ha un'email associata." });
     }
@@ -155,7 +159,7 @@ export async function googleLoginOrRegister(req, res) {
         const existingUsername = await tx.user.findUnique({ where: { username: baseUsername } });
         const username = existingUsername ? `${baseUsername}_${Date.now().toString(36)}` : baseUsername;
 
-        const role = employee.ruolo || "OPERAIO";
+        const role = normalizedAppRole(employee.ruolo);
 
         const newUser = await tx.user.create({
           data: {
@@ -183,7 +187,7 @@ export async function googleLoginOrRegister(req, res) {
         {
           id: result.user.id,
           employee_id: result.employee.id,
-          role: result.user.role,
+          role: normalizedAppRole(result.user.role),
           username: result.user.username,
         },
         process.env.JWT_SECRET,
@@ -202,7 +206,7 @@ export async function googleLoginOrRegister(req, res) {
           id: result.user.id,
           username: result.user.username,
           email: result.user.email,
-          role: result.user.role,
+          role: normalizedAppRole(result.user.role),
           employee_id: result.employee.id,
           nome: result.employee.nome,
           cognome: result.employee.cognome,
@@ -231,12 +235,22 @@ export async function googleLoginOrRegister(req, res) {
       return res.status(403).json({ error: "Account disattivato. Contatta l'amministratore." });
     }
 
+    const normalizedRole = normalizedAppRole(user.role);
+
     // Aggiorna google_id se mancante (utente creato con password e ora usa Google)
-    if (!user.google_id) {
+    if (!user.google_id || user.role !== normalizedRole) {
       await prisma.user.update({
         where: { id: user.id },
-        data: { google_id: googleId },
+        data: {
+          ...(user.google_id ? {} : { google_id: googleId }),
+          ...(user.role === normalizedRole ? {} : { role: normalizedRole }),
+        },
       });
+      user = {
+        ...user,
+        google_id: user.google_id ?? googleId,
+        role: normalizedRole,
+      };
     }
 
     await updateUserLastLogin(user.id);
@@ -248,7 +262,7 @@ export async function googleLoginOrRegister(req, res) {
       {
         id: user.id,
         employee_id: emp?.id ?? null,
-        role: user.role,
+        role: normalizedRole,
         username: user.username,
       },
       process.env.JWT_SECRET,
@@ -267,7 +281,7 @@ export async function googleLoginOrRegister(req, res) {
         id: user.id,
         username: user.username,
         email: user.email,
-        role: user.role,
+        role: normalizedRole,
         employee_id: emp?.id ?? null,
         nome: emp?.nome ?? null,
         cognome: emp?.cognome ?? null,

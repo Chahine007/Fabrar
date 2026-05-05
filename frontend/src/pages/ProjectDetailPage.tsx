@@ -151,7 +151,7 @@ const OverviewTab = ({ cantiereId }: { cantiereId: number }) => {
           sub={`di €${kpi.budget.toLocaleString('it-IT')} totali`}
           trend={remaining > 0 ? 'positive' : 'negative'} />
         <MetricCard title="Costo Reale" value={`€${kpi.costoTotale.toLocaleString('it-IT', { minimumFractionDigits: 2 })}`}
-          sub={`Manodopera: €${kpi.costoManodopera.toLocaleString('it-IT')} | Mat: €${kpi.costoMateriali.toLocaleString('it-IT')}`}
+          sub={`Manodopera: €${kpi.costoManodopera.toLocaleString('it-IT')} | Mag: €${kpi.costoMateriali.toLocaleString('it-IT')} | Spese: €${(kpi.costoSpese ?? 0).toLocaleString('it-IT')}`}
           trend={kpi.costoTotale <= kpi.budget ? 'positive' : 'negative'} />
       </div>
 

@@ -9,6 +9,8 @@ export const createCantiereSchema = z.object({
         lat: z.coerce.number().optional().nullable(),
         lng: z.coerce.number().optional().nullable(),
         budget: z.coerce.number().positive("Il budget deve essere un numero positivo.").optional().nullable(),
+        valore_contratto: z.coerce.number().positive("Il valore contratto deve essere un numero positivo.").optional().nullable(),
+        budget_spese: z.coerce.number().nonnegative("Il budget spese non puo essere negativo.").optional().nullable(),
     }),
 });
 
@@ -22,6 +24,8 @@ export const updateCantiereSchema = z.object({
         lat: z.coerce.number().optional().nullable(),
         lng: z.coerce.number().optional().nullable(),
         budget: z.coerce.number().positive().optional().nullable(),
+        valore_contratto: z.coerce.number().positive().optional().nullable(),
+        budget_spese: z.coerce.number().nonnegative().optional().nullable(),
         raggio_tolleranza: z.coerce.number().nonnegative("raggio_tolleranza non valido.").optional().nullable(),
         attivo: z.coerce.number().optional(),
     }).refine((data) => Object.keys(data).length > 0, {
@@ -43,6 +47,8 @@ export const updateCantiereSettingsSchema = z.object({
         bot_anomaly_action: z.enum(['LOG', 'BLOCK']).optional(),
         bot_wbs_prompt_thr: z.coerce.number().min(1).optional(),
         budget_contingency: z.coerce.number().nonnegative().optional().nullable(),
+        valore_contratto: z.coerce.number().positive().optional().nullable(),
+        budget_spese: z.coerce.number().nonnegative().optional().nullable(),
         kpi_warning_thr: z.coerce.number().min(0).max(100).optional(),
         kpi_critical_thr: z.coerce.number().min(0).max(100).optional(),
         client_name: optionalText,
