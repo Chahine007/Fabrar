@@ -257,7 +257,12 @@ export const downloadDocument = asyncHandler(async (req, res) => {
     const uploadDir = process.env.UPLOAD_DIR
         ? path.resolve(process.env.UPLOAD_DIR)
         : path.resolve('./uploads');
-    const filePath = path.join(uploadDir, doc.file_path);
+    const resolvedUploadDir = path.resolve(uploadDir);
+    const filePath = path.resolve(resolvedUploadDir, doc.file_path);
+
+    if (filePath !== resolvedUploadDir && !filePath.startsWith(`${resolvedUploadDir}${path.sep}`)) {
+        return res.status(403).json({ error: "Percorso documento non autorizzato." });
+    }
 
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: "File fisico non trovato." });
     res.download(filePath, doc.name);
@@ -319,10 +324,37 @@ export const updateCantiereSettings = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
 
+    const allowed = [
+        "nome",
+        "indirizzo",
+        "lat",
+        "lng",
+        "raggio_tolleranza",
+        "bot_checkin_gps",
+        "bot_anomaly_action",
+        "bot_wbs_prompt_thr",
+        "budget_contingency",
+        "valore_contratto",
+        "budget_spese",
+        "kpi_warning_thr",
+        "kpi_critical_thr",
+        "client_name",
+        "client_ref_email",
+        "pm_id",
+        "site_manager_id",
+    ];
+    const data = {};
+    for (const key of allowed) {
+        if (req.body[key] !== undefined) data[key] = req.body[key];
+    }
+    if (Object.keys(data).length === 0) {
+        return res.status(400).json({ error: "Nessuna impostazione valida fornita." });
+    }
+
     const prisma = getDb();
     const cantiere = await prisma.cantiere.update({
         where: { id: cantiereId },
-        data: req.body
+        data,
     });
 
     res.json(cantiere);

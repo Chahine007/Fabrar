@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { bulkUpdateItems } from '../../src/domain/hr/auditService.js';
 import { DomainError } from '../../src/domain/shared/DomainError.js';
 import { ValidationStatus, AUDIT_TYPE } from '../../src/constants.js';
+import { domainBus, EVENTS } from '../../src/domain/events/domainBus.js';
 
 // ─── Mock Prisma Transaction ───────────────────────────────────────────────────
 
@@ -36,6 +37,10 @@ function buildPrismaMock(txOverrides = {}) {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('auditService.bulkUpdateItems', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
     describe('formato items esplicito', () => {
         it('approva una ReportEntry con tariffa presente', async () => {
             const prisma = buildPrismaMock({
@@ -62,6 +67,67 @@ describe('auditService.bulkUpdateItems', () => {
                     data:  expect.objectContaining({ stato_validazione: ValidationStatus.APPROVED }),
                 })
             );
+        });
+
+        it('emette REPORT_ENTRY_VERIFIED solo dopo una transazione riuscita', async () => {
+            const prisma = buildPrismaMock({
+                reportEntry: {
+                    findMany:   vi.fn().mockResolvedValue([]),
+                    findUnique: vi.fn().mockResolvedValue({
+                        report_id: 1,
+                        cantiere_id: 7,
+                        report: { employee_id: 42 },
+                    }),
+                    update: vi.fn().mockResolvedValue({}),
+                },
+            });
+            const emitSpy = vi.spyOn(domainBus, 'emit');
+
+            const count = await bulkUpdateItems(prisma, {
+                items: [{ id: 10, type: AUDIT_TYPE.ORE, newStatus: ValidationStatus.VERIFIED }],
+            });
+
+            expect(count).toBe(1);
+            expect(emitSpy).toHaveBeenCalledTimes(1);
+            expect(emitSpy).toHaveBeenCalledWith(EVENTS.REPORT_ENTRY_VERIFIED, {
+                entryId: 10,
+                cantiereId: 7,
+            });
+        });
+
+        it('non emette eventi se la transazione fa rollback dopo aver preparato un evento', async () => {
+            const tx = {
+                reportEntry: {
+                    findMany:   vi.fn().mockResolvedValue([]),
+                    findUnique: vi.fn().mockResolvedValue({
+                        report_id: 1,
+                        cantiere_id: 7,
+                        report: { employee_id: 42 },
+                    }),
+                    update: vi.fn().mockResolvedValue({}),
+                },
+                spesa: {
+                    findMany: vi.fn().mockResolvedValue([]),
+                    update:   vi.fn().mockResolvedValue({}),
+                },
+                tariffa: {
+                    count: vi.fn().mockResolvedValue(1),
+                },
+            };
+            const prisma = {
+                $transaction: vi.fn(async (fn) => {
+                    await fn(tx);
+                    throw new Error('rollback');
+                }),
+                _tx: tx,
+            };
+            const emitSpy = vi.spyOn(domainBus, 'emit');
+
+            await expect(bulkUpdateItems(prisma, {
+                items: [{ id: 10, type: AUDIT_TYPE.ORE, newStatus: ValidationStatus.VERIFIED }],
+            })).rejects.toThrow('rollback');
+
+            expect(emitSpy).not.toHaveBeenCalled();
         });
 
         it('🔒 Policy 4.2 — lancia DomainError se dipendente senza tariffa', async () => {

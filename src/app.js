@@ -20,14 +20,22 @@ export function createApp() {
   app.disable("etag");
   app.use(express.json({ limit: "2mb" }));
 
+  const scriptSources = [
+    "'self'",
+    "'unsafe-inline'",
+    ...(process.env.NODE_ENV !== "production" ? ["'unsafe-eval'"] : []),
+    "https://accounts.google.com",
+    "https://apis.google.com",
+  ];
+
   // Security headers – Configurazione CSP Manuale (per evitare conflitti con i default di Helmet)
   app.use(helmet({
     contentSecurityPolicy: {
       useDefaults: false,
       directives: {
         "default-src": ["'self'"],
-        "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://accounts.google.com", "https://apis.google.com"],
-        "script-src-elem": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://accounts.google.com", "https://apis.google.com"],
+        "script-src": scriptSources,
+        "script-src-elem": scriptSources,
         "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://accounts.google.com"],
         "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
         "img-src": ["'self'", "data:", "blob:", "https://ui-avatars.com", "https://*.tile.openstreetmap.org", "https://cdnjs.cloudflare.com", "https://lh3.googleusercontent.com"],
