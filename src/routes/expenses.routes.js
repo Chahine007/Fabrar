@@ -21,13 +21,15 @@ import {
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 const DATA_ENTRY_ROLES = ["WORKER", "PROJECT_MANAGER", "HR", "ADMIN"];
+const OFFICE_EXPENSE_ROLES = ["HR", "ADMIN"];
+const GENYA_IMPORT_ROLES = ["PROJECT_MANAGER", "HR", "ADMIN"];
 
-router.use(["/api/pricebook", "/api/admin/spese"], verifyTokenAndRole(DASHBOARD_ROLES));
+router.use("/api/pricebook", verifyTokenAndRole(DASHBOARD_ROLES));
 router.use("/api/my-expenses", verifyToken);
 
 router.get("/api/pricebook", getPricebook);
-router.post("/api/admin/spese/manual", validate(manualExpenseSchema), createManualExpense);
-router.post("/api/admin/spese/bulk", upload.single("file"), bulkImportExpenses);
+router.post("/api/admin/spese/manual", verifyTokenAndRole(OFFICE_EXPENSE_ROLES), validate(manualExpenseSchema), createManualExpense);
+router.post("/api/admin/spese/bulk", verifyTokenAndRole(GENYA_IMPORT_ROLES), upload.single("file"), bulkImportExpenses);
 
 router.post(
     "/api/my-expenses",

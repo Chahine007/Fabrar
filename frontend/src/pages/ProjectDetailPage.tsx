@@ -41,10 +41,9 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const genyaImport = useGenyaImport();
-
   const cantiereId = id ? parseInt(id, 10) : null;
   const detailCantiereId = Number.isInteger(cantiereId) ? cantiereId : null;
+  const genyaImport = useGenyaImport(detailCantiereId);
 
   const { data: cantieri, isLoading: loadingList } = useCantieri();
   const { data: projectDetail } = useCantiereDetail(detailCantiereId);

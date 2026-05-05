@@ -230,12 +230,13 @@ export function useCreateCantiere() {
 
 // ─── Genya bulk import ───────────────────────────────────────────────────────
 
-export function useGenyaImport() {
+export function useGenyaImport(cantiereId?: number | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append('file', file);
+      if (cantiereId) formData.append('cantiere_id', String(cantiereId));
       // Non impostare Content-Type manualmente — fetch gestisce il boundary
       const res = await apiFetch('/api/admin/spese/bulk', {
         method: 'POST',

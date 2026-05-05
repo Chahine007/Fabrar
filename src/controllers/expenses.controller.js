@@ -8,6 +8,7 @@ import {
     ensureWbsBelongsToCantiere,
     getRootWbsId,
 } from "../domain/shared/linkValidators.js";
+import { canAccessCantiere } from "../domain/shared/accessControl.js";
 
 const WEB_SOURCE = "WEB";
 const MUTABLE_STATUSES = new Set([ValidationStatus.PENDING, ValidationStatus.REJECTED]);
@@ -79,6 +80,109 @@ export function parseImportedTimestamp(value) {
     return parsed;
 }
 
+function parseCsvLine(line, delimiter) {
+    const values = [];
+    let current = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        const next = line[i + 1];
+
+        if (char === '"' && inQuotes && next === '"') {
+            current += '"';
+            i += 1;
+            continue;
+        }
+
+        if (char === '"') {
+            inQuotes = !inQuotes;
+            continue;
+        }
+
+        if (char === delimiter && !inQuotes) {
+            values.push(current.trim());
+            current = "";
+            continue;
+        }
+
+        current += char;
+    }
+
+    values.push(current.trim());
+    return values.map((value) => value.replace(/^['"]|['"]$/g, ""));
+}
+
+function detectCsvDelimiter(headerLine) {
+    const semicolonCount = (headerLine.match(/;/g) || []).length;
+    const commaCount = (headerLine.match(/,/g) || []).length;
+    return semicolonCount >= commaCount ? ";" : ",";
+}
+
+function normalizeImportHeader(header) {
+    const key = String(header ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/^\uFEFF/, "")
+        .replace(/\s+/g, "_");
+
+    const aliases = {
+        cantiere: "cantiere_id",
+        cantiereid: "cantiere_id",
+        id_cantiere: "cantiere_id",
+        commessa_id: "cantiere_id",
+        progetto_id: "cantiere_id",
+        data: "timestamp_utc",
+        giorno: "timestamp_utc",
+        date: "timestamp_utc",
+        totale: "importo",
+        amount: "importo",
+        costo: "importo",
+        supplier: "fornitore",
+        vendor: "fornitore",
+        note: "descrizione",
+        descrizione_spesa: "descrizione",
+    };
+
+    return aliases[key] ?? key;
+}
+
+export function parseImportedMoney(value) {
+    if (typeof value === "number") return value;
+    let text = String(value ?? "").trim().replace(/\s/g, "").replace(/[€]/g, "");
+    if (!text) return NaN;
+
+    const lastComma = text.lastIndexOf(",");
+    const lastDot = text.lastIndexOf(".");
+    if (lastComma !== -1 && lastDot !== -1) {
+        text = lastComma > lastDot
+            ? text.replace(/\./g, "").replace(",", ".")
+            : text.replace(/,/g, "");
+    } else if (lastComma !== -1) {
+        text = text.replace(/\./g, "").replace(",", ".");
+    }
+
+    return Number(text);
+}
+
+export function parseExpenseRowsFromCsv(csvText, fallbackCantiereId = null) {
+    const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    if (lines.length <= 1) return [];
+
+    const delimiter = detectCsvDelimiter(lines[0]);
+    const headers = parseCsvLine(lines[0], delimiter).map(normalizeImportHeader);
+
+    return lines.slice(1).map((line) => {
+        const values = parseCsvLine(line, delimiter);
+        const row = {};
+        headers.forEach((header, idx) => {
+            row[header] = values[idx] || null;
+        });
+        if (!row.cantiere_id && fallbackCantiereId) row.cantiere_id = fallbackCantiereId;
+        return row;
+    }).filter((row) => row.importo && row.cantiere_id);
+}
+
 export const getPricebook = asyncHandler(async (req, res) => {
     const rows = await listPricebook();
     res.json(rows);
@@ -115,22 +219,11 @@ export const createManualExpense = asyncHandler(async (req, res) => {
 
 export const bulkImportExpenses = asyncHandler(async (req, res) => {
     let spese_bulk = req.body.spese_bulk;
+    const fallbackCantiereId = parseIdParam(req.body.cantiere_id ?? req.query.cantiere_id);
 
     if (req.file) {
         const csvText = req.file.buffer.toString("utf-8");
-        const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
-
-        if (lines.length > 1) {
-            const headers = lines[0].split(/[;,]/).map((h) => h.trim().toLowerCase());
-            spese_bulk = [];
-
-            for (let i = 1; i < lines.length; i++) {
-                const values = lines[i].split(/[;,]/).map((v) => v.trim().replace(/^["']|["']$/g, ""));
-                const row = {};
-                headers.forEach((h, idx) => { row[h] = values[idx] || null; });
-                if (row.importo && row.cantiere_id) spese_bulk.push(row);
-            }
-        }
+        spese_bulk = parseExpenseRowsFromCsv(csvText, fallbackCantiereId);
     }
 
     if (!Array.isArray(spese_bulk) || spese_bulk.length === 0) {
@@ -148,11 +241,17 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
     await prisma.$transaction(async (tx) => {
         const rootWbsCache = new Map();
         for (const item of spese_bulk) {
-            const importo = typeof item.importo === "number" ? item.importo : parseFloat(String(item.importo));
+            const importo = parseImportedMoney(item.importo);
             if (!Number.isFinite(importo) || importo <= 0) throw new Error("Importi devono essere > 0.");
 
             const cantiereId = parseIdParam(item.cantiere_id);
             if (!cantiereId) throw new Error("Ogni spesa deve essere associata a un cantiere.");
+            if (!(await canAccessCantiere(tx, req.user, cantiereId, {
+                globalRoles: ["ADMIN", "HR"],
+                ownerRoles: ["PROJECT_MANAGER"],
+            }))) {
+                throw new Error(`Accesso negato al cantiere ${cantiereId}.`);
+            }
 
             const cantiere = await tx.cantiere.findFirst({ where: { id: cantiereId, attivo: 1 }, select: { id: true } });
             if (!cantiere) throw new Error(`Cantiere non valido o inattivo: ${cantiereId}.`);
@@ -178,7 +277,7 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
             });
         }
     });
-    res.json({ ok: true, salvate: spese_bulk.length });
+    res.json({ ok: true, salvate: spese_bulk.length, inserted: spese_bulk.length });
 });
 
 export const createMyExpense = asyncHandler(async (req, res) => {

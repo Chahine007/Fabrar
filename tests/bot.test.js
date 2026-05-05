@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Readable } from "stream";
 
 const dbMocks = {
   findEmployeeByTelegramId: vi.fn(),
@@ -15,6 +16,7 @@ const dbMocks = {
   upsertReportEntry: vi.fn(),
   listReportEntriesByEmployeeAndDate: vi.fn(),
   updateReportHeader: vi.fn(),
+  getDb: vi.fn(),
 };
 
 const telegramMocks = {
@@ -242,5 +244,71 @@ describe("bot flow", () => {
     expect(lastMessage).toContain("Aggiornamento report registrato.");
     expect(lastMessage).toContain("11:00");
     expect(lastMessage).toContain("12:00");
+  });
+
+  it("vocale Telegram con GPS obbligatorio prepara la richiesta posizione dopo la trascrizione", async () => {
+    dbMocks.findEmployeeByTelegramId.mockResolvedValue({
+      id: 1,
+      stato_registrazione: "registrato",
+      gdpr_accettato: 1,
+      pending_json: null,
+      pending_report_date: null,
+    });
+    dbMocks.updateEmployee.mockResolvedValue(undefined);
+    dbMocks.listReportEntriesByEmployeeAndDate.mockResolvedValue([]);
+    dbMocks.ensureDailyReportHeader.mockResolvedValue(99);
+    dbMocks.getDb.mockReturnValue({
+      cantiere: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 3,
+          nome: "Cantiere A",
+          attivo: 1,
+          bot_checkin_gps: true,
+        }),
+      },
+      reportEntry: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+    });
+    telegramMocks.tgSendMessage.mockResolvedValue({ message_id: 55 });
+    telegramMocks.tgGetFile.mockResolvedValue({ file_path: "voice/test.ogg" });
+    telegramMocks.tgDownloadFile.mockResolvedValue(Readable.from([Buffer.from("audio")]));
+    audioMocks.maybeConvertToWav.mockImplementation(async (filePath) => ({ path: filePath, converted: false }));
+    openAiMocks.transcribeAudio.mockResolvedValue("Ho lavorato 8 ore al Cantiere A");
+    openAiMocks.extractReport.mockResolvedValue({
+      ore_totali: 8,
+      cantiere_id: 3,
+      ingresso: null,
+      pausa_inizio: null,
+      pausa_fine: null,
+      uscita: null,
+      attivita_svolte: "Lavorazioni",
+      luogo_cantiere: "Cantiere A",
+      problemi_riscontrati: null,
+    });
+
+    const { handleTelegramUpdate } = await import("../src/services/bot.js");
+
+    await handleTelegramUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 20 },
+        voice: { file_id: "voice-file-id", file_size: 1024, mime_type: "audio/ogg" },
+      },
+    });
+
+    expect(openAiMocks.transcribeAudio).toHaveBeenCalled();
+    expect(dbMocks.updateEmployee).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        pending_json: expect.stringContaining("__awaiting_gps"),
+        pending_text: "Ho lavorato 8 ore al Cantiere A",
+      })
+    );
+    expect(telegramMocks.tgEditMessageText).toHaveBeenCalledWith(
+      10,
+      55,
+      expect.stringContaining("obbligatorio allegare la posizione")
+    );
   });
 });

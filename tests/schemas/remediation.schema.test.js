@@ -8,6 +8,7 @@ import {
 import { createSupplierSchema, updateSupplierSchema } from '../../src/schemas/suppliers.schema.js';
 import { changePasswordSchema, updateUserSettingsSchema } from '../../src/schemas/user.schema.js';
 import { updateGpsSchema } from '../../src/schemas/cantiere.schema.js';
+import { parseExpenseRowsFromCsv, parseImportedMoney } from '../../src/controllers/expenses.controller.js';
 
 describe('remediation HTTP schemas', () => {
   it('valida billing installments e invoice payload', () => {
@@ -86,5 +87,23 @@ describe('remediation HTTP schemas', () => {
       query: {},
       body: { lat: 95, lng: 9 },
     }).success).toBe(false);
+  });
+
+  it('parsa CSV Genya con separatore punto e virgola, importi decimali italiani e cantiere fallback', () => {
+    const rows = parseExpenseRowsFromCsv(
+      'Data;Importo;Fornitore;Descrizione\n05/05/2026;"1.234,56";Rossi Srl;"Materiali, minuteria"',
+      7
+    );
+
+    expect(rows).toEqual([
+      {
+        timestamp_utc: '05/05/2026',
+        importo: '1.234,56',
+        fornitore: 'Rossi Srl',
+        descrizione: 'Materiali, minuteria',
+        cantiere_id: 7,
+      },
+    ]);
+    expect(parseImportedMoney(rows[0].importo)).toBe(1234.56);
   });
 });
