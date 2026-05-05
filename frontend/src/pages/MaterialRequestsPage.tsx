@@ -19,8 +19,8 @@ import {
 } from '../hooks/api/useMaterialRequests';
 import { useCantieri } from '../hooks/api/useCantieri';
 import MaterialRequestModal from '../components/materials/MaterialRequestModal';
-import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+import { CardListSkeleton, ConfirmDialog, EmptyState, useToast } from '../components/ui';
 
 const STATUS_LABELS: Record<MaterialRequestStatus, string> = {
   PENDING: 'In Attesa',
@@ -55,6 +55,8 @@ export default function MaterialRequestsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<MaterialRequestStatus | ''>('');
   const [cantiereFilter, setCantiereFilter] = useState('');
+  const [requestToFulfill, setRequestToFulfill] = useState<MaterialRequest | null>(null);
+  const toast = useToast();
 
   const role = user?.role ?? '';
   const canCreate = REQUEST_ROLES.includes(role);
@@ -93,22 +95,31 @@ export default function MaterialRequestsPage() {
   const changeStatus = async (request: MaterialRequest, status: Extract<MaterialRequestStatus, 'APPROVED' | 'REJECTED'>) => {
     try {
       await updateStatus.mutateAsync({ id: request.id, status });
+      toast.success(
+        status === 'APPROVED' ? 'Richiesta approvata' : 'Richiesta rifiutata',
+        `Richiesta #${request.id} aggiornata.`
+      );
     } catch (err: any) {
-      window.alert(err.message ?? 'Errore aggiornamento stato richiesta.');
+      toast.error('Aggiornamento non riuscito', err.message ?? 'Errore aggiornamento stato richiesta.');
     }
   };
 
   const fulfill = async (request: MaterialRequest) => {
-    if (!window.confirm(`Evadere la richiesta #${request.id}? Verranno scalate le giacenze disponibili.`)) return;
+    setRequestToFulfill(request);
+  };
 
+  const confirmFulfill = async () => {
+    if (!requestToFulfill) return;
     try {
-      await fulfillRequest.mutateAsync(request.id);
+      await fulfillRequest.mutateAsync(requestToFulfill.id);
+      toast.success('Richiesta evasa', `Richiesta #${requestToFulfill.id} evasa e giacenze scalate.`);
+      setRequestToFulfill(null);
     } catch (err: any) {
-      window.alert(err.message ?? 'Errore evasione richiesta.');
+      toast.error('Evasione non riuscita', err.message ?? 'Errore evasione richiesta.');
     }
   };
 
-  if (isLoading) return <div className="p-8 flex justify-center"><Spinner label="Caricamento richieste materiali..." /></div>;
+  if (isLoading) return <div className="p-8"><CardListSkeleton rows={6} /></div>;
   if (error) return <div className="p-8"><ErrorMessage error={(error as Error).message} /></div>;
 
   return (
@@ -187,12 +198,13 @@ export default function MaterialRequestsPage() {
 
           <div className="divide-y divide-border">
             {filteredRequests.length === 0 ? (
-              <div className="px-6 py-12 text-center">
-                <div className="w-16 h-16 bg-background rounded-full flex items-center justify-center mx-auto mb-4">
-                  <ClipboardList size={32} className="text-text-secondary opacity-60" />
-                </div>
-                <h3 className="text-lg font-bold text-text-primary">Nessuna richiesta trovata</h3>
-                <p className="text-sm text-text-secondary mt-1">Modifica i filtri o crea una nuova richiesta.</p>
+              <div className="p-6">
+                <EmptyState
+                  icon={ClipboardList}
+                  title="Nessuna richiesta trovata"
+                  description="Modifica i filtri o crea una nuova richiesta materiali."
+                  action={canCreate ? { label: 'Nuova richiesta', onClick: () => setIsModalOpen(true) } : undefined}
+                />
               </div>
             ) : (
               filteredRequests.map((request) => {
@@ -282,6 +294,15 @@ export default function MaterialRequestsPage() {
       <AnimatePresence>
         {isModalOpen && <MaterialRequestModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />}
       </AnimatePresence>
+      <ConfirmDialog
+        open={!!requestToFulfill}
+        onClose={() => setRequestToFulfill(null)}
+        onConfirm={confirmFulfill}
+        title="Evadere richiesta?"
+        description={requestToFulfill ? `La richiesta #${requestToFulfill.id} scalerà le giacenze disponibili.` : undefined}
+        confirmLabel="Evadi"
+        loading={fulfillRequest.isPending}
+      />
     </div>
   );
 }

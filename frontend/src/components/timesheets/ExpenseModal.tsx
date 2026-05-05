@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { motion } from 'motion/react';
-import { AlertTriangle, Banknote, Loader2, Save, X } from 'lucide-react';
+import { AlertTriangle, Banknote, Loader2, Save } from 'lucide-react';
 import { useCantieri } from '../../hooks/api/useCantieri';
 import { useAllTasks } from '../../hooks/api/useTasks';
 import { useCreateMyExpense, useUpdateMyExpense } from '../../hooks/api/useMyExpenses';
+import { Button, Dialog, Field, FormError, Input, Select, Textarea } from '../ui';
 
 export interface EditableExpense {
   id: number;
@@ -74,14 +74,6 @@ export default function ExpenseModal({ expense = null, onClose }: ExpenseModalPr
     setError(null);
   }, [expense]);
 
-  useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !isBusy) onClose();
-    };
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, [isBusy, onClose]);
-
   const taskOptions = useMemo(
     () =>
       selectedCantiereId
@@ -151,48 +143,27 @@ export default function ExpenseModal({ expense = null, onClose }: ExpenseModalPr
   const fieldsDisabled = isBusy || isApproved;
 
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-      <button
-        type="button"
-        aria-label="Chiudi modale"
-        className="absolute inset-0 cursor-default"
-        onClick={() => {
-          if (!isBusy) onClose();
-        }}
-      />
-
-      <motion.div
-        initial={{ opacity: 0, y: 18, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.2, ease: 'easeOut' }}
-        className="relative z-10 w-full max-w-2xl overflow-hidden rounded-3xl border border-border bg-card shadow-2xl"
-      >
-        <div className="flex items-start justify-between border-b border-border px-6 py-5">
-          <div className="flex items-center gap-3">
-            <div className="rounded-2xl bg-danger-bg p-2.5 text-danger-text">
-              <Banknote size={18} />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-text-primary">
-                {isEditMode ? 'Modifica Spesa' : 'Nuova Spesa'}
-              </h2>
-              <p className="text-sm text-text-secondary">
-                Registra spese operative collegate a cantiere e task.
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isBusy}
-            className="rounded-xl p-2 text-text-secondary transition-colors hover:bg-background hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-5 px-6 py-6">
+    <Dialog
+      open
+      onClose={onClose}
+      closeDisabled={isBusy}
+      title={isEditMode ? 'Modifica Spesa' : 'Nuova Spesa'}
+      description="Registra spese operative collegate a cantiere e task."
+      icon={<Banknote size={18} />}
+      size="lg"
+      footer={
+        <>
+          <Button type="button" variant="secondary" onClick={onClose} disabled={isBusy}>
+            Annulla
+          </Button>
+          <Button type="submit" form="expense-form" disabled={isBusy || isApproved} className="gap-2">
+            {isBusy ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+            {isBusy ? 'Salvataggio...' : 'Salva'}
+          </Button>
+        </>
+      }
+    >
+        <form id="expense-form" onSubmit={handleSubmit} className="space-y-5">
           {isApproved && (
             <div className="flex gap-3 rounded-2xl border border-warning-border bg-warning-bg px-4 py-3 text-sm text-warning-text">
               <AlertTriangle size={18} className="mt-0.5 shrink-0" />
@@ -200,35 +171,27 @@ export default function ExpenseModal({ expense = null, onClose }: ExpenseModalPr
             </div>
           )}
 
-          {error && (
-            <div className="rounded-2xl border border-danger-border bg-danger-bg px-4 py-3 text-sm text-danger-text">
-              {error}
-            </div>
-          )}
+          {error && <FormError>{error}</FormError>}
 
           <div className="grid gap-4 md:grid-cols-2">
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-text-primary">Data</span>
-              <input
+            <Field label="Data">
+              <Input
                 name="date"
                 type="date"
                 value={form.date}
                 onChange={handleChange}
                 disabled={fieldsDisabled}
                 required
-                className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
               />
-            </label>
+            </Field>
 
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-text-primary">Cantiere</span>
-              <select
+            <Field label="Cantiere">
+              <Select
                 name="cantiere_id"
                 value={form.cantiere_id}
                 onChange={handleChange}
                 disabled={fieldsDisabled}
                 required
-                className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <option value="">Seleziona cantiere</option>
                 {cantieri.map((cantiere) => (
@@ -239,17 +202,15 @@ export default function ExpenseModal({ expense = null, onClose }: ExpenseModalPr
                 {selectedExpenseCantiereId && !cantieri.some((cantiere) => cantiere.id === selectedExpenseCantiereId) && (
                   <option value={selectedExpenseCantiereId}>Cantiere #{selectedExpenseCantiereId}</option>
                 )}
-              </select>
-            </label>
+              </Select>
+            </Field>
 
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-text-primary">Task</span>
-              <select
+            <Field label="Task">
+              <Select
                 name="task_id"
                 value={form.task_id}
                 onChange={handleChange}
                 disabled={fieldsDisabled || !selectedCantiereId}
-                className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <option value="">Nessun task collegato</option>
                 {taskOptions.map((task) => (
@@ -257,12 +218,11 @@ export default function ExpenseModal({ expense = null, onClose }: ExpenseModalPr
                     {task.title}
                   </option>
                 ))}
-              </select>
-            </label>
+              </Select>
+            </Field>
 
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-text-primary">Importo</span>
-              <input
+            <Field label="Importo">
+              <Input
                 name="importo"
                 type="number"
                 min="0"
@@ -271,58 +231,33 @@ export default function ExpenseModal({ expense = null, onClose }: ExpenseModalPr
                 onChange={handleChange}
                 disabled={fieldsDisabled}
                 required
-                className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
                 placeholder="Es. 42.50"
               />
-            </label>
+            </Field>
 
-            <label className="flex flex-col gap-2 md:col-span-2">
-              <span className="text-sm font-semibold text-text-primary">Fornitore</span>
-              <input
+            <Field label="Fornitore" className="md:col-span-2">
+              <Input
                 name="fornitore"
                 type="text"
                 value={form.fornitore}
                 onChange={handleChange}
                 disabled={fieldsDisabled}
-                className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
                 placeholder="Es. Ferramenta Rossi"
               />
-            </label>
+            </Field>
 
-            <label className="flex flex-col gap-2 md:col-span-2">
-              <span className="text-sm font-semibold text-text-primary">Descrizione</span>
-              <textarea
+            <Field label="Descrizione" className="md:col-span-2">
+              <Textarea
                 name="descrizione"
                 value={form.descrizione}
                 onChange={handleChange}
                 disabled={fieldsDisabled}
                 rows={4}
-                className="resize-none rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
                 placeholder="Descrivi la spesa sostenuta."
               />
-            </label>
-          </div>
-
-          <div className="flex items-center justify-end gap-3 border-t border-border pt-5">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isBusy}
-              className="rounded-2xl px-4 py-2.5 text-sm font-semibold text-text-secondary transition hover:bg-background disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Annulla
-            </button>
-            <button
-              type="submit"
-              disabled={isBusy || isApproved}
-              className="inline-flex items-center gap-2 rounded-2xl bg-accent px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {isBusy ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-              {isBusy ? 'Salvataggio...' : 'Salva'}
-            </button>
+            </Field>
           </div>
         </form>
-      </motion.div>
-    </div>
+    </Dialog>
   );
 }

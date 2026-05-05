@@ -2,13 +2,23 @@ import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Package, MapPin, TrendingUp, AlertTriangle, 
-  Plus, Box, Search, X, Loader2
+  Plus, Box, Search, Loader2
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { useGiacenze, useArticoli, useUbicazioni, useCreaMovimento } from '../hooks/api/useMagazzino';
 import { useAuth } from '../hooks/useAuth';
-import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+import {
+  Button,
+  Dialog,
+  Field,
+  FormError,
+  Input,
+  ResponsiveDataView,
+  Select,
+  TableSkeleton,
+  useToast,
+} from '../components/ui';
 
 interface CaricoFormData {
   articolo_id: number;
@@ -22,8 +32,11 @@ const CaricoModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void
   const { data: articoli } = useArticoli();
   const { data: ubicazioni } = useUbicazioni();
   const creaMovimento = useCreaMovimento();
+  const toast = useToast();
+  const [error, setError] = useState<string | null>(null);
 
   const onSubmit = async (data: CaricoFormData) => {
+    setError(null);
     try {
       await creaMovimento.mutateAsync({
         tipo_movimento: 'CARICO',
@@ -33,100 +46,78 @@ const CaricoModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void
         costo_acquisto: Number(data.costo_acquisto)
       });
       reset();
+      toast.success('Carico registrato', 'La giacenza è stata aggiornata.');
       onClose();
     } catch (err: any) {
-      alert(`Errore: ${err.message}`);
+      setError(err.message ?? 'Errore registrazione carico.');
     }
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-card w-full max-w-lg rounded-2xl shadow-xl overflow-hidden"
-      >
-        <div className="flex items-center justify-between p-6 border-b border-border bg-background">
-          <h2 className="text-lg font-bold flex items-center gap-2 text-text-primary">
-            <Plus size={20} className="text-accent" />
-            Nuovo Carico Merci
-          </h2>
-          <button onClick={onClose} className="text-text-secondary hover:text-text-primary transition-colors">
-            <X size={20} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-5">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-semibold text-text-secondary">Articolo</label>
-            <select 
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      closeDisabled={creaMovimento.isPending}
+      title="Nuovo Carico Merci"
+      description="Registra un carico inventario e aggiorna la giacenza."
+      icon={<Plus size={18} />}
+      size="md"
+      footer={
+        <>
+          <Button type="button" variant="secondary" onClick={onClose} disabled={creaMovimento.isPending}>
+            Annulla
+          </Button>
+          <Button type="submit" form="warehouse-load-form" disabled={creaMovimento.isPending} className="gap-2">
+            {creaMovimento.isPending ? <Loader2 size={16} className="animate-spin" /> : null}
+            Registra Carico
+          </Button>
+        </>
+      }
+    >
+        <form id="warehouse-load-form" onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+          {error && <FormError>{error}</FormError>}
+          <Field label="Articolo" error={errors.articolo_id ? 'Seleziona un articolo.' : undefined}>
+            <Select 
               {...register('articolo_id', { required: true })}
-              className="p-3 bg-background border border-border rounded-xl text-sm"
             >
               <option value="">-- Seleziona Articolo --</option>
               {articoli?.map((a: any) => (
                 <option key={a.id} value={a.id}>{a.codice_sku} - {a.descrizione}</option>
               ))}
-            </select>
-          </div>
+            </Select>
+          </Field>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-semibold text-text-secondary">Ubicazione di Destinazione</label>
-            <select 
+          <Field label="Ubicazione di Destinazione" error={errors.ubicazione_a_id ? 'Seleziona una ubicazione.' : undefined}>
+            <Select 
               {...register('ubicazione_a_id', { required: true })}
-              className="p-3 bg-background border border-border rounded-xl text-sm"
             >
               <option value="">-- Seleziona Ubicazione --</option>
               {ubicazioni?.map((u: any) => (
                 <option key={u.id} value={u.id}>{u.codice} - {u.descrizione}</option>
               ))}
-            </select>
-          </div>
+            </Select>
+          </Field>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-semibold text-text-secondary">Quantità</label>
-              <input 
+            <Field label="Quantità" error={errors.quantita ? 'Quantità obbligatoria.' : undefined}>
+              <Input 
                 type="number" step="0.01" min="0.01"
                 {...register('quantita', { required: true })}
-                className="p-3 bg-background border border-border rounded-xl text-sm" 
                 placeholder="Es. 100"
               />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-semibold text-text-secondary">Costo Unitario (€)</label>
-              <input 
+            </Field>
+            <Field label="Costo Unitario (€)" error={errors.costo_acquisto ? 'Costo obbligatorio.' : undefined}>
+              <Input 
                 type="number" step="0.01" min="0.01"
                 {...register('costo_acquisto', { required: true })}
-                className="p-3 bg-background border border-border rounded-xl text-sm" 
                 placeholder="Es. 5.50"
               />
-            </div>
-          </div>
-
-          <div className="pt-4 flex justify-end gap-3">
-            <button 
-              type="button" 
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl text-sm font-semibold text-text-secondary hover:bg-background transition-colors"
-              disabled={creaMovimento.isPending}
-            >
-              Annulla
-            </button>
-            <button 
-              type="submit"
-              disabled={creaMovimento.isPending}
-              className="px-6 py-2 bg-accent text-white rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-70 flex items-center gap-2"
-            >
-              {creaMovimento.isPending ? <Loader2 size={16} className="animate-spin" /> : 'Registra Carico'}
-            </button>
+            </Field>
           </div>
         </form>
-      </motion.div>
-    </div>
+    </Dialog>
   );
 };
 
@@ -161,7 +152,7 @@ const WarehousePage = () => {
     });
   }, [giacenze, search]);
 
-  if (isLoading) return <div className="p-8 flex justify-center"><Spinner label="Caricamento magazzino..." /></div>;
+  if (isLoading) return <div className="p-8"><TableSkeleton rows={8} columns={6} /></div>;
   if (error) return <div className="p-8"><ErrorMessage error={(error as Error).message} /></div>;
 
   return (
@@ -246,7 +237,40 @@ const WarehousePage = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <ResponsiveDataView
+          data={filteredGiacenze}
+          getKey={(g: any) => g.id}
+          emptyTitle="Nessuna giacenza trovata"
+          emptyDescription="Modifica la ricerca o registra un carico merci."
+          emptyIcon={Box}
+          emptyAction={canCaricare ? { label: 'Nuovo carico', onClick: () => setIsModalOpen(true) } : undefined}
+          renderCard={(g: any) => {
+            const q = parseFloat(g.quantita_disponibile);
+            const cmp = parseFloat(g.articolo.costo_medio);
+            const val = q * cmp;
+            return (
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="text-xs font-mono bg-background border border-border px-2 py-1 rounded text-text-secondary">
+                      {g.articolo.codice_sku}
+                    </span>
+                    <p className="mt-3 font-bold text-text-primary">{g.articolo.descrizione}</p>
+                    <p className="mt-1 text-xs text-text-secondary">Misura: {g.articolo.unita_misura}</p>
+                  </div>
+                  <span className={`text-sm font-bold ${q > 0 ? 'text-success-text' : 'text-danger-text'}`}>
+                    {q}
+                  </span>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-text-secondary">
+                  <span>Ubicazione: <strong className="text-text-primary">{g.ubicazione.codice}</strong></span>
+                  <span>CMP: <strong className="text-text-primary">{cmp.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong></span>
+                  <span className="col-span-2">Valore: <strong className="text-text-primary">{val.toLocaleString('it-IT', { minimumFractionDigits: 2 })} €</strong></span>
+                </div>
+              </div>
+            );
+          }}
+          renderTable={(rows: any[]) => (
           <table className="w-full text-left border-collapse min-w-[800px]">
             <thead>
               <tr className="bg-background text-xs uppercase tracking-wider text-text-secondary border-b border-border">
@@ -259,14 +283,7 @@ const WarehousePage = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filteredGiacenze.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-text-secondary">
-                    Nessuna giacenza trovata.
-                  </td>
-                </tr>
-              ) : (
-                filteredGiacenze.map((g: any) => {
+                {rows.map((g: any) => {
                   const q = parseFloat(g.quantita_disponibile);
                   const cmp = parseFloat(g.articolo.costo_medio);
                   const val = q * cmp;
@@ -288,7 +305,7 @@ const WarehousePage = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <span className={`text-sm font-bold ${q > 0 ? 'text-success-text' : 'text-error'}`}>
+                        <span className={`text-sm font-bold ${q > 0 ? 'text-success-text' : 'text-danger-text'}`}>
                           {q}
                         </span>
                       </td>
@@ -300,11 +317,11 @@ const WarehousePage = () => {
                       </td>
                     </tr>
                   )
-                })
-              )}
+                })}
             </tbody>
           </table>
-        </div>
+          )}
+        />
       </div>
 
       <AnimatePresence>

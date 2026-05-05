@@ -7,6 +7,7 @@ import { MapPin, Bell, User as UserIcon, ShieldAlert, Building2 } from 'lucide-r
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import { useToast } from './ui';
 
 // Fix per l'icona del marker di Leaflet in React
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -37,6 +38,7 @@ interface SettingsFormData {
 export default function CantiereSettingsTab({ cantiereId }: { cantiereId: number }) {
   const { data, isLoading, error, refetch } = useCantiereSettings(cantiereId);
   const updateSettings = useUpdateCantiereSettings(cantiereId);
+  const toast = useToast();
 
   const { register, handleSubmit, reset, watch } = useForm<SettingsFormData>();
 
@@ -83,8 +85,9 @@ export default function CantiereSettingsTab({ cantiereId }: { cantiereId: number
       delete (processedData as any).budget;
 
       await updateSettings.mutateAsync(processedData);
+      toast.success('Impostazioni salvate');
     } catch (err: any) {
-      alert(`Errore: ${err.message}`);
+      toast.error('Salvataggio non riuscito', err.message);
     }
   };
 

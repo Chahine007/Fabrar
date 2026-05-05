@@ -26,9 +26,17 @@ import {
   type TaskStatusCode,
   type TaskWithCantiere,
 } from '../hooks/api/useTasks';
-import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import TaskModal from '../components/tasks/TaskModal';
+import {
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  IconButton,
+  ResponsiveDataView,
+  TableSkeleton,
+  useToast,
+} from '../components/ui';
 
 const STATUS_STYLE: Record<TaskStatusCode, string> = {
   TODO: 'bg-background text-text-secondary border border-border',
@@ -79,6 +87,8 @@ export default function ActivitiesPage() {
   const [cantiereFilter, setCantiereFilter] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<TaskWithCantiere | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<TaskWithCantiere | null>(null);
+  const toast = useToast();
 
   const filters: TaskFilters = {
     status: statusFilter || undefined,
@@ -141,14 +151,17 @@ export default function ActivitiesPage() {
 
   const handleDelete = async (task: TaskWithCantiere, event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
+    setTaskToDelete(task);
+  };
 
-    const confirmed = window.confirm(`Eliminare il task "${task.title}"?`);
-    if (!confirmed) return;
-
+  const confirmDelete = async () => {
+    if (!taskToDelete) return;
     try {
-      await deleteTask.mutateAsync(task.id);
+      await deleteTask.mutateAsync(taskToDelete.id);
+      toast.success('Attività eliminata', `"${taskToDelete.title}" è stata rimossa.`);
+      setTaskToDelete(null);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Impossibile eliminare il task.');
+      toast.error('Eliminazione non riuscita', err instanceof Error ? err.message : 'Impossibile eliminare il task.');
     }
   };
 
@@ -169,13 +182,13 @@ export default function ActivitiesPage() {
               <Plus size={16} />
               Nuova Attività
             </button>
-            <button
+            <IconButton
               onClick={() => refetch()}
-              className="rounded-xl border border-border p-2 text-text-secondary transition-all hover:bg-background"
-              title="Aggiorna"
+              aria-label="Aggiorna attività"
+              variant="secondary"
             >
               <RefreshCw size={16} />
-            </button>
+            </IconButton>
           </div>
         </div>
       </div>
@@ -266,28 +279,74 @@ export default function ActivitiesPage() {
 
       <div className="flex-1 px-8 py-6">
         {isLoading ? (
-          <Spinner fullScreen label="Caricamento attività..." />
+          <TableSkeleton rows={8} columns={6} />
         ) : error ? (
           <ErrorMessage error={(error as Error)?.message ?? 'Errore caricamento'} onRetry={refetch} />
         ) : displayedTasks.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-text-secondary">
-            <CheckSquare size={48} className="mb-4 opacity-30" />
-            <p className="font-medium">
-              {hasFilters ? 'Nessuna attività trovata con i filtri selezionati.' : 'Nessuna attività nel sistema.'}
-            </p>
-            <div className="mt-4 flex items-center gap-3">
-              {hasFilters && (
-                <button onClick={resetFilters} className="text-sm text-accent hover:underline">
-                  Rimuovi filtri
-                </button>
-              )}
-              <button onClick={openCreateModal} className="text-sm text-accent hover:underline">
-                Crea una nuova attività
-              </button>
-            </div>
-          </div>
+          <EmptyState
+            icon={CheckSquare}
+            title={hasFilters ? 'Nessuna attività trovata' : 'Nessuna attività nel sistema'}
+            description={hasFilters ? 'Modifica i filtri per ampliare la ricerca.' : 'Crea la prima attività operativa.'}
+            action={hasFilters ? { label: 'Rimuovi filtri', onClick: resetFilters } : { label: 'Crea attività', onClick: openCreateModal }}
+          />
         ) : (
-          <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+          <ResponsiveDataView
+            data={displayedTasks}
+            getKey={(task) => task.id}
+            emptyTitle="Nessuna attività"
+            emptyDescription="Non ci sono attività da mostrare."
+            renderCard={(task) => (
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => openEditModal(task)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') openEditModal(task);
+                }}
+                className="w-full rounded-2xl border border-border bg-card p-4 text-left shadow-sm transition hover:border-accent/40"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="line-clamp-2 text-sm font-bold text-text-primary">{task.title}</p>
+                    <p className="mt-1 text-xs font-semibold text-accent">{task.cantiere.nome}</p>
+                  </div>
+                  <Badge text={task.status} className={STATUS_STYLE[task.status_code]} />
+                </div>
+                {task.description && <p className="mt-3 line-clamp-2 text-xs text-text-secondary">{task.description}</p>}
+                <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-text-secondary">
+                  <span>Assegnato: <strong className="text-text-primary">{getTaskAssigneeName(task)}</strong></span>
+                  <span>Scadenza: <strong className="text-text-primary">{formatDueDate(task.due_date)}</strong></span>
+                  <span>Priorità: <Badge text={task.priority} className={PRIORITY_STYLE[task.priority_code]} /></span>
+                </div>
+                <div className="mt-4 flex items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      navigate(`/projects/${task.cantiere.id}`);
+                    }}
+                  >
+                    Progetto
+                  </Button>
+                  {!isWorker && (
+                    <IconButton
+                      type="button"
+                      variant="danger"
+                      size="sm"
+                      aria-label="Elimina task"
+                      onClick={(event) => handleDelete(task, event)}
+                      disabled={deleteTask.isPending}
+                    >
+                      <Trash2 size={16} />
+                    </IconButton>
+                  )}
+                </div>
+              </div>
+            )}
+            renderTable={(rows) => (
+              <>
             <table className="w-full">
               <thead>
                 <tr className="bg-background text-left text-xs font-bold uppercase tracking-wider text-text-secondary">
@@ -301,7 +360,7 @@ export default function ActivitiesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {displayedTasks.map((task) => (
+                {rows.map((task) => (
                   <tr
                     key={task.id}
                     onClick={() => openEditModal(task)}
@@ -348,7 +407,7 @@ export default function ActivitiesPage() {
                             navigate(`/projects/${task.cantiere.id}`);
                           }}
                           className="rounded-xl p-2 text-text-secondary transition-colors hover:bg-background hover:text-accent"
-                          title="Apri progetto"
+                          aria-label="Apri progetto"
                         >
                           <FolderOpen size={16} />
                         </button>
@@ -358,7 +417,7 @@ export default function ActivitiesPage() {
                             onClick={(event) => handleDelete(task, event)}
                             disabled={deleteTask.isPending}
                             className="rounded-xl p-2 text-text-secondary transition-colors hover:bg-danger-bg hover:text-danger-text disabled:cursor-not-allowed disabled:opacity-50"
-                            title="Elimina task"
+                            aria-label="Elimina task"
                           >
                             <Trash2 size={16} />
                           </button>
@@ -373,11 +432,23 @@ export default function ActivitiesPage() {
             <div className="border-t border-border px-6 py-3 text-xs text-text-secondary">
               {displayedTasks.length} task {hasFilters ? '(filtrati)' : 'totali'}
             </div>
-          </div>
+              </>
+            )}
+          />
         )}
       </div>
 
       {isModalOpen && <TaskModal onClose={closeModal} task={selectedTask} />}
+      <ConfirmDialog
+        open={!!taskToDelete}
+        onClose={() => setTaskToDelete(null)}
+        onConfirm={confirmDelete}
+        title="Eliminare attività?"
+        description={taskToDelete ? `L'attività "${taskToDelete.title}" verrà rimossa definitivamente.` : undefined}
+        confirmLabel="Elimina"
+        loading={deleteTask.isPending}
+        variant="danger"
+      />
     </div>
   );
 }

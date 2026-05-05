@@ -12,7 +12,6 @@ import { useAudit, useUpdateReportEntry, useExportCsv } from '../hooks/api/useHr
 import { useMessageLogs, useApproveTelegramEntry } from '../hooks/api/useTelegramAudit';
 import { useCantieri } from '../hooks/api/useCantieri';
 import type { AuditEntry, AuditStatus, AuditFilters } from '../hooks/api/useHr';
-import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import { useAuthContext } from '../context/AuthContext';
 import { RoleGuard } from '../components/auth/RoleGuard';
@@ -20,6 +19,7 @@ import TimeEntryModal from '../components/timesheets/TimeEntryModal';
 import ExpenseModal from '../components/timesheets/ExpenseModal';
 import { useDeleteMyTimeEntry } from '../hooks/api/useMyTimesheets';
 import { useDeleteMyExpense } from '../hooks/api/useMyExpenses';
+import { CardListSkeleton, ConfirmDialog, EmptyState, TableSkeleton, useToast } from '../components/ui';
 
 type TypeFilter   = 'tutti' | 'ore' | 'spese';
 type StatusFilter = 'tutti' | 'pending' | 'verified' | 'rejected';
@@ -52,6 +52,7 @@ const StatusBadge = ({ status }: { status: AuditStatus }) => {
 const EditModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () => void }) => {
   const update = useUpdateReportEntry();
   const { data: cantieri } = useCantieri();
+  const toast = useToast();
   const [ore, setOre]       = useState(String(entry.value));
   const [cid, setCid]       = useState('');
   const [note, setNote]     = useState(entry.note ?? '');
@@ -65,7 +66,9 @@ const EditModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () => void 
         attivita_svolte: note || null,
       }});
       onClose();
-    } catch (err) { alert((err as Error).message); }
+    } catch (err) {
+      toast.error('Salvataggio non riuscito', (err as Error).message);
+    }
   };
 
   return (
@@ -138,6 +141,8 @@ export default function TabulatiOrariPage() {
   const [expenseModal, setExpenseModal] = useState<{ mode: 'create' } | { mode: 'edit'; entry: AuditEntry } | null>(null);
   const [section, setSection]     = useState<'audit'|'logs'>('audit');
   const [exporting, setExporting] = useState(false);
+  const [recordToDelete, setRecordToDelete] = useState<AuditEntry | null>(null);
+  const toast = useToast();
 
   const filters: AuditFilters = {
     type:        typeF !== 'tutti' ? typeF : undefined,
@@ -180,10 +185,19 @@ export default function TabulatiOrariPage() {
   const handleBulk = async (action: 'verify'|'reject') => { if(!selected.size) return; await approveMut.mutateAsync({ids:[...selected],action}); setSelected(new Set()); };
   const handleDeletePersonalRecord = async (entry: AuditEntry) => {
     if (isApprovedAuditStatus(entry.status)) return;
-    const label = entry.type === 'ore' ? 'questa registrazione ore' : 'questa spesa';
-    if (!window.confirm(`Eliminare ${label}?`)) return;
-    if (entry.type === 'ore') await deleteTimeEntry.mutateAsync(entry.id);
-    else await deleteExpense.mutateAsync(entry.id);
+    setRecordToDelete(entry);
+  };
+
+  const confirmDeletePersonalRecord = async () => {
+    if (!recordToDelete) return;
+    try {
+      if (recordToDelete.type === 'ore') await deleteTimeEntry.mutateAsync(recordToDelete.id);
+      else await deleteExpense.mutateAsync(recordToDelete.id);
+      toast.success('Record eliminato', recordToDelete.type === 'ore' ? 'Registrazione ore rimossa.' : 'Spesa rimossa.');
+      setRecordToDelete(null);
+    } catch (err) {
+      toast.error('Eliminazione non riuscita', err instanceof Error ? err.message : 'Errore eliminazione record.');
+    }
   };
   const SortIcon = ({ f }: { f: 'date'|'value' }) => sortField!==f ? <ChevronDown size={13} className="opacity-30"/> : sortDir==='asc' ? <ChevronUp size={13}/> : <ChevronDown size={13}/>;
 
@@ -223,7 +237,7 @@ export default function TabulatiOrariPage() {
             <Banknote size={14} /> Nuova Spesa
           </button>
           <RoleGuard allowedRoles={['ADMIN', 'HR']}>
-            <button onClick={async()=>{try{setExporting(true);await downloadCsv({start:dateFrom||undefined,end:dateTo||undefined});}catch(e){alert((e as Error).message);}finally{setExporting(false);}}}
+            <button onClick={async()=>{try{setExporting(true);await downloadCsv({start:dateFrom||undefined,end:dateTo||undefined});toast.success('CSV esportato');}catch(e){toast.error('Export non riuscito', (e as Error).message);}finally{setExporting(false);}}}
               disabled={exporting} className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-background disabled:opacity-50">
               {exporting?<Loader2 size={14} className="animate-spin"/>:<Download size={14}/>} CSV
             </button>
@@ -308,10 +322,100 @@ export default function TabulatiOrariPage() {
             {/* Tabella */}
             <div className="overflow-x-auto">
               {isLoading ? (
-                <div className="py-16 flex justify-center"><Spinner label="Caricamento..."/></div>
+                <div className="p-4">
+                  <div className="md:hidden"><CardListSkeleton rows={6} /></div>
+                  <div className="hidden md:block"><TableSkeleton rows={8} columns={10} /></div>
+                </div>
               ) : error ? (
                 <div className="py-16"><ErrorMessage error={(error as Error)?.message ?? 'Errore'} onRetry={refetch}/></div>
               ) : (
+                <>
+                <div className="divide-y divide-border md:hidden">
+                  {feed.length === 0 ? (
+                    <div className="p-4">
+                      <EmptyState
+                        icon={ClipboardList}
+                        title="Nessun record trovato"
+                        description="Modifica i filtri o registra ore/spese dal web."
+                        action={{ label: 'Registra ore', onClick: () => setTimeModal({ mode: 'create' }) }}
+                      />
+                    </div>
+                  ) : feed.map(entry => {
+                    const mb = methodBadge(entry.input_method);
+                    const MIcon = mb.icon;
+                    const isApproved = isApprovedAuditStatus(entry.status);
+                    const isOwnRecord = user?.employee_id != null && entry.employee_id === user.employee_id;
+                    const canUsePersonalActions = isOwnRecord && !canManageAudit;
+                    const isDeleting = entry.type === 'ore' ? deleteTimeEntry.isPending : deleteExpense.isPending;
+
+                    return (
+                      <div key={`${entry.type}-${entry.id}-mobile`} className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-bold text-text-primary">{entry.cantiere_nome || 'Senza cantiere'}</p>
+                            <p className="mt-1 text-xs text-text-secondary">
+                              {new Date(entry.date).toLocaleDateString('it-IT')} · {`${entry.nome ?? ''} ${entry.cognome ?? ''}`.trim() || '—'}
+                            </p>
+                          </div>
+                          <StatusBadge status={entry.status} />
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-text-secondary">
+                          <span>Tipo: <strong className="text-text-primary">{entry.type === 'ore' ? 'Ore' : 'Spesa'}</strong></span>
+                          <span>Valore: <strong className="text-text-primary">{entry.type === 'ore' ? `${entry.value}h` : `€${Number(entry.value).toLocaleString('it-IT')}`}</strong></span>
+                          <span className="col-span-2">Task: <strong className="text-text-primary">{entry.task_title || '—'}</strong></span>
+                          <span className="col-span-2">
+                            Metodo:{' '}
+                            <span className={cn('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-bold border', mb.cls)}>
+                              <MIcon size={11}/> {mb.label}
+                            </span>
+                          </span>
+                          {entry.note && <span className="col-span-2">Note: <strong className="text-text-primary">{entry.note}</strong></span>}
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap justify-end gap-2">
+                          {canUsePersonalActions && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  if (entry.type === 'ore') setTimeModal({ mode: 'edit', entry });
+                                  else setExpenseModal({ mode: 'edit', entry });
+                                }}
+                                disabled={isApproved}
+                                className="rounded-xl border border-border bg-background px-3 py-2 text-xs font-bold text-text-secondary disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Modifica
+                              </button>
+                              {!isApproved && (
+                                <button
+                                  onClick={() => handleDeletePersonalRecord(entry)}
+                                  disabled={isDeleting}
+                                  className="rounded-xl bg-danger-bg px-3 py-2 text-xs font-bold text-danger-text disabled:opacity-40"
+                                >
+                                  {isDeleting ? 'Elimino...' : 'Elimina'}
+                                </button>
+                              )}
+                            </>
+                          )}
+                          {canManageAudit && entry.status === 'pending' && (
+                            <>
+                              <button onClick={()=>approveMut.mutate({ids:[entry.id],action:'verify'})} disabled={approveMut.isPending}
+                                className="rounded-xl bg-success-bg px-3 py-2 text-xs font-bold text-success-text disabled:opacity-40">
+                                Approva
+                              </button>
+                              <button onClick={()=>approveMut.mutate({ids:[entry.id],action:'reject'})} disabled={approveMut.isPending}
+                                className="rounded-xl bg-danger-bg px-3 py-2 text-xs font-bold text-danger-text disabled:opacity-40">
+                                Rifiuta
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border text-text-secondary text-xs uppercase tracking-wider">
@@ -423,6 +527,8 @@ export default function TabulatiOrariPage() {
                     })}
                   </tbody>
                 </table>
+                </div>
+                </>
               )}
             </div>
           </div>
@@ -480,6 +586,16 @@ export default function TabulatiOrariPage() {
           />
         )}
       </AnimatePresence>
+      <ConfirmDialog
+        open={!!recordToDelete}
+        onClose={() => setRecordToDelete(null)}
+        onConfirm={confirmDeletePersonalRecord}
+        title="Eliminare record?"
+        description={recordToDelete ? `Confermi l'eliminazione di ${recordToDelete.type === 'ore' ? 'questa registrazione ore' : 'questa spesa'}?` : undefined}
+        confirmLabel="Elimina"
+        loading={deleteTimeEntry.isPending || deleteExpense.isPending}
+        variant="danger"
+      />
     </div>
   );
 }

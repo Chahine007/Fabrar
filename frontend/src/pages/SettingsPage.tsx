@@ -32,7 +32,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { getTokenPayload } from '../lib/api';
 import { useAuthContext } from '../context/AuthContext';
-import { AccountSettingsPanel } from './AccountPage';
+import { AccountSettingsPanel } from '../components/settings/AccountSettingsPanel';
 import { useMe } from '../hooks/api/useAuth';
 import { useAllTasks } from '../hooks/api/useTasks';
 import { useAudit } from '../hooks/api/useHr';

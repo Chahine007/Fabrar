@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { motion } from 'motion/react';
-import { ClipboardList, Loader2, Save, X } from 'lucide-react';
+import { ClipboardList, Loader2, Save } from 'lucide-react';
 import { useAuthContext } from '../../context/AuthContext';
 import { useCantieri } from '../../hooks/api/useCantieri';
 import { useEmployees } from '../../hooks/api/useHr';
@@ -13,6 +12,7 @@ import {
   useCreateTask,
   useUpdateTask,
 } from '../../hooks/api/useTasks';
+import { Button, Dialog } from '../ui';
 
 interface TaskModalProps {
   onClose: () => void;
@@ -63,17 +63,6 @@ export default function TaskModal({ onClose, task = null, cantiereId }: TaskModa
     setForm(getInitialFormState(task, cantiereId));
     setError(null);
   }, [task, cantiereId]);
-
-  useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !isBusy) {
-        onClose();
-      }
-    };
-
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, [isBusy, onClose]);
 
   const selectedCantiereName = useMemo(() => {
     const resolvedId = Number(form.cantiere_id);
@@ -165,52 +154,27 @@ export default function TaskModal({ onClose, task = null, cantiereId }: TaskModa
   };
 
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-      <button
-        type="button"
-        aria-label="Chiudi modale"
-        className="absolute inset-0 cursor-default"
-        onClick={() => {
-          if (!isBusy) onClose();
-        }}
-      />
-
-      <motion.div
-        initial={{ opacity: 0, y: 18, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.2, ease: 'easeOut' }}
-        className="relative z-10 w-full max-w-3xl overflow-hidden rounded-3xl border border-border bg-card shadow-2xl"
-      >
-        <div className="flex items-start justify-between border-b border-border px-6 py-5">
-          <div className="space-y-1">
-            <div className="flex items-center gap-3">
-              <div className="rounded-2xl bg-accent/10 p-2.5 text-accent">
-                <ClipboardList size={18} />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-text-primary">
-                  {isEditMode ? 'Modifica Attività' : 'Nuova Attività'}
-                </h2>
-                <p className="text-sm text-text-secondary">
-                  {isEditMode
-                    ? 'Aggiorna stato, assegnatario, scadenza e priorità del task.'
-                    : 'Crea una nuova attività operativa sul cantiere.'}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isBusy}
-            className="rounded-xl p-2 text-text-secondary transition-colors hover:bg-background hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-5 px-6 py-6">
+    <Dialog
+      open
+      onClose={onClose}
+      closeDisabled={isBusy}
+      title={isEditMode ? 'Modifica Attività' : 'Nuova Attività'}
+      description={isEditMode ? 'Aggiorna stato, assegnatario, scadenza e priorità del task.' : 'Crea una nuova attività operativa sul cantiere.'}
+      icon={<ClipboardList size={18} />}
+      size="lg"
+      footer={
+        <>
+          <Button type="button" variant="secondary" onClick={onClose} disabled={isBusy}>
+            Annulla
+          </Button>
+          <Button type="submit" form="task-form" disabled={isBusy} className="gap-2">
+            {isBusy ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+            {isBusy ? 'Salvataggio...' : 'Salva'}
+          </Button>
+        </>
+      }
+    >
+        <form id="task-form" onSubmit={handleSubmit} className="space-y-5">
           {isWorkerEdit && (
             <div className="rounded-2xl border border-warning-border bg-warning-bg px-4 py-3 text-sm text-warning-text">
               Come WORKER puoi modificare solo lo stato del task esistente.
@@ -359,26 +323,7 @@ export default function TaskModal({ onClose, task = null, cantiereId }: TaskModa
             </label>
           </div>
 
-          <div className="flex items-center justify-end gap-3 border-t border-border pt-5">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isBusy}
-              className="rounded-2xl px-4 py-2.5 text-sm font-semibold text-text-secondary transition hover:bg-background disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Annulla
-            </button>
-            <button
-              type="submit"
-              disabled={isBusy}
-              className="inline-flex items-center gap-2 rounded-2xl bg-accent px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {isBusy ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-              {isBusy ? 'Salvataggio...' : 'Salva'}
-            </button>
-          </div>
         </form>
-      </motion.div>
-    </div>
+    </Dialog>
   );
 }

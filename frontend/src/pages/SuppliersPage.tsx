@@ -9,8 +9,8 @@ import {
   useSuppliers,
   useUpdateSupplier,
 } from '../hooks/api/useSuppliers';
-import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+import { ConfirmDialog, EmptyState, IconButton, TableSkeleton, useToast } from '../components/ui';
 
 interface SupplierModalProps {
   supplier: Supplier | null;
@@ -193,6 +193,8 @@ export default function SuppliersPage() {
   const [search, setSearch] = useState('');
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [supplierToDelete, setSupplierToDelete] = useState<Supplier | null>(null);
+  const toast = useToast();
 
   const { data: suppliers = [], isLoading, error } = useSuppliers();
   const deleteSupplier = useDeleteSupplier();
@@ -225,11 +227,21 @@ export default function SuppliersPage() {
   };
 
   const handleDelete = async (supplier: Supplier) => {
-    if (!window.confirm(`Eliminare il fornitore "${supplier.ragione_sociale}"?`)) return;
-    await deleteSupplier.mutateAsync(supplier.id);
+    setSupplierToDelete(supplier);
   };
 
-  if (isLoading) return <div className="p-8 flex justify-center"><Spinner label="Caricamento fornitori..." /></div>;
+  const confirmDelete = async () => {
+    if (!supplierToDelete) return;
+    try {
+      await deleteSupplier.mutateAsync(supplierToDelete.id);
+      toast.success('Fornitore eliminato', supplierToDelete.ragione_sociale);
+      setSupplierToDelete(null);
+    } catch (err: any) {
+      toast.error('Eliminazione non riuscita', err.message ?? 'Errore eliminazione fornitore.');
+    }
+  };
+
+  if (isLoading) return <div className="p-8"><TableSkeleton rows={7} columns={5} /></div>;
   if (error) return <div className="p-8"><ErrorMessage error={(error as Error).message} /></div>;
 
   return (
@@ -267,8 +279,45 @@ export default function SuppliersPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[850px]">
+          {filteredSuppliers.length === 0 ? (
+            <div className="p-6">
+              <EmptyState
+                icon={Truck}
+                title="Nessun fornitore trovato"
+                description="Modifica la ricerca o crea una nuova anagrafica fornitore."
+                action={{ label: 'Nuovo fornitore', onClick: openCreate }}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="divide-y divide-border md:hidden">
+                {filteredSuppliers.map((supplier) => (
+                  <div key={supplier.id} className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-bold text-text-primary">{supplier.ragione_sociale}</p>
+                        {supplier.indirizzo && <p className="mt-1 text-xs text-text-secondary">{supplier.indirizzo}</p>}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <IconButton aria-label="Modifica fornitore" size="sm" variant="secondary" onClick={() => openEdit(supplier)}>
+                          <Edit2 size={16} />
+                        </IconButton>
+                        <IconButton aria-label="Elimina fornitore" size="sm" variant="danger" onClick={() => handleDelete(supplier)} disabled={deleteSupplier.isPending}>
+                          <Trash2 size={16} />
+                        </IconButton>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-text-secondary">
+                      <span>P.IVA: <strong className="text-text-primary">{supplier.partita_iva || '--'}</strong></span>
+                      <span>Tel: <strong className="text-text-primary">{supplier.telefono || '--'}</strong></span>
+                      <span className="col-span-2">Email: <strong className="text-text-primary">{supplier.email || '--'}</strong></span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full text-left border-collapse min-w-[850px]">
               <thead>
                 <tr className="bg-background text-xs uppercase tracking-wider text-text-secondary border-b border-border">
                   <th className="px-6 py-4 font-semibold">Ragione Sociale</th>
@@ -279,14 +328,7 @@ export default function SuppliersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {filteredSuppliers.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-text-secondary">
-                      Nessun fornitore trovato.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredSuppliers.map((supplier) => (
+                {filteredSuppliers.map((supplier) => (
                     <tr key={supplier.id} className="hover:bg-background/50 transition-colors">
                       <td className="px-6 py-4">
                         <p className="font-bold text-text-primary text-sm">{supplier.ragione_sociale}</p>
@@ -297,31 +339,34 @@ export default function SuppliersPage() {
                       <td className="px-6 py-4 text-sm text-text-secondary">{supplier.telefono || '--'}</td>
                       <td className="px-6 py-4">
                         <div className="flex items-center justify-end gap-2">
-                          <button
+                          <IconButton
                             onClick={() => openEdit(supplier)}
-                            className="p-2 rounded-xl text-text-secondary hover:text-accent hover:bg-accent/10"
-                            title="Modifica"
+                            aria-label="Modifica fornitore"
+                            size="sm"
+                            variant="secondary"
                           >
                             <Edit2 size={17} />
-                          </button>
-                          <button
+                          </IconButton>
+                          <IconButton
                             onClick={() => handleDelete(supplier)}
                             disabled={deleteSupplier.isPending}
-                            className="p-2 rounded-xl text-text-secondary hover:text-danger-text hover:bg-danger-bg disabled:opacity-50"
-                            title="Elimina"
+                            aria-label="Elimina fornitore"
+                            size="sm"
+                            variant="danger"
                           >
                             <Trash2 size={17} />
-                          </button>
+                          </IconButton>
                         </div>
                       </td>
                     </tr>
-                  ))
-                )}
+                ))}
               </tbody>
             </table>
+              </div>
+            </>
+          )}
           </div>
         </div>
-      </div>
 
       <AnimatePresence>
         {isModalOpen && (
@@ -334,6 +379,16 @@ export default function SuppliersPage() {
           />
         )}
       </AnimatePresence>
+      <ConfirmDialog
+        open={!!supplierToDelete}
+        onClose={() => setSupplierToDelete(null)}
+        onConfirm={confirmDelete}
+        title="Eliminare fornitore?"
+        description={supplierToDelete ? `"${supplierToDelete.ragione_sociale}" verrà rimosso dall'anagrafica.` : undefined}
+        confirmLabel="Elimina"
+        loading={deleteSupplier.isPending}
+        variant="danger"
+      />
     </div>
   );
 }

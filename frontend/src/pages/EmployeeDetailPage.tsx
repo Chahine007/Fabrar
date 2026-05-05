@@ -17,6 +17,7 @@ import { useGenerateInvite } from '../hooks/api/useAuth';
 import type { EmployeeCVData, EmployeeDetail } from '../hooks/api/useHr';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+import { useToast } from '../components/ui';
 
 const COLORS = [
   'from-violet-500 to-purple-600', 'from-cyan-500 to-blue-600',
@@ -175,6 +176,7 @@ const TabAnagrafica = ({ emp, editing, form, onChange }: TabAnagraficaProps) => 
 const TabCosti = ({ emp }: { emp: EmployeeDetail }) => {
   const navigate = useNavigate();
   const costMut = useSetEmployeeCost();
+  const toast = useToast();
   const [newCosto, setNewCosto] = useState('');
   const [newValidoDal, setNewValidoDal] = useState(() => new Date().toISOString().slice(0, 10));
   const [saved, setSaved] = useState(false);
@@ -182,13 +184,19 @@ const TabCosti = ({ emp }: { emp: EmployeeDetail }) => {
   const handleSetCost = async (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseFloat(newCosto);
-    if (isNaN(val) || val <= 0) return alert('Inserire un costo orario valido.');
+    if (isNaN(val) || val <= 0) {
+      toast.error('Costo non valido', 'Inserire un costo orario valido.');
+      return;
+    }
     try {
       await costMut.mutateAsync({ id: emp.id, costo_orario: val, valido_dal: newValidoDal });
       setNewCosto('');
       setSaved(true);
+      toast.success('Costo orario aggiornato');
       setTimeout(() => setSaved(false), 3000);
-    } catch (err) { alert((err as Error).message); }
+    } catch (err) {
+      toast.error('Aggiornamento non riuscito', (err as Error).message);
+    }
   };
 
   return (
@@ -338,6 +346,7 @@ export default function EmployeeDetailPage() {
   const empId = Number(id);
   const { data: emp, isLoading, error } = useEmployeeDetail(empId);
   const [activeTab, setActiveTab] = useState<TabId>('anagrafica');
+  const toast = useToast();
 
   // ── Editing state (lifted from TabAnagrafica) ──
   const updateMut = useUpdateEmployee();
@@ -373,14 +382,20 @@ export default function EmployeeDetailPage() {
     try {
       await updateMut.mutateAsync({ id: empId, data: form });
       setEditing(false);
-    } catch (err) { alert((err as Error).message); }
+      toast.success('Dipendente aggiornato');
+    } catch (err) {
+      toast.error('Salvataggio non riuscito', (err as Error).message);
+    }
   };
 
   const handleGenerateInvite = async () => {
     try {
       const res = await generateInviteMut.mutateAsync();
       setGeneratedCode(res.invite_code);
-    } catch (err) { alert((err as Error).message); }
+      toast.success('Codice invito generato');
+    } catch (err) {
+      toast.error('Generazione invito non riuscita', (err as Error).message);
+    }
   };
 
   if (isLoading) return <div className="flex-1 flex items-center justify-center bg-background"><Spinner label="Caricamento..." /></div>;

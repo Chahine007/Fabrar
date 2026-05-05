@@ -3,8 +3,6 @@ import {
   LayoutDashboard, 
   Users, 
   UserCircle, 
-  FileText, 
-  FileStack, 
   Package, 
   Activity, 
   Euro,
@@ -26,20 +24,15 @@ import { cn } from '../../lib/utils';
 import { useChatSockets, useTotalUnread } from '../../hooks/api/useConversations';
 import { useHrAlerts } from '../../hooks/api/useHr';
 import { useAuthContext } from '../../context/AuthContext';
-import { RoleGuard } from '../auth/RoleGuard';
 
-interface NavItem {
+interface NavNode {
   icon?: React.ElementType;
   label: string;
-  path: string;
+  path?: string;
   id: string;
   roles?: string[];
-  subItems?: NavItem[];
-}
-
-interface NavGroup {
-  title: string;
-  items: NavItem[];
+  children?: NavNode[];
+  hidden?: boolean;
 }
 
 // --- Configuration ---
@@ -47,52 +40,55 @@ interface NavGroup {
 const ALL_AUTH_ROLES = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN', 'WORKER'];
 const WAREHOUSE_ROLES = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'];
 
-const NAV_GROUPS: NavGroup[] = [
+const NAV_TREE: NavNode[] = [
   {
-    title: 'DASHBOARD',
-    items: [
+    id: 'dashboard-section',
+    label: 'Dashboard',
+    icon: LayoutDashboard,
+    roles: ['ADMIN'],
+    children: [
       { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard', id: 'dashboard', roles: ['ADMIN'] },
-    ]
+    ],
   },
   {
-    title: 'OPERATIVITA',
-    items: [
+    id: 'operations-section',
+    label: 'Operatività',
+    icon: Briefcase,
+    children: [
       { icon: Briefcase, label: 'Progetti', path: '/projects', id: 'projects' },
       { icon: Activity, label: 'Attività', path: '/activities', id: 'activities' },
       { icon: MessageSquare, label: 'Messaggi', path: '/messages', id: 'messages' },
-    ]
+    ],
   },
   {
-    title: 'RISORSE UMANE',
-    items: [
-      { 
-        icon: Users,          
-        label: 'Gestione Personale', 
-        path: '/hr',          
-        id: 'hr',
-        roles: ['ADMIN', 'HR']
-      },
+    id: 'hr-section',
+    label: 'Risorse Umane',
+    icon: Users,
+    children: [
+      { icon: Users, label: 'Gestione Personale', path: '/hr', id: 'hr', roles: ['ADMIN', 'HR'] },
       { icon: ClipboardList, label: 'Tabulati Orari', path: '/hr/tabulati', id: 'hr-tabulati', roles: ['ADMIN', 'HR'] },
       { icon: ClipboardList, label: 'Le Mie Ore / Spese', path: '/timesheets', id: 'my-timesheets', roles: ['WORKER'] },
-    ]
+    ],
   },
   {
-    title: 'LOGISTICA',
-    items: [
-      { icon: Package,        label: 'Magazzino',           path: '/warehouse',   id: 'warehouse', roles: WAREHOUSE_ROLES },
-      { icon: Truck,          label: 'Fornitori',           path: '/suppliers',   id: 'suppliers', roles: WAREHOUSE_ROLES },
-      { icon: ClipboardList,  label: 'Richieste Materiali', path: '/material-requests', id: 'material-requests', roles: ALL_AUTH_ROLES },
-    ]
+    id: 'logistics-section',
+    label: 'Logistica',
+    icon: Package,
+    children: [
+      { icon: Package, label: 'Magazzino', path: '/warehouse', id: 'warehouse', roles: WAREHOUSE_ROLES },
+      { icon: Truck, label: 'Fornitori', path: '/suppliers', id: 'suppliers', roles: WAREHOUSE_ROLES },
+      { icon: ClipboardList, label: 'Richieste Materiali', path: '/material-requests', id: 'material-requests', roles: ALL_AUTH_ROLES },
+    ],
   },
   {
-    title: 'AMMINISTRAZIONE',
-    items: [
+    id: 'administration-section',
+    label: 'Amministrazione',
+    icon: Euro,
+    roles: ['ADMIN'],
+    children: [
       { icon: Euro, label: 'Finanza', path: '/finance', id: 'finance', roles: ['ADMIN'] },
-      { icon: FileText, label: 'Fatture', path: '/invoices', id: 'invoices', roles: ['ADMIN', 'PROJECT_MANAGER'] },
-      { icon: UserCircle, label: 'Clienti', path: '/clients', id: 'clients', roles: ['ADMIN', 'PROJECT_MANAGER'] },
-      { icon: FileStack, label: 'Documenti', path: '/documents', id: 'documents' },
-    ]
-  }
+    ],
+  },
 ];
 
 // --- Components ---
@@ -100,33 +96,195 @@ const NAV_GROUPS: NavGroup[] = [
 const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: boolean, setIsMobileOpen: (o: boolean) => void, onLogout: () => void }) => {
   const [isLockedExpanded, setIsLockedExpanded] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>(() => {
+    try {
+      const stored = localStorage.getItem('fabrar.nav.expanded');
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  });
   const location = useLocation();
   const { user } = useAuthContext();
   const role = user?.role;
   
-  const isExpanded = isLockedExpanded || isHovered;
+  const isExpanded = isMobileOpen || isLockedExpanded || isHovered;
 
-  const visibleNavGroups = React.useMemo(() => {
-    const canAccessItem = (item: NavItem) => !item.roles || (!!role && item.roles.includes(role));
+  const canAccessNode = React.useCallback(
+    (node: NavNode) => !node.roles || (!!role && node.roles.includes(role)),
+    [role]
+  );
 
-    return NAV_GROUPS
-      .map((group) => ({
-        ...group,
-        items: group.items
-          .map((item) => ({
-            ...item,
-            subItems: item.subItems?.filter(canAccessItem),
-          }))
-          .filter(canAccessItem),
-      }))
-      .filter((group) => group.items.length > 0);
-  }, [role]);
+  const visibleNavTree = React.useMemo(() => {
+    const filterNodes = (nodes: NavNode[]): NavNode[] => nodes
+      .filter((node) => !node.hidden && canAccessNode(node))
+      .map((node) => {
+        const children = node.children ? filterNodes(node.children) : undefined;
+        return { ...node, children };
+      })
+      .filter((node) => !!node.path || (node.children?.length ?? 0) > 0);
 
-  const toggleExpandedItem = (id: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setExpandedItems(prev => ({ ...prev, [id]: !prev[id] }));
+    return filterNodes(NAV_TREE);
+  }, [canAccessNode]);
+
+  const isPathActive = React.useCallback((path?: string) => {
+    if (!path) return false;
+    return location.pathname === path || (path !== '/' && location.pathname.startsWith(`${path}/`));
+  }, [location.pathname]);
+
+  const isNodeActive = React.useCallback((node: NavNode): boolean => {
+    return isPathActive(node.path) || !!node.children?.some(isNodeActive);
+  }, [isPathActive]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('fabrar.nav.expanded', JSON.stringify(expandedSections));
+    } catch {
+      // Local storage can be unavailable in private/locked-down browser contexts.
+    }
+  }, [expandedSections]);
+
+  React.useEffect(() => {
+    setExpandedSections((current) => {
+      let changed = false;
+      const next = { ...current };
+      visibleNavTree.forEach((node) => {
+        if (node.children?.length && isNodeActive(node) && !next[node.id]) {
+          next[node.id] = true;
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [isNodeActive, visibleNavTree]);
+
+  const toggleExpandedSection = (id: string) => {
+    setExpandedSections((current) => ({ ...current, [id]: !current[id] }));
+  };
+
+  const closeMobile = () => setIsMobileOpen(false);
+
+  const renderExpandedNode = (node: NavNode) => {
+    const Icon = node.icon;
+    const hasChildren = !!node.children?.length;
+    const active = isNodeActive(node);
+    const open = expandedSections[node.id] ?? active;
+
+    if (!hasChildren && node.path) {
+      return (
+        <Link
+          key={node.id}
+          to={node.path}
+          onClick={closeMobile}
+          className={cn(
+            "flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium transition-all duration-200",
+            active
+              ? "bg-sidebar-hover text-white shadow-lg"
+              : "text-slate-300 hover:bg-sidebar-hover/50 hover:text-white"
+          )}
+        >
+          {Icon && <Icon size={18} className={cn("shrink-0", active ? "text-accent" : "text-slate-400")} />}
+          <span className="truncate">{node.label}</span>
+        </Link>
+      );
+    }
+
+    return (
+      <div key={node.id} className="space-y-1">
+        <button
+          type="button"
+          onClick={() => toggleExpandedSection(node.id)}
+          className={cn(
+            "flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-bold uppercase tracking-wide transition-all duration-200",
+            active
+              ? "bg-sidebar-hover/60 text-white"
+              : "text-slate-400 hover:bg-sidebar-hover/50 hover:text-white"
+          )}
+        >
+          {Icon && <Icon size={18} className={cn("shrink-0", active ? "text-accent" : "text-slate-500")} />}
+          <span className="min-w-0 flex-1 truncate text-left">{node.label}</span>
+          <ChevronDown size={16} className={cn("shrink-0 transition-transform", open && "rotate-180")} />
+        </button>
+
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="overflow-hidden"
+            >
+              <div className="ml-4 space-y-1 border-l border-slate-700/60 pl-3">
+                {node.children?.map((child) => renderExpandedNode(child))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  const renderCollapsedNode = (node: NavNode) => {
+    const Icon = node.icon;
+    const hasChildren = !!node.children?.length;
+    const active = isNodeActive(node);
+    const firstPath = node.path || node.children?.find((child) => child.path)?.path || '/';
+
+    return (
+      <div key={node.id} className="group/flyout relative">
+        <Link
+          to={firstPath}
+          onClick={closeMobile}
+          aria-label={node.label}
+          className={cn(
+            "flex h-11 w-11 items-center justify-center rounded-xl transition-all duration-200",
+            active
+              ? "bg-sidebar-hover text-white shadow-lg"
+              : "text-slate-400 hover:bg-sidebar-hover/50 hover:text-white"
+          )}
+        >
+          {Icon && <Icon size={19} className={cn(active && "text-accent")} />}
+        </Link>
+
+        <div className="pointer-events-none absolute left-full top-0 z-50 ml-3 hidden min-w-56 rounded-2xl border border-slate-700 bg-sidebar p-2 text-sm shadow-2xl group-hover/flyout:block group-hover/flyout:pointer-events-auto">
+          <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+            {node.label}
+          </div>
+          <div className="space-y-1">
+            {hasChildren ? node.children?.map((child) => {
+              const ChildIcon = child.icon;
+              const childActive = isNodeActive(child);
+              return child.path ? (
+                <Link
+                  key={child.id}
+                  to={child.path}
+                  onClick={closeMobile}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl px-3 py-2 font-medium transition-colors",
+                    childActive
+                      ? "bg-sidebar-hover text-white"
+                      : "text-slate-300 hover:bg-sidebar-hover/50 hover:text-white"
+                  )}
+                >
+                  {ChildIcon && <ChildIcon size={16} className={cn(childActive ? "text-accent" : "text-slate-500")} />}
+                  <span>{child.label}</span>
+                </Link>
+              ) : null;
+            }) : (
+              <Link
+                to={firstPath}
+                onClick={closeMobile}
+                className="flex items-center gap-3 rounded-xl px-3 py-2 font-medium text-slate-300 hover:bg-sidebar-hover/50 hover:text-white"
+              >
+                {Icon && <Icon size={16} className="text-slate-500" />}
+                <span>{node.label}</span>
+              </Link>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const NavContent = () => (
@@ -165,102 +323,12 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: bo
       </div>
 
       {/* Scrollable Navigation Area */}
-      <nav className="flex-1 px-4 space-y-6 mt-4 overflow-y-auto no-scrollbar">
-        {visibleNavGroups.map((group, index) => (
-          <div key={group.title} className="space-y-2">
-            {isExpanded ? (
-              <h3 className="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest truncate">
-                {group.title}
-              </h3>
-            ) : (
-              index !== 0 && <div className="h-px bg-slate-700/30 mx-2 my-4" />
-            )}
-            <div className="space-y-1">
-              {group.items.map((item) => {
-                const isActive = location.pathname === item.path || item.subItems?.some(sub => location.pathname === sub.path);
-                const isItemExpanded = expandedItems[item.id];
-                
-                return (
-                  <RoleGuard key={item.id} allowedRoles={item.roles ?? ALL_AUTH_ROLES}>
-                    <div className="w-full">
-                      <div className="flex items-center relative group">
-                        <Link
-                          to={item.path}
-                          onClick={() => setIsMobileOpen(false)}
-                          className={cn(
-                            "flex-1 flex items-center rounded-xl transition-all duration-200",
-                            !isExpanded ? "justify-center px-0 py-3" : "gap-3 px-4 py-2.5",
-                            isActive && !item.subItems
-                              ? "bg-sidebar-hover text-white shadow-lg" 
-                              : isActive && item.subItems
-                                ? "text-white"
-                                : "hover:bg-sidebar-hover/50 hover:text-white"
-                          )}
-                        >
-                          {item.icon && <item.icon size={18} className={cn(
-                            "transition-colors shrink-0",
-                            isActive ? "text-accent" : "text-slate-400 group-hover:text-slate-200"
-                          )} />}
-                          {isExpanded && (
-                            <span className="font-medium text-sm truncate">{item.label}</span>
-                          )}
-                          {!isExpanded && (
-                            <div className="absolute left-full ml-2 px-2 py-1 bg-sidebar-hover text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 shadow-xl border border-slate-700">
-                              {item.label}
-                            </div>
-                          )}
-                        </Link>
-                        
-                        {isExpanded && item.subItems && (
-                          <button 
-                            onClick={(e) => toggleExpandedItem(item.id, e)}
-                            className={cn(
-                              "absolute right-2 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-sidebar-hover/50 transition-all",
-                              isItemExpanded && "rotate-180"
-                            )}
-                          >
-                            <ChevronDown size={16} />
-                          </button>
-                        )}
-                      </div>
-                      
-                      <AnimatePresence>
-                        {isExpanded && item.subItems && isItemExpanded && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            className="overflow-hidden mt-1 pl-10 pr-2 space-y-1"
-                          >
-                            {item.subItems.map((subItem) => {
-                              const isSubActive = location.pathname === subItem.path;
-                              return (
-                                <RoleGuard key={subItem.id} allowedRoles={subItem.roles ?? ALL_AUTH_ROLES}>
-                                  <Link
-                                    to={subItem.path}
-                                    onClick={() => setIsMobileOpen(false)}
-                                    className={cn(
-                                      "flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all duration-200",
-                                      isSubActive
-                                        ? "bg-sidebar-hover text-white shadow-lg"
-                                        : "text-slate-400 hover:text-white hover:bg-sidebar-hover/50"
-                                    )}
-                                  >
-                                    {subItem.icon && <subItem.icon size={16} className={isSubActive ? "text-accent" : ""} />}
-                                    <span className="font-medium truncate">{subItem.label}</span>
-                                  </Link>
-                                </RoleGuard>
-                              );
-                            })}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  </RoleGuard>
-                );
-              })}
-            </div>
-          </div>
+      <nav className={cn("flex-1 mt-4 overflow-y-auto no-scrollbar", isExpanded ? "px-4 space-y-2" : "px-3 space-y-3")}>
+        {visibleNavTree.map((node, index) => (
+          <React.Fragment key={node.id}>
+            {!isExpanded && index !== 0 && <div className="mx-auto h-px w-8 bg-slate-700/40" />}
+            {isExpanded ? renderExpandedNode(node) : renderCollapsedNode(node)}
+          </React.Fragment>
         ))}
       </nav>
 

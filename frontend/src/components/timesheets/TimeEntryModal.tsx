@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { motion } from 'motion/react';
-import { AlertTriangle, Clock, Loader2, Save, X } from 'lucide-react';
+import { AlertTriangle, Clock, Loader2, Save } from 'lucide-react';
 import { useCantieri } from '../../hooks/api/useCantieri';
 import { useAllTasks } from '../../hooks/api/useTasks';
 import { useCreateMyTimeEntry, useUpdateMyTimeEntry } from '../../hooks/api/useMyTimesheets';
+import { Button, Dialog, Field, FormError, Input, Select, Textarea } from '../ui';
 
 export interface EditableTimeEntry {
   id: number;
@@ -70,14 +70,6 @@ export default function TimeEntryModal({ entry = null, onClose }: TimeEntryModal
     setForm(getInitialForm(entry));
     setError(null);
   }, [entry]);
-
-  useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !isBusy) onClose();
-    };
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, [isBusy, onClose]);
 
   const taskOptions = useMemo(
     () =>
@@ -149,48 +141,27 @@ export default function TimeEntryModal({ entry = null, onClose }: TimeEntryModal
   const fieldsDisabled = isBusy || isApproved;
 
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-      <button
-        type="button"
-        aria-label="Chiudi modale"
-        className="absolute inset-0 cursor-default"
-        onClick={() => {
-          if (!isBusy) onClose();
-        }}
-      />
-
-      <motion.div
-        initial={{ opacity: 0, y: 18, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.2, ease: 'easeOut' }}
-        className="relative z-10 w-full max-w-2xl overflow-hidden rounded-3xl border border-border bg-card shadow-2xl"
-      >
-        <div className="flex items-start justify-between border-b border-border px-6 py-5">
-          <div className="flex items-center gap-3">
-            <div className="rounded-2xl bg-accent/10 p-2.5 text-accent">
-              <Clock size={18} />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-text-primary">
-                {isEditMode ? 'Modifica Ore' : 'Registra Ore'}
-              </h2>
-              <p className="text-sm text-text-secondary">
-                Inserisci ore lavorate, cantiere e attività collegata.
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isBusy}
-            className="rounded-xl p-2 text-text-secondary transition-colors hover:bg-background hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-5 px-6 py-6">
+    <Dialog
+      open
+      onClose={onClose}
+      closeDisabled={isBusy}
+      title={isEditMode ? 'Modifica Ore' : 'Registra Ore'}
+      description="Inserisci ore lavorate, cantiere e attività collegata."
+      icon={<Clock size={18} />}
+      size="lg"
+      footer={
+        <>
+          <Button type="button" variant="secondary" onClick={onClose} disabled={isBusy}>
+            Annulla
+          </Button>
+          <Button type="submit" form="time-entry-form" disabled={isBusy || isApproved} className="gap-2">
+            {isBusy ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+            {isBusy ? 'Salvataggio...' : 'Salva'}
+          </Button>
+        </>
+      }
+    >
+        <form id="time-entry-form" onSubmit={handleSubmit} className="space-y-5">
           {isApproved && (
             <div className="flex gap-3 rounded-2xl border border-warning-border bg-warning-bg px-4 py-3 text-sm text-warning-text">
               <AlertTriangle size={18} className="mt-0.5 shrink-0" />
@@ -198,38 +169,27 @@ export default function TimeEntryModal({ entry = null, onClose }: TimeEntryModal
             </div>
           )}
 
-          {error && (
-            <div className="rounded-2xl border border-danger-border bg-danger-bg px-4 py-3 text-sm text-danger-text">
-              {error}
-            </div>
-          )}
+          {error && <FormError>{error}</FormError>}
 
           <div className="grid gap-4 md:grid-cols-2">
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-text-primary">Data</span>
-              <input
+            <Field label="Data" hint={isEditMode ? 'La data resta quella del report giornaliero originale.' : undefined}>
+              <Input
                 name="report_date"
                 type="date"
                 value={form.report_date}
                 onChange={handleChange}
                 disabled={fieldsDisabled || isEditMode}
                 required
-                className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
               />
-              {isEditMode && (
-                <span className="text-xs text-text-secondary">La data resta quella del report giornaliero originale.</span>
-              )}
-            </label>
+            </Field>
 
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-text-primary">Cantiere</span>
-              <select
+            <Field label="Cantiere">
+              <Select
                 name="cantiere_id"
                 value={form.cantiere_id}
                 onChange={handleChange}
                 disabled={fieldsDisabled}
                 required
-                className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <option value="">Seleziona cantiere</option>
                 {cantieri.map((cantiere) => (
@@ -240,17 +200,15 @@ export default function TimeEntryModal({ entry = null, onClose }: TimeEntryModal
                 {selectedCantiereId && !cantieri.some((cantiere) => cantiere.id === selectedCantiereId) && (
                   <option value={selectedCantiereId}>Cantiere #{selectedCantiereId}</option>
                 )}
-              </select>
-            </label>
+              </Select>
+            </Field>
 
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-text-primary">Task</span>
-              <select
+            <Field label="Task">
+              <Select
                 name="task_id"
                 value={form.task_id}
                 onChange={handleChange}
                 disabled={fieldsDisabled || !selectedFormCantiereId}
-                className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <option value="">Nessun task collegato</option>
                 {taskOptions.map((task) => (
@@ -258,12 +216,11 @@ export default function TimeEntryModal({ entry = null, onClose }: TimeEntryModal
                     {task.title}
                   </option>
                 ))}
-              </select>
-            </label>
+              </Select>
+            </Field>
 
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-text-primary">Ore Lavorate</span>
-              <input
+            <Field label="Ore Lavorate">
+              <Input
                 name="ore_lavorate"
                 type="number"
                 min="0"
@@ -273,45 +230,22 @@ export default function TimeEntryModal({ entry = null, onClose }: TimeEntryModal
                 onChange={handleChange}
                 disabled={fieldsDisabled}
                 required
-                className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
                 placeholder="Es. 7.5"
               />
-            </label>
+            </Field>
 
-            <label className="flex flex-col gap-2 md:col-span-2">
-              <span className="text-sm font-semibold text-text-primary">Descrizione</span>
-              <textarea
+            <Field label="Descrizione" className="md:col-span-2">
+              <Textarea
                 name="descrizione"
                 value={form.descrizione}
                 onChange={handleChange}
                 disabled={fieldsDisabled}
                 rows={4}
-                className="resize-none rounded-2xl border border-border bg-background px-4 py-3 text-sm text-text-primary outline-none transition focus:border-accent/40 focus:ring-4 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60"
                 placeholder="Descrivi l'attività svolta."
               />
-            </label>
-          </div>
-
-          <div className="flex items-center justify-end gap-3 border-t border-border pt-5">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isBusy}
-              className="rounded-2xl px-4 py-2.5 text-sm font-semibold text-text-secondary transition hover:bg-background disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Annulla
-            </button>
-            <button
-              type="submit"
-              disabled={isBusy || isApproved}
-              className="inline-flex items-center gap-2 rounded-2xl bg-accent px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {isBusy ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-              {isBusy ? 'Salvataggio...' : 'Salva'}
-            </button>
+            </Field>
           </div>
         </form>
-      </motion.div>
-    </div>
+    </Dialog>
   );
 }

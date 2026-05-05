@@ -9,8 +9,8 @@ import {
   User,
   XCircle,
 } from 'lucide-react';
-import { useMe, useGenerateTelegramCode } from '../hooks/api/useAuth';
-import Spinner from '../components/Spinner';
+import { useMe, useGenerateTelegramCode } from '../../hooks/api/useAuth';
+import Spinner from '../Spinner';
 
 function FieldRow({
   label,
@@ -113,7 +113,7 @@ export function AccountSettingsPanel() {
       >
         <div className="flex items-center justify-between gap-4 mb-5">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#0088cc]/10 flex items-center justify-center text-[#0088cc]">
+            <div className="w-10 h-10 rounded-xl bg-info-bg flex items-center justify-center text-info-text">
               <Send size={18} />
             </div>
             <div>
@@ -161,8 +161,8 @@ export function AccountSettingsPanel() {
               </button>
             ) : (
               <div className="space-y-3">
-                <div className="rounded-xl border border-[#0088cc]/30 bg-[#0088cc]/5 p-5 text-center">
-                  <p className="text-[10px] font-bold text-[#0088cc] uppercase tracking-widest mb-2">
+                <div className="rounded-xl border border-info-border bg-info-bg p-5 text-center">
+                  <p className="text-[10px] font-bold text-info-text uppercase tracking-widest mb-2">
                     Scrivi questo codice al bot
                   </p>
                   <div className="text-3xl font-mono font-black text-text-primary tracking-widest">
@@ -184,14 +184,6 @@ export function AccountSettingsPanel() {
           </div>
         )}
       </motion.section>
-    </div>
-  );
-}
-
-export default function AccountPage() {
-  return (
-    <div className="p-6 lg:p-10 max-w-3xl mx-auto">
-      <AccountSettingsPanel />
     </div>
   );
 }

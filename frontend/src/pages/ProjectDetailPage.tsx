@@ -62,6 +62,7 @@ import {
   useDeleteTask,
 } from '../hooks/api/useTasks';
 import { UI_LABELS } from '../lib/labels';
+import { ConfirmDialog, useToast } from '../components/ui';
 
 
 // ─── Tab Configuration ────────────────────────────────────────────────────────
@@ -93,6 +94,7 @@ const MetricCard = ({ title, value, sub, trend }: {
 // Mini-componente per impostare le coordinate GPS dal frontend
 const GpsSetButton = ({ cantiereId }: { cantiereId: number }) => {
   const updateGps = useUpdateGps(cantiereId);
+  const toast = useToast();
   const [lat, setLat] = React.useState('');
   const [lng, setLng] = React.useState('');
   const [open, setOpen] = React.useState(false);
@@ -100,11 +102,17 @@ const GpsSetButton = ({ cantiereId }: { cantiereId: number }) => {
   const handleSave = async () => {
     const latN = parseFloat(lat);
     const lngN = parseFloat(lng);
-    if (isNaN(latN) || isNaN(lngN)) { alert('Inserisci valori numerici validi.'); return; }
+    if (isNaN(latN) || isNaN(lngN)) {
+      toast.error('Coordinate non valide', 'Inserisci valori numerici validi.');
+      return;
+    }
     try {
       await updateGps.mutateAsync({ lat: latN, lng: lngN });
+      toast.success('Coordinate aggiornate');
       setOpen(false);
-    } catch (e) { alert((e as Error).message); }
+    } catch (e) {
+      toast.error('Aggiornamento GPS non riuscito', (e as Error).message);
+    }
   };
 
   return open ? (
@@ -252,6 +260,8 @@ const ActivitiesTab = ({ cantiereId, onShare }: { cantiereId: number; onShare: (
   const deleteTask = useDeleteTask();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<TaskWithCantiere | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<TaskWithCantiere | null>(null);
+  const toast = useToast();
   const isWorker = user?.role === 'WORKER';
 
   const openCreateModal = () => {
@@ -271,13 +281,17 @@ const ActivitiesTab = ({ cantiereId, onShare }: { cantiereId: number; onShare: (
 
   const handleDelete = async (task: TaskWithCantiere, event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    const confirmed = window.confirm(`Eliminare il task "${task.title}"?`);
-    if (!confirmed) return;
+    setTaskToDelete(task);
+  };
 
+  const confirmDelete = async () => {
+    if (!taskToDelete) return;
     try {
-      await deleteTask.mutateAsync(task.id);
+      await deleteTask.mutateAsync(taskToDelete.id);
+      toast.success('Task eliminato', `"${taskToDelete.title}" è stato rimosso.`);
+      setTaskToDelete(null);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Impossibile eliminare il task.');
+      toast.error('Eliminazione non riuscita', err instanceof Error ? err.message : 'Impossibile eliminare il task.');
     }
   };
 
@@ -396,6 +410,16 @@ const ActivitiesTab = ({ cantiereId, onShare }: { cantiereId: number; onShare: (
           cantiereId={cantiereId}
         />
       )}
+      <ConfirmDialog
+        open={!!taskToDelete}
+        onClose={() => setTaskToDelete(null)}
+        onConfirm={confirmDelete}
+        title="Eliminare task?"
+        description={taskToDelete ? `"${taskToDelete.title}" verrà rimosso definitivamente.` : undefined}
+        confirmLabel="Elimina"
+        loading={deleteTask.isPending}
+        variant="danger"
+      />
     </div>
   );
 };
@@ -444,14 +468,16 @@ const DocumentsTab = ({ cantiereId }: { cantiereId: number }) => {
   const { data: docs, isLoading, error, refetch } = useDocuments(cantiereId);
   const uploadDoc = useUploadDocument(cantiereId);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const toast = useToast();
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       await uploadDoc.mutateAsync({ file });
+      toast.success('Documento caricato', file.name);
     } catch (err: unknown) {
-      alert(`❌ ${err instanceof Error ? err.message : 'Errore upload'}`);
+      toast.error('Upload non riuscito', err instanceof Error ? err.message : 'Errore upload');
     }
     e.target.value = '';
   };
@@ -908,9 +934,11 @@ const WbsTab = ({ cantiereId }: { cantiereId: number }) => {
   const createMut = useCreateWbsNode(cantiereId);
   const updateMut = useUpdateWbsNode(cantiereId);
   const deleteMut = useDeleteWbsNode(cantiereId);
+  const toast = useToast();
 
   const [isAddingRoot, setIsAddingRoot] = useState(false);
   const [newRootNome, setNewRootNome] = useState('');
+  const [nodeToDelete, setNodeToDelete] = useState<number | null>(null);
 
   const handleAddNode = async (parentId: number | null, nome: string) => {
     try {
@@ -922,7 +950,7 @@ const WbsTab = ({ cantiereId }: { cantiereId: number }) => {
       setIsAddingRoot(false);
       setNewRootNome('');
     } catch (err: any) {
-      alert(err.message);
+      toast.error('Creazione fase non riuscita', err.message);
     }
   };
 
@@ -930,16 +958,22 @@ const WbsTab = ({ cantiereId }: { cantiereId: number }) => {
     try {
       await updateMut.mutateAsync({ nodeId, ...fields });
     } catch (err: any) {
-      alert(err.message);
+      toast.error('Aggiornamento fase non riuscito', err.message);
     }
   };
 
   const handleDelete = async (nodeId: number) => {
-    if (!confirm("Sei sicuro di voler eliminare questa fase? L'operazione fallirà se ci sono costi o sottofasi collegate.")) return;
+    setNodeToDelete(nodeId);
+  };
+
+  const confirmDelete = async () => {
+    if (nodeToDelete == null) return;
     try {
-      await deleteMut.mutateAsync(nodeId);
+      await deleteMut.mutateAsync(nodeToDelete);
+      toast.success('Fase eliminata');
+      setNodeToDelete(null);
     } catch (err: any) {
-      alert(err.message);
+      toast.error('Eliminazione fase non riuscita', err.message);
     }
   };
 
@@ -1033,6 +1067,16 @@ const WbsTab = ({ cantiereId }: { cantiereId: number }) => {
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={nodeToDelete != null}
+        onClose={() => setNodeToDelete(null)}
+        onConfirm={confirmDelete}
+        title="Eliminare fase WBS?"
+        description="L'operazione fallirà se ci sono costi o sottofasi collegate."
+        confirmLabel="Elimina"
+        loading={deleteMut.isPending}
+        variant="danger"
+      />
     </div>
   );
 };
@@ -1046,6 +1090,7 @@ const WarehouseTab = ({ cantiereId }: { cantiereId: number }) => {
   const { data: pricebook } = usePricebook();
   const { data: tree } = useWbsTree(cantiereId);
   const addMaterial = useAddMaterialToCantiere(cantiereId);
+  const toast = useToast();
 
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedMaterial, setSelectedMaterial] = useState<string>('');
@@ -1068,8 +1113,9 @@ const WarehouseTab = ({ cantiereId }: { cantiereId: number }) => {
       setSelectedMaterial('');
       setQuantity('1');
       setWbsNode('');
+      toast.success('Materiale aggiunto al cantiere');
     } catch (err: any) {
-      alert(err.message);
+      toast.error('Prelievo non riuscito', err.message);
     }
   };
 
@@ -1401,6 +1447,7 @@ export default function ProjectDetailPage() {
   const { data: projectDetail } = useCantiereDetail(detailCantiereId);
   const genyaImport = useGenyaImport();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const toast = useToast();
 
   const [activeTab, setActiveTab] = useState('overview');
   const [projectActionsOpen, setProjectActionsOpen] = useState(false);
@@ -1424,9 +1471,9 @@ export default function ProjectDetailPage() {
     if (!file) return;
     try {
       const result = await genyaImport.mutateAsync(file);
-      alert(`✅ Importate ${result.inserted ?? '?'} spese da ${file.name}`);
+      toast.success('Import Genya completato', `Importate ${result.inserted ?? '?'} spese da ${file.name}`);
     } catch (err: unknown) {
-      alert(`❌ ${err instanceof Error ? err.message : 'Errore import'}`);
+      toast.error('Import Genya non riuscito', err instanceof Error ? err.message : 'Errore import');
     }
     e.target.value = '';
   };

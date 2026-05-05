@@ -20,6 +20,7 @@ import { useExportCsv } from '../hooks/api/useHr';
 import type { AuditEntry, AuditStatus } from '../hooks/api/useHr';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+import { useToast } from '../components/ui';
 
 // ─── Types & helpers ──────────────────────────────────────────────────────────
 
@@ -364,13 +365,15 @@ export default function TelegramAuditPage() {
   const [activeSection, setActiveSection] = useState<'audit' | 'logs'>('audit');
   const { downloadCsv } = useExportCsv();
   const [exporting, setExporting] = useState(false);
+  const toast = useToast();
 
   const handleExport = async () => {
     try {
       setExporting(true);
       await downloadCsv({ start: dateFrom || undefined, end: dateTo || undefined });
+      toast.success('CSV esportato');
     } catch (err) {
-      alert((err as Error).message);
+      toast.error('Export non riuscito', (err as Error).message);
     } finally {
       setExporting(false);
     }

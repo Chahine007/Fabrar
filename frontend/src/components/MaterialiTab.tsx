@@ -10,8 +10,8 @@ import {
 import { useWbsTree } from '../hooks/api/useWbs';
 import { useAllTasks } from '../hooks/api/useTasks';
 import { useAuth } from '../hooks/useAuth';
-import Spinner from './Spinner';
 import ErrorMessage from './ErrorMessage';
+import { CardListSkeleton, EmptyState, FormError, TableSkeleton, useToast } from './ui';
 
 interface ScaricoFormData {
   articolo_id: number;
@@ -24,6 +24,8 @@ interface ScaricoFormData {
 const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: number, isOpen: boolean, onClose: () => void }) => {
   const { register, handleSubmit, watch, reset } = useForm<ScaricoFormData>();
   const creaMovimento = useCreaMovimento();
+  const toast = useToast();
+  const [error, setError] = useState<string | null>(null);
   
   const { data: giacenze, isLoading: loadingG } = useGiacenze();
   const { data: wbsNodes, isLoading: loadingW } = useWbsTree(cantiereId);
@@ -71,6 +73,7 @@ const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: nu
   }, [giacenzeDisponibili, selectedArticoloId]);
 
   const onSubmit = async (data: ScaricoFormData) => {
+    setError(null);
     try {
       await creaMovimento.mutateAsync({
         tipo_movimento: 'SCARICO_CANTIERE',
@@ -82,9 +85,10 @@ const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: nu
         task_id: data.task_id ? Number(data.task_id) : null,
       });
       reset();
+      toast.success('Materiale prelevato', 'Il costo è stato imputato al cantiere/task selezionato.');
       onClose();
     } catch (err: any) {
-      alert(`Errore nello scarico: ${err.message}`);
+      setError(err.message ?? 'Errore nello scarico materiale.');
     }
   };
 
@@ -109,7 +113,7 @@ const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: nu
         </div>
 
         {(loadingG || loadingW || loadingTasks) ? (
-          <div className="p-8 flex justify-center"><Spinner label="Caricamento dati..." /></div>
+          <div className="p-6"><CardListSkeleton rows={3} /></div>
         ) : articoliDisponibili.length === 0 ? (
           <div className="p-8 text-center">
             <div className="w-16 h-16 bg-background rounded-full flex items-center justify-center mx-auto mb-4">
@@ -125,6 +129,7 @@ const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: nu
           </div>
         ) : (
           <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6 overflow-y-auto">
+            {error && <FormError>{error}</FormError>}
             
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-semibold text-text-secondary">Articolo da Prelevare</label>
@@ -232,7 +237,14 @@ const MaterialiTab: React.FC<MaterialiTabProps> = ({ cantiereId }) => {
   
   const canPrelevare = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'].includes(user?.role ?? '');
 
-  if (isLoading) return <div className="p-8 flex justify-center"><Spinner label="Caricamento storico materiali..." /></div>;
+  if (isLoading) {
+    return (
+      <div className="p-4">
+        <div className="md:hidden"><CardListSkeleton rows={4} /></div>
+        <div className="hidden md:block"><TableSkeleton rows={5} columns={7} /></div>
+      </div>
+    );
+  }
   if (error) return <div className="p-8"><ErrorMessage error={(error as Error).message} /></div>;
 
   return (
@@ -257,7 +269,48 @@ const MaterialiTab: React.FC<MaterialiTabProps> = ({ cantiereId }) => {
       </div>
 
       <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
+        {(!movimenti || movimenti.length === 0) ? (
+          <div className="p-6">
+            <EmptyState
+              icon={Package}
+              title="Nessun materiale prelevato"
+              description="Non è stato ancora effettuato alcuno scarico verso questo cantiere."
+              action={canPrelevare ? { label: 'Preleva materiale', onClick: () => setIsModalOpen(true) } : undefined}
+            />
+          </div>
+        ) : (
+          <>
+            <div className="divide-y divide-border md:hidden">
+              {movimenti.map((mov: any) => {
+                const dataMov = new Date(mov.data_movimento).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
+                const q = parseFloat(mov.quantita);
+                const val = parseFloat(mov.valore_totale);
+                return (
+                  <div key={`${mov.id}-mobile`} className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-bold text-text-primary">{mov.articolo.descrizione}</p>
+                        <span className="mt-1 inline-flex rounded border border-border bg-background px-1.5 py-0.5 font-mono text-xs text-text-secondary">
+                          {mov.articolo.codice_sku}
+                        </span>
+                      </div>
+                      <span className="text-sm font-bold text-accent">
+                        {q} <span className="text-xs font-normal text-text-secondary">{mov.articolo.unita_misura}</span>
+                      </span>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-text-secondary">
+                      <span>Data: <strong className="text-text-primary">{dataMov}</strong></span>
+                      <span>Valore: <strong className="text-text-primary">{val.toLocaleString('it-IT', { minimumFractionDigits: 2 })} €</strong></span>
+                      <span>Ubicazione: <strong className="text-text-primary">{mov.ubicazione_da?.codice || '--'}</strong></span>
+                      <span>WBS: <strong className="text-text-primary">{mov.wbs_node?.nome || 'Radice'}</strong></span>
+                      <span className="col-span-2">Task: <strong className="text-text-primary">{mov.task?.title || 'Non allocato'}</strong></span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full text-left border-collapse min-w-[800px]">
             <thead>
               <tr className="bg-background text-xs uppercase tracking-wider text-text-secondary border-b border-border">
@@ -271,20 +324,7 @@ const MaterialiTab: React.FC<MaterialiTabProps> = ({ cantiereId }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {(!movimenti || movimenti.length === 0) ? (
-                <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center">
-                    <div className="flex flex-col items-center justify-center">
-                      <div className="w-16 h-16 bg-background rounded-full flex items-center justify-center mb-4">
-                        <Package size={32} className="text-text-secondary opacity-50" />
-                      </div>
-                      <h4 className="text-lg font-bold text-text-primary">Nessun materiale prelevato</h4>
-                      <p className="text-sm text-text-secondary mt-1">Non è stato ancora effettuato alcuno scarico verso questo cantiere.</p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                movimenti.map((mov: any) => {
+                {movimenti.map((mov: any) => {
                   const dataMov = new Date(mov.data_movimento).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
                   const q = parseFloat(mov.quantita);
                   const val = parseFloat(mov.valore_totale);
@@ -323,11 +363,12 @@ const MaterialiTab: React.FC<MaterialiTabProps> = ({ cantiereId }) => {
                       </td>
                     </tr>
                   )
-                })
-              )}
+                })}
             </tbody>
           </table>
         </div>
+          </>
+        )}
       </div>
 
       <AnimatePresence>
