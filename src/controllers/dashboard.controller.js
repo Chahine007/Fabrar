@@ -1,8 +1,9 @@
 import { getDb, getCantieriStatus, formatDateOnly, parseDateOnly } from "../db/index.js";
-import { round2, toNumber, isPendingSpesa } from "../utils/helpers.js";
+import { round2, toNumber } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { getPendingSummary } from "./hr.controller.js";
 import { ValidationStatus } from "../constants.js";
+import { calculateTrueCost } from "../domain/finance/financeService.js";
 
 export const getRadar = asyncHandler(async (req, res) => {
     const prisma = getDb();
@@ -67,37 +68,36 @@ export const getRadar = asyncHandler(async (req, res) => {
 export const getFinanceKPIs = asyncHandler(async (req, res) => {
     const prisma = getDb();
 
-    const [cantieri, spese] = await Promise.all([
-        prisma.cantiere.findMany({
-            where: { attivo: 1 },
-            select: { id: true, nome: true, budget: true },
-        }),
-        prisma.spesa.findMany({
-            where: { NOT: { stato_validazione: ValidationStatus.REJECTED } },
-            select: { cantiere_id: true, importo: true },
-        }),
-    ]);
+    const cantieri = await prisma.cantiere.findMany({
+        where: { attivo: 1 },
+        select: { id: true, nome: true, budget: true, valore_contratto: true },
+    });
 
-    // Spese per cantiere
-    const speseByCantiere = {};
-    for (const s of spese) {
-        speseByCantiere[s.cantiere_id] = (speseByCantiere[s.cantiere_id] ?? 0) + toNumber(s.importo);
-    }
+    const cantieriAnalysis = await Promise.all(
+        cantieri.map(async (c) => {
+            const ricavoPrevisto = toNumber(c.valore_contratto ?? c.budget);
+            const costi = await calculateTrueCost(c.id, null, prisma);
+            const burnRate = ricavoPrevisto > 0 ? round2(costi.costoTotale / ricavoPrevisto) : 0;
+            const cpi = costi.costoTotale > 0 ? round2(ricavoPrevisto / costi.costoTotale) : null;
 
-    const budgetTotale = cantieri.reduce((s, c) => s + toNumber(c.budget), 0);
-    const speseTotali  = Object.values(speseByCantiere).reduce((s, v) => s + v, 0);
-    const margine      = round2(budgetTotale - speseTotali);
-
-    // Burn rate per cantiere e CPI
-    const cantieriAnalysis = cantieri
-        .map(c => {
-            const budget = toNumber(c.budget);
-            const costo  = speseByCantiere[c.id] ?? 0;
-            const burnRate = budget > 0 ? round2(costo / budget) : 0;
-            const cpi      = costo > 0 ? round2(budget / costo) : null; // CPI = EV/AC (simplified)
-            return { id: c.id, nome: c.nome, budget: round2(budget), costo: round2(costo), burnRate, cpi };
+            return {
+                id: c.id,
+                nome: c.nome,
+                budget: round2(ricavoPrevisto),
+                valoreContratto: round2(ricavoPrevisto),
+                costo: costi.costoTotale,
+                costoManodopera: costi.costoManodopera,
+                costoMateriali: costi.costoMateriali,
+                costoSpese: costi.costoSpese,
+                burnRate,
+                cpi,
+            };
         })
-        .filter(c => c.budget > 0);
+    );
+
+    const budgetTotale = round2(cantieriAnalysis.reduce((s, c) => s + c.valoreContratto, 0));
+    const costiTotali = round2(cantieriAnalysis.reduce((s, c) => s + c.costo, 0));
+    const margine = round2(budgetTotale - costiTotali);
 
     const top3BurnRate = [...cantieriAnalysis].sort((a, b) => b.burnRate - a.burnRate).slice(0, 3);
     const avgCPI = cantieriAnalysis.filter(c => c.cpi !== null).length > 0
@@ -106,7 +106,12 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
 
     res.json({
         budgetTotale: round2(budgetTotale),
-        speseTotali:  round2(speseTotali),
+        valoreContrattoTotale: round2(budgetTotale),
+        speseTotali:  costiTotali,
+        costiTotali,
+        costoManodoperaTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoManodopera, 0)),
+        costoMaterialiTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoMateriali, 0)),
+        costoSpeseTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoSpese, 0)),
         margine,
         marginePct:   budgetTotale > 0 ? round2((margine / budgetTotale) * 100) : null,
         cpiMedio:     avgCPI,
@@ -271,4 +276,3 @@ export const getOpsKPIs = asyncHandler(async (req, res) => {
         totalPending:     total - totalVerifiedCount - rejected,
     });
 });
-

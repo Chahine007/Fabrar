@@ -29,6 +29,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ValidationStatus } from "../constants.js";
 import { syncCantiereBudget, computeFinancialTimeline, computeFinancialKpis } from "../domain/cantiere/cantiereService.js";
 import { buildWbsTree, validateNodeDepth } from "../domain/cantiere/wbsService.js";
+import { calculateTrueCost } from "../domain/finance/financeService.js";
 
 async function loadCantiereCostDataset(prisma, cantiereId) {
     const cantiere = await prisma.cantiere.findUnique({
@@ -122,7 +123,21 @@ export const getDetails = asyncHandler(async (req, res) => {
     const dataset = await loadCantiereCostDataset(getDb(), cantiereId);
     if (!dataset) return res.status(404).json({ error: "Cantiere non trovato." });
 
-    const { kpi, perDipendente } = computeFinancialKpis(dataset);
+    const { kpi: legacyKpi, perDipendente } = computeFinancialKpis(dataset);
+    const trueCost = await calculateTrueCost(cantiereId, null, getDb());
+    const budget = toNumber(dataset.cantiere.valore_contratto ?? dataset.cantiere.budget);
+    const nMesi = legacyKpi.nMesi ?? 1;
+    const kpi = {
+        ...legacyKpi,
+        budget,
+        costoTotale: trueCost.costoTotale,
+        costoManodopera: trueCost.costoManodopera,
+        costoMateriali: trueCost.costoMateriali,
+        costoSpese: trueCost.costoSpese,
+        margine: round2(budget - trueCost.costoTotale),
+        burnRate: round2(trueCost.costoTotale / Math.max(nMesi, 1)),
+        nMesi,
+    };
     const { report_entries: _e, spese: _s, ...cantiere } = dataset.cantiere;
 
     res.json({ cantiere: { ...cantiere, budget: kpi.budget }, kpi, perDipendente });

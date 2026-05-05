@@ -98,6 +98,7 @@ export const getMovimentiCantiere = asyncHandler(async (req, res) => {
             articolo: true,
             ubicazione_da: true,
             wbs_node: true,
+            task: true,
             documento: true,
             fornitore: true,
             esecutore: {

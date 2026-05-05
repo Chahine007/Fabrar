@@ -7,7 +7,7 @@ import { ValidationStatus } from '../../constants.js';
 import { domainBus, EVENTS } from '../events/domainBus.js';
 
 export async function processDischarge(prisma, payload, userId, employeeId) {
-    const { articolo_id, quantita, ubicazione_da_id, cantiere_id, wbs_node_id, documento_id } = payload;
+    const { articolo_id, quantita, ubicazione_da_id, cantiere_id, wbs_node_id, task_id, documento_id } = payload;
 
     if (!ubicazione_da_id || !cantiere_id) {
         throw new DomainError('Mancano ubicazione_da_id o cantiere_id.', 'MISSING_FIELDS');
@@ -46,6 +46,7 @@ export async function processDischarge(prisma, payload, userId, employeeId) {
                 articolo_id, quantita: qty,
                 ubicazione_da_id, cantiere_id,
                 wbs_node_id:    targetWbsNodeId,
+                task_id:        task_id ?? null,
                 costo_unitario: costo,
                 valore_totale:  valoreTotale,
                 esecutore_id:   userId,
@@ -59,6 +60,7 @@ export async function processDischarge(prisma, payload, userId, employeeId) {
                 employee_id:       employeeId,
                 cantiere_id,
                 wbs_node_id:       targetWbsNodeId,
+                task_id:           task_id ?? null,
                 importo:           valoreTotale,
                 descrizione:       `Scarico Magazzino: ${articolo.descrizione} (${articolo.codice_sku})`,
                 quantita:          qty,

@@ -84,6 +84,8 @@ model Cantiere {
   lat               Float?
   lng               Float?
   budget            Decimal? @db.Decimal(10, 2)
+  valore_contratto  Decimal? @db.Decimal(10, 2)
+  budget_spese      Decimal? @db.Decimal(10, 2)
   attivo            Int      @default(1)
   raggio_tolleranza Int      @default(200)
 
@@ -105,10 +107,10 @@ model Cantiere {
   wbs_nodes           WbsNode[]
   report_entries      ReportEntry[]
   spese               Spesa[]
+  movimenti_magazzino MovimentoMagazzino[]
   reports             Report[]
   tasks               Task[]
   documents           Document[]
-  movimenti_magazzino MovimentoMagazzino[]
   richieste_materiali RichiestaMateriale[]
 }
 
@@ -251,6 +253,8 @@ model Task {
   status      TaskStatus   @default(TODO)
   priority    TaskPriority @default(MEDIUM)
   due_date    DateTime?
+  budget_stimato Decimal? @db.Decimal(10, 2)
+  costo_previsto Decimal? @db.Decimal(10, 2)
   created_at  DateTime     @default(now())
   updated_at  DateTime     @updatedAt
 
@@ -258,6 +262,7 @@ model Task {
   assignee       Employee?     @relation(fields: [assignee_id], references: [id])
   report_entries ReportEntry[]
   spese          Spesa[]
+  movimenti_magazzino MovimentoMagazzino[]
 }
 
 enum TaskStatus {
@@ -422,6 +427,7 @@ model MovimentoMagazzino {
   // Riferimenti Job Costing
   cantiere_id Int?
   wbs_node_id Int?
+  task_id     Int?
 
   // Valori Fiscali
   costo_unitario Decimal @db.Decimal(10, 2)
@@ -438,6 +444,7 @@ model MovimentoMagazzino {
   ubicazione_a  Ubicazione? @relation("MovimentiA", fields: [ubicazione_a_id], references: [id])
   cantiere      Cantiere?   @relation(fields: [cantiere_id], references: [id])
   wbs_node      WbsNode?    @relation(fields: [wbs_node_id], references: [id])
+  task          Task?       @relation(fields: [task_id], references: [id])
   esecutore     User        @relation(fields: [esecutore_id], references: [id])
   documento     Document?   @relation(fields: [documento_id], references: [id])
   fornitore     Fornitore?  @relation(fields: [fornitore_id], references: [id])
