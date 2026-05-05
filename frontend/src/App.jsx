@@ -15,7 +15,7 @@ import ProjectDetailPage  from "./pages/ProjectDetailPage";
 import MessagesPage       from "./pages/MessagesPage";
 import EmployeesPage      from "./pages/EmployeesPage";
 import EmployeeDetailPage from "./pages/EmployeeDetailPage";
-import TabulatiOrariPage  from "./pages/TabulatiOrariPage";
+import TabulatiPage       from "./pages/TabulatiPage";
 import TelegramAuditPage  from "./pages/TelegramAuditPage";
 import SettingsPage       from "./pages/SettingsPage";
 import WarehousePage      from "./pages/WarehousePage";
@@ -100,8 +100,8 @@ function AppRoutes() {
         <Route path="/hr"                element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><EmployeesPage /></RoleRoute>} />
         <Route path="/personnel"         element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><Navigate to="/hr" replace /></RoleRoute>} />
         <Route path="/hr/employees/:id"  element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><EmployeeDetailPage /></RoleRoute>} />
-        <Route path="/hr/tabulati"       element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><TabulatiOrariPage /></RoleRoute>} />
-        <Route path="/timesheets"        element={<RoleRoute allowedRoles={["WORKER"]}><TabulatiOrariPage /></RoleRoute>} />
+        <Route path="/hr/tabulati"       element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><TabulatiPage /></RoleRoute>} />
+        <Route path="/timesheets"        element={<RoleRoute allowedRoles={["WORKER"]}><TabulatiPage /></RoleRoute>} />
         {/* Legacy: /hr/audit → /hr/tabulati */}
         <Route path="/hr/audit"          element={<Navigate to="/hr/tabulati" replace />} />
         <Route path="/warehouse"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES}><WarehousePage /></RoleRoute>} />

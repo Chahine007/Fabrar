@@ -11,7 +11,7 @@ import { cn } from '../lib/utils';
 import { useAudit, useUpdateReportEntry, useExportCsv } from '../hooks/api/useHr';
 import { useMessageLogs, useApproveTelegramEntry } from '../hooks/api/useTelegramAudit';
 import { useCantieri } from '../hooks/api/useCantieri';
-import type { AuditEntry, AuditStatus, AuditFilters } from '../hooks/api/useHr';
+import type { AuditEntry, AuditStatus, AuditFilters, AuditType } from '../hooks/api/useHr';
 import ErrorMessage from '../components/ErrorMessage';
 import { useAuthContext } from '../context/AuthContext';
 import { RoleGuard } from '../components/auth/RoleGuard';
@@ -22,15 +22,47 @@ import { useDeleteMyExpense } from '../hooks/api/useMyExpenses';
 import { CardListSkeleton, ConfirmDialog, EmptyState, TableSkeleton, useToast } from '../components/ui';
 
 type TypeFilter   = 'tutti' | 'ore' | 'spese';
-type StatusFilter = 'tutti' | 'pending' | 'verified' | 'rejected';
+type StatusFilter = 'tutti' | 'pending' | 'approved' | 'rejected';
+type AuditMutationStatus = 'APPROVED' | 'REJECTED';
 
 function isApprovedAuditStatus(status: AuditStatus | string | null | undefined) {
   const raw = String(status ?? '').toUpperCase();
   return raw === 'APPROVED' || raw === 'VERIFIED';
 }
 
+function safeNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function safeTime(value: unknown) {
+  const parsed = new Date(String(value ?? '')).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatAuditDate(value: unknown) {
+  const time = safeTime(value);
+  return time ? new Date(time).toLocaleDateString('it-IT') : '—';
+}
+
+function formatAuditValue(entry: AuditEntry) {
+  const value = safeNumber(entry.value);
+  return entry.type === 'ore'
+    ? `${value}h`
+    : `€${value.toLocaleString('it-IT')}`;
+}
+
+function auditKey(entry: Pick<AuditEntry, 'type' | 'id'>) {
+  return `${entry.type}:${entry.id}`;
+}
+
+function toAuditMutationItem(entry: Pick<AuditEntry, 'id' | 'type'>, newStatus: AuditMutationStatus) {
+  return { id: entry.id, type: entry.type as AuditType, newStatus };
+}
+
 function methodBadge(method: string) {
   const m = (method ?? '').toLowerCase();
+  if (m.includes('genya') || m.includes('genia') || m.includes('import')) return { label: 'Import Genya', icon: Download, cls: 'bg-info-bg text-info-text border-info-border' };
   if (m.includes('audio') || m.includes('voice')) return { label: 'Vocale',   icon: Mic,           cls: 'bg-warning-bg text-warning-text border-warning-border' };
   if (m.includes('ocr')  || m.includes('foto'))   return { label: 'Foto OCR', icon: Camera,        cls: 'bg-indigo-900/30 text-indigo-400 border-indigo-700/40' };
   if (m.includes('gps'))                           return { label: 'GPS',      icon: MapPin,        cls: 'bg-info-bg text-info-text border-info-border' };
@@ -120,22 +152,24 @@ const EditModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () => void 
   );
 };
 
-export default function TabulatiOrariPage() {
+export default function TabulatiPage() {
   const { user } = useAuthContext();
   const userRole = user?.role ?? '';
   const canManageAudit = userRole === 'ADMIN' || userRole === 'HR';
   const canViewLogs = canManageAudit;
   const [searchParams] = useSearchParams();
   const initEmp = searchParams.get('employee_id') ?? '';
+  const initCantiere = searchParams.get('cantiere_id') ?? '';
 
   const [dateFrom, setDateFrom]   = useState('');
   const [dateTo, setDateTo]       = useState('');
   const [search, setSearch]       = useState('');
   const [typeF, setTypeF]         = useState<TypeFilter>('tutti');
   const [statusF, setStatusF]     = useState<StatusFilter>('tutti');
+  const [cantiereF, setCantiereF] = useState(initCantiere);
   const [sortField, setSortField] = useState<'date'|'value'>('date');
   const [sortDir, setSortDir]     = useState<'asc'|'desc'>('desc');
-  const [selected, setSelected]   = useState<Set<number>>(new Set());
+  const [selected, setSelected]   = useState<Set<string>>(new Set());
   const [editEntry, setEditEntry] = useState<AuditEntry | null>(null);
   const [timeModal, setTimeModal] = useState<{ mode: 'create' } | { mode: 'edit'; entry: AuditEntry } | null>(null);
   const [expenseModal, setExpenseModal] = useState<{ mode: 'create' } | { mode: 'edit'; entry: AuditEntry } | null>(null);
@@ -143,11 +177,13 @@ export default function TabulatiOrariPage() {
   const [exporting, setExporting] = useState(false);
   const [recordToDelete, setRecordToDelete] = useState<AuditEntry | null>(null);
   const toast = useToast();
+  const { data: cantieri = [] } = useCantieri();
 
   const filters: AuditFilters = {
     type:        typeF !== 'tutti' ? typeF : undefined,
     status:      statusF !== 'tutti' ? statusF : undefined,
     employee_id: initEmp || undefined,
+    cantiere_id: cantiereF ? Number(cantiereF) : undefined,
     from:        dateFrom || undefined,
     to:          dateTo   || undefined,
   };
@@ -173,16 +209,27 @@ export default function TabulatiOrariPage() {
       );
     }
     return [...data].sort((a, b) => {
-      const av = sortField === 'date' ? new Date(a.date).getTime() : a.value;
-      const bv = sortField === 'date' ? new Date(b.date).getTime() : b.value;
+      const av = sortField === 'date' ? safeTime(a.date) : safeNumber(a.value);
+      const bv = sortField === 'date' ? safeTime(b.date) : safeNumber(b.value);
       return sortDir === 'asc' ? av - bv : bv - av;
     });
   }, [rawFeed, search, sortField, sortDir]);
 
   const pendingFeed = feed.filter(e => e.status === 'pending');
+  const pendingKeys = useMemo(() => pendingFeed.map(auditKey), [pendingFeed]);
+  const selectedEntries = useMemo(() => feed.filter(entry => selected.has(auditKey(entry))), [feed, selected]);
+  const allPendingSelected = pendingKeys.length > 0 && pendingKeys.every(key => selected.has(key));
   const toggleSort = (f: 'date'|'value') => { if (sortField===f) setSortDir(d=>d==='asc'?'desc':'asc'); else { setSortField(f); setSortDir('desc'); } };
-  const toggleSel  = (id: number) => setSelected(prev => { const s=new Set(prev); s.has(id)?s.delete(id):s.add(id); return s; });
-  const handleBulk = async (action: 'verify'|'reject') => { if(!selected.size) return; await approveMut.mutateAsync({ids:[...selected],action}); setSelected(new Set()); };
+  const toggleSel  = (entry: AuditEntry) => setSelected(prev => { const s=new Set(prev); const key = auditKey(entry); s.has(key)?s.delete(key):s.add(key); return s; });
+  const toggleAllPending = () => setSelected(prev => {
+    if (allPendingSelected) return new Set([...prev].filter(key => !pendingKeys.includes(key)));
+    return new Set([...prev, ...pendingKeys]);
+  });
+  const handleBulk = async (newStatus: AuditMutationStatus) => {
+    if (!selectedEntries.length) return;
+    await approveMut.mutateAsync({ items: selectedEntries.map(entry => toAuditMutationItem(entry, newStatus)) });
+    setSelected(new Set());
+  };
   const handleDeletePersonalRecord = async (entry: AuditEntry) => {
     if (isApprovedAuditStatus(entry.status)) return;
     setRecordToDelete(entry);
@@ -204,8 +251,8 @@ export default function TabulatiOrariPage() {
   const today = new Date().toISOString().slice(0,10);
   const kpi = {
     oggi:  rawFeed.filter(e=>e.date?.startsWith(today)).length,
-    ore:   rawFeed.filter(e=>e.type==='ore').reduce((s,e)=>s+e.value,0).toFixed(1),
-    spese: rawFeed.filter(e=>e.type==='spese').reduce((s,e)=>s+e.value,0),
+    ore:   rawFeed.filter(e=>e.type==='ore').reduce((s,e)=>s+safeNumber(e.value),0).toFixed(1),
+    spese: rawFeed.filter(e=>e.type==='spese').reduce((s,e)=>s+safeNumber(e.value),0),
     gps:   rawFeed.filter(e=>(e.input_method??'').toLowerCase().includes('gps')).length,
   };
 
@@ -214,7 +261,7 @@ export default function TabulatiOrariPage() {
       {/* Header */}
       <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-md border-b border-border px-8 h-20 flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary flex items-center gap-2"><ClipboardList size={22} className="text-accent"/> Tabulati Orari</h1>
+          <h1 className="text-2xl font-bold text-text-primary flex items-center gap-2"><ClipboardList size={22} className="text-accent"/> Tabulati</h1>
           <p className="text-sm text-text-secondary">Ore, spese e timbrature — tutti i canali</p>
         </div>
         <div className="flex items-center gap-2">
@@ -288,12 +335,22 @@ export default function TabulatiOrariPage() {
                 ))}
               </div>
 
+              <select
+                id="tabulati-cantiere-filter"
+                value={cantiereF}
+                onChange={e=>setCantiereF(e.target.value)}
+                className="px-3 py-2 rounded-xl border border-border bg-background text-sm text-text-primary outline-none focus:ring-2 focus:ring-accent/20"
+              >
+                <option value="">Tutti i cantieri</option>
+                {cantieri.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+              </select>
+
               {/* Stato — evidenziato con colori */}
               <div className="flex items-center gap-1 bg-background border border-border rounded-xl p-1">
                 {([
                   { id:'tutti',    label:'Tutti',          cls:'' },
                   { id:'pending',  label:'⏳ In Attesa',   cls: statusF==='pending'  ? 'bg-warning-bg text-warning-text' : '' },
-                  { id:'verified', label:'✅ Approvati',   cls: statusF==='verified' ? 'bg-success-bg text-success-text' : '' },
+                  { id:'approved', label:'✅ Approvati',   cls: statusF==='approved' ? 'bg-success-bg text-success-text' : '' },
                   { id:'rejected', label:'❌ Rifiutati',   cls: statusF==='rejected' ? 'bg-danger-bg  text-danger-text'  : '' },
                 ] as const).map(f=>(
                   <button key={f.id} onClick={()=>setStatusF(f.id as StatusFilter)}
@@ -304,15 +361,15 @@ export default function TabulatiOrariPage() {
               </div>
 
               {/* Bulk */}
-              {canManageAudit && selected.size > 0 && (
+              {canManageAudit && selectedEntries.length > 0 && (
                 <>
-                  <motion.button initial={{opacity:0,scale:0.9}} animate={{opacity:1,scale:1}} onClick={()=>handleBulk('verify')} disabled={approveMut.isPending}
+                  <motion.button initial={{opacity:0,scale:0.9}} animate={{opacity:1,scale:1}} onClick={()=>handleBulk('APPROVED')} disabled={approveMut.isPending}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-white text-sm font-bold shadow-lg shadow-accent/20 hover:bg-accent/90 disabled:opacity-50">
-                    <CheckCircle2 size={14}/> Approva {selected.size}
+                    <CheckCircle2 size={14}/> Approva {selectedEntries.length}
                   </motion.button>
-                  <motion.button initial={{opacity:0,scale:0.9}} animate={{opacity:1,scale:1}} onClick={()=>handleBulk('reject')} disabled={approveMut.isPending}
+                  <motion.button initial={{opacity:0,scale:0.9}} animate={{opacity:1,scale:1}} onClick={()=>handleBulk('REJECTED')} disabled={approveMut.isPending}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-danger-bg text-danger-text border border-danger-border text-sm font-bold hover:opacity-80 disabled:opacity-50">
-                    <XCircle size={14}/> Rifiuta {selected.size}
+                    <XCircle size={14}/> Rifiuta {selectedEntries.length}
                   </motion.button>
                 </>
               )}
@@ -354,7 +411,7 @@ export default function TabulatiOrariPage() {
                           <div className="min-w-0">
                             <p className="font-bold text-text-primary">{entry.cantiere_nome || 'Senza cantiere'}</p>
                             <p className="mt-1 text-xs text-text-secondary">
-                              {new Date(entry.date).toLocaleDateString('it-IT')} · {`${entry.nome ?? ''} ${entry.cognome ?? ''}`.trim() || '—'}
+                              {formatAuditDate(entry.date)} · {`${entry.nome ?? ''} ${entry.cognome ?? ''}`.trim() || '—'}
                             </p>
                           </div>
                           <StatusBadge status={entry.status} />
@@ -362,7 +419,7 @@ export default function TabulatiOrariPage() {
 
                         <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-text-secondary">
                           <span>Tipo: <strong className="text-text-primary">{entry.type === 'ore' ? 'Ore' : 'Spesa'}</strong></span>
-                          <span>Valore: <strong className="text-text-primary">{entry.type === 'ore' ? `${entry.value}h` : `€${Number(entry.value).toLocaleString('it-IT')}`}</strong></span>
+                          <span>Valore: <strong className="text-text-primary">{formatAuditValue(entry)}</strong></span>
                           <span className="col-span-2">Task: <strong className="text-text-primary">{entry.task_title || '—'}</strong></span>
                           <span className="col-span-2">
                             Metodo:{' '}
@@ -399,11 +456,11 @@ export default function TabulatiOrariPage() {
                           )}
                           {canManageAudit && entry.status === 'pending' && (
                             <>
-                              <button onClick={()=>approveMut.mutate({ids:[entry.id],action:'verify'})} disabled={approveMut.isPending}
+                              <button onClick={()=>approveMut.mutate({ items: [toAuditMutationItem(entry, 'APPROVED')] })} disabled={approveMut.isPending}
                                 className="rounded-xl bg-success-bg px-3 py-2 text-xs font-bold text-success-text disabled:opacity-40">
                                 Approva
                               </button>
-                              <button onClick={()=>approveMut.mutate({ids:[entry.id],action:'reject'})} disabled={approveMut.isPending}
+                              <button onClick={()=>approveMut.mutate({ items: [toAuditMutationItem(entry, 'REJECTED')] })} disabled={approveMut.isPending}
                                 className="rounded-xl bg-danger-bg px-3 py-2 text-xs font-bold text-danger-text disabled:opacity-40">
                                 Rifiuta
                               </button>
@@ -421,8 +478,8 @@ export default function TabulatiOrariPage() {
                     <tr className="border-b border-border text-text-secondary text-xs uppercase tracking-wider">
                       <th className="px-5 py-3 text-left w-10">
                         <input type="checkbox" className="accent-accent"
-                          checked={selected.size===pendingFeed.length && pendingFeed.length>0}
-                          onChange={()=>selected.size===pendingFeed.length?setSelected(new Set()):setSelected(new Set(pendingFeed.map(e=>e.id)))}/>
+                          checked={allPendingSelected}
+                          onChange={toggleAllPending}/>
                       </th>
                       <th className="px-5 py-3 text-left">Tipo</th>
                       <th className="px-5 py-3 text-left">Dipendente</th>
@@ -451,10 +508,10 @@ export default function TabulatiOrariPage() {
                       const isDeleting = entry.type === 'ore' ? deleteTimeEntry.isPending : deleteExpense.isPending;
                       return (
                         <tr key={`${entry.type}-${entry.id}`}
-                          className={cn('border-b border-border/50 hover:bg-background/60 transition-colors', selected.has(entry.id)&&'bg-accent/5')}>
+                          className={cn('border-b border-border/50 hover:bg-background/60 transition-colors', selected.has(auditKey(entry))&&'bg-accent/5')}>
                           <td className="px-5 py-3.5">
                             {canManageAudit && entry.status==='pending' &&
-                              <input type="checkbox" className="accent-accent" checked={selected.has(entry.id)} onChange={()=>toggleSel(entry.id)}/>}
+                              <input type="checkbox" className="accent-accent" checked={selected.has(auditKey(entry))} onChange={()=>toggleSel(entry)}/>}
                           </td>
                           <td className="px-5 py-3.5">
                             <span className={cn('px-2.5 py-1 rounded-lg text-xs font-bold border',
@@ -465,9 +522,9 @@ export default function TabulatiOrariPage() {
                           <td className="px-5 py-3.5 font-medium text-text-primary">{`${entry.nome??''} ${entry.cognome??''}`.trim()||'—'}</td>
                           <td className="px-5 py-3.5 text-text-secondary">{entry.cantiere_nome||'—'}</td>
                           <td className="px-5 py-3.5 text-text-secondary">{entry.task_title || '—'}</td>
-                          <td className="px-5 py-3.5 text-text-secondary">{new Date(entry.date).toLocaleDateString('it-IT')}</td>
+                          <td className="px-5 py-3.5 text-text-secondary">{formatAuditDate(entry.date)}</td>
                           <td className="px-5 py-3.5 font-bold text-text-primary">
-                            {entry.type==='ore'?`${entry.value}h`:`€${Number(entry.value).toLocaleString('it-IT')}`}
+                            {formatAuditValue(entry)}
                           </td>
                           <td className="px-5 py-3.5">
                             <span className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border w-fit', mb.cls)}>
@@ -510,11 +567,11 @@ export default function TabulatiOrariPage() {
                               )}
                               {canManageAudit && entry.status==='pending' && (
                                 <>
-                                  <button onClick={()=>approveMut.mutate({ids:[entry.id],action:'verify'})} disabled={approveMut.isPending}
+                                  <button onClick={()=>approveMut.mutate({ items: [toAuditMutationItem(entry, 'APPROVED')] })} disabled={approveMut.isPending}
                                     className="p-1.5 rounded-lg bg-success-bg text-success-text hover:opacity-80 disabled:opacity-40" title="Approva">
                                     <CheckCircle2 size={14}/>
                                   </button>
-                                  <button onClick={()=>approveMut.mutate({ids:[entry.id],action:'reject'})} disabled={approveMut.isPending}
+                                  <button onClick={()=>approveMut.mutate({ items: [toAuditMutationItem(entry, 'REJECTED')] })} disabled={approveMut.isPending}
                                     className="p-1.5 rounded-lg bg-danger-bg text-danger-text hover:opacity-80 disabled:opacity-40" title="Rifiuta">
                                     <XCircle size={14}/>
                                   </button>

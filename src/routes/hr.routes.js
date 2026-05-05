@@ -50,7 +50,7 @@ router.patch("/api/hr/employees/:id",    authorizeRoles("ADMIN", "HR"), updateEm
 router.get("/api/hr/alerts",             authorizeRoles(...DASHBOARD_ROLES), getAlerts);
 router.get("/api/hr/users/:id/kpi",      authorizeRoles(...DASHBOARD_ROLES), validate(getKpiSchema), getUserKpi);
 
-// ─── Audit (Tabulati Orari) ───────────────────────────────────────────────────
+// ─── Audit (Tabulati) ─────────────────────────────────────────────────────────
 router.get("/api/hr/audit",              authorizeRoles("ADMIN", "HR", "PROJECT_MANAGER", "WORKER"), validate(getAuditSchema), getAudit);
 router.put("/api/hr/audit/bulk",         authorizeRoles(...DASHBOARD_ROLES), validate(auditBulkSchema), bulkUpdateAudit);
 

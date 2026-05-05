@@ -66,7 +66,7 @@ const NAV_TREE: NavNode[] = [
     icon: Users,
     children: [
       { icon: Users, label: 'Gestione Personale', path: '/hr', id: 'hr', roles: ['ADMIN', 'HR'] },
-      { icon: ClipboardList, label: 'Tabulati Orari', path: '/hr/tabulati', id: 'hr-tabulati', roles: ['ADMIN', 'HR'] },
+      { icon: ClipboardList, label: 'Tabulati', path: '/hr/tabulati', id: 'hr-tabulati', roles: ['ADMIN', 'HR'] },
       { icon: ClipboardList, label: 'Le Mie Ore / Spese', path: '/timesheets', id: 'my-timesheets', roles: ['WORKER'] },
     ],
   },

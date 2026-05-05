@@ -9,8 +9,8 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, getApiErrorMessage } from '../../lib/api';
-import { telegramKeys, hrKeys } from './queryKeys';
-import type { AuditEntry, AuditStatus } from './useHr';
+import { telegramKeys, hrKeys, employeeKeys } from './queryKeys';
+import type { AuditEntry, AuditStatus, AuditBulkItem } from './useHr';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -142,17 +142,21 @@ function isTelegramSource(method: string): boolean {
 export function useApproveTelegramEntry() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ ids, action }: { ids: number[]; action: 'verify' | 'reject' }) => {
+    mutationFn: async (payload: { items: AuditBulkItem[] } | { ids: number[]; action: 'verify' | 'reject' }) => {
       const res = await apiFetch('/api/hr/audit/bulk', {
         method: 'PUT',
-        body: JSON.stringify({ ids, action }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('Errore approvazione');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(body, 'Errore approvazione'));
+      }
       return res.json();
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: telegramKeys.all() });
       qc.invalidateQueries({ queryKey: hrKeys.all() });
+      qc.invalidateQueries({ queryKey: employeeKeys.list() });
     },
   });
 }

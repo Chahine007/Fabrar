@@ -114,6 +114,13 @@ export interface HrAlertsResponse {
 
 export type AuditType = 'ore' | 'spese';
 export type AuditStatus = 'pending' | 'verified' | 'approved' | 'rejected';
+export type AuditMutationStatus = 'APPROVED' | 'REJECTED';
+
+export interface AuditBulkItem {
+  id: number;
+  type: AuditType;
+  newStatus: AuditMutationStatus;
+}
 
 export interface AuditEntry {
   id: number;
@@ -324,14 +331,17 @@ export function usePendingSummary() {
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
 type BulkAction = 'verify' | 'reject';
+type BulkAuditPayload =
+  | { items: AuditBulkItem[] }
+  | { ids: number[]; action: BulkAction };
 
 export function useBulkAudit() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ ids, action }: { ids: number[]; action: BulkAction }) => {
+    mutationFn: async (payload: BulkAuditPayload) => {
       const res = await apiFetch('/api/hr/audit/bulk', {
         method: 'PUT',
-        body: JSON.stringify({ ids, action }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error('Errore approvazione bulk');
       return res.json();
@@ -384,8 +394,8 @@ export function useSingleAuditAction() {
   const bulk = useBulkAudit();
   return {
     ...bulk,
-    approve: (id: number) => bulk.mutateAsync({ ids: [id], action: 'verify' }),
-    reject:  (id: number) => bulk.mutateAsync({ ids: [id], action: 'reject' }),
+    approve: (id: number, type: AuditType) => bulk.mutateAsync({ items: [{ id, type, newStatus: 'APPROVED' }] }),
+    reject:  (id: number, type: AuditType) => bulk.mutateAsync({ items: [{ id, type, newStatus: 'REJECTED' }] }),
   };
 }
 

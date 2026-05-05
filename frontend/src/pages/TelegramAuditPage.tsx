@@ -17,7 +17,7 @@ import {
 import { cn } from '../lib/utils';
 import { useTelegramFeed, useApproveTelegramEntry } from '../hooks/api/useTelegramAudit';
 import { useExportCsv } from '../hooks/api/useHr';
-import type { AuditEntry, AuditStatus } from '../hooks/api/useHr';
+import type { AuditEntry, AuditStatus, AuditType } from '../hooks/api/useHr';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import { useToast } from '../components/ui';
@@ -25,10 +25,40 @@ import { useToast } from '../components/ui';
 // ─── Types & helpers ──────────────────────────────────────────────────────────
 
 type TypeFilter = 'tutti' | 'ore' | 'spese';
-type StatusFilter = 'tutti' | 'pending' | 'verified' | 'rejected';
+type StatusFilter = 'tutti' | 'pending' | 'approved' | 'rejected';
+
+function safeNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function safeTime(value: unknown) {
+  const parsed = new Date(String(value ?? '')).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatAuditDate(value: unknown) {
+  const time = safeTime(value);
+  return time ? new Date(time).toLocaleDateString('it-IT') : '—';
+}
+
+function formatAuditValue(entry: AuditEntry) {
+  const value = safeNumber(entry.value);
+  return entry.type === 'ore' ? `${value}h` : `€${value.toLocaleString('it-IT')}`;
+}
+
+function auditKey(entry: Pick<AuditEntry, 'type' | 'id'>) {
+  return `${entry.type}:${entry.id}`;
+}
+
+function toAuditMutationItem(entry: Pick<AuditEntry, 'id' | 'type'>, newStatus: 'APPROVED' | 'REJECTED') {
+  return { id: entry.id, type: entry.type as AuditType, newStatus };
+}
 
 function getMethodBadge(method: string): { label: string; icon: React.ElementType; cls: string } {
   const m = (method ?? '').toLowerCase();
+  if (m.includes('genya') || m.includes('genia') || m.includes('import'))
+    return { label: 'Import Genya', icon: Download, cls: 'bg-info-bg text-info-text border-info-border' };
   if (m.includes('audio') || m.includes('voice'))
     return { label: 'Vocale',  icon: Mic,     cls: 'bg-warning-bg text-warning-text border-warning-border' };
   if (m.includes('ocr') || m.includes('foto') || m.includes('photo'))
@@ -46,8 +76,8 @@ const KpiStrip = ({ feed, isLoading }: { feed: AuditEntry[]; isLoading: boolean 
   const today = new Date().toISOString().slice(0, 10);
 
   const todayFeed   = feed.filter(e => e.date?.startsWith(today));
-  const oreTotal    = feed.filter(e => e.type === 'ore').reduce((s, e) => s + e.value, 0);
-  const speseTotal  = feed.filter(e => e.type === 'spese').reduce((s, e) => s + e.value, 0);
+  const oreTotal    = feed.filter(e => e.type === 'ore').reduce((s, e) => s + safeNumber(e.value), 0);
+  const speseTotal  = feed.filter(e => e.type === 'spese').reduce((s, e) => s + safeNumber(e.value), 0);
   const gpsCount    = feed.filter(e => (e.input_method ?? '').toLowerCase().includes('gps')).length;
 
   const items = [
@@ -83,6 +113,7 @@ const KpiStrip = ({ feed, isLoading }: { feed: AuditEntry[]; isLoading: boolean 
 const StatusBadge = ({ status }: { status: AuditStatus }) => {
   const map: Record<AuditStatus, { label: string; cls: string }> = {
     pending:  { label: '⏳ In Attesa', cls: 'bg-warning-bg text-warning-text border border-warning-border' },
+    approved: { label: '✅ Approvato', cls: 'bg-success-bg text-success-text border border-success-border' },
     verified: { label: '✅ Approvato', cls: 'bg-success-bg text-success-text border border-success-border' },
     rejected: { label: '❌ Rifiutato', cls: 'bg-danger-bg text-danger-text border border-danger-border' },
   };
@@ -105,7 +136,7 @@ const AuditTable = ({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('tutti');
   const [sortField, setSortField]    = useState<'date' | 'value'>('date');
   const [sortDir, setSortDir]        = useState<'asc' | 'desc'>('desc');
-  const [selected, setSelected]      = useState<Set<number>>(new Set());
+  const [selected, setSelected]      = useState<Set<string>>(new Set());
 
   const approveMut = useApproveTelegramEntry();
 
@@ -122,13 +153,16 @@ const AuditTable = ({
       );
     }
     return [...data].sort((a, b) => {
-      const av = sortField === 'date' ? new Date(a.date).getTime() : a.value;
-      const bv = sortField === 'date' ? new Date(b.date).getTime() : b.value;
+      const av = sortField === 'date' ? safeTime(a.date) : safeNumber(a.value);
+      const bv = sortField === 'date' ? safeTime(b.date) : safeNumber(b.value);
       return sortDir === 'asc' ? av - bv : bv - av;
     });
   }, [feed, typeFilter, statusFilter, search, sortField, sortDir]);
 
   const pendingFiltered = filtered.filter(e => e.status === 'pending');
+  const pendingKeys = pendingFiltered.map(auditKey);
+  const selectedEntries = filtered.filter(entry => selected.has(auditKey(entry)));
+  const allPendingSelected = pendingKeys.length > 0 && pendingKeys.every(key => selected.has(key));
 
   const toggleSort = (field: 'date' | 'value') => {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -140,17 +174,25 @@ const AuditTable = ({
     return sortDir === 'asc' ? <ChevronUp size={13} /> : <ChevronDown size={13} />;
   };
 
-  const handleBulkAction = async (action: 'verify' | 'reject') => {
-    if (selected.size === 0) return;
-    await approveMut.mutateAsync({ ids: Array.from(selected), action });
+  const handleBulkAction = async (newStatus: 'APPROVED' | 'REJECTED') => {
+    if (selectedEntries.length === 0) return;
+    await approveMut.mutateAsync({ items: selectedEntries.map(entry => toAuditMutationItem(entry, newStatus)) });
     setSelected(new Set());
   };
 
-  const toggleSelect = (id: number) => {
+  const toggleSelect = (entry: AuditEntry) => {
     setSelected(prev => {
       const s = new Set(prev);
-      s.has(id) ? s.delete(id) : s.add(id);
+      const key = auditKey(entry);
+      s.has(key) ? s.delete(key) : s.add(key);
       return s;
+    });
+  };
+
+  const toggleAllPending = () => {
+    setSelected(prev => {
+      if (allPendingSelected) return new Set([...prev].filter(key => !pendingKeys.includes(key)));
+      return new Set([...prev, ...pendingKeys]);
     });
   };
 
@@ -188,7 +230,7 @@ const AuditTable = ({
 
           {/* Status Filter */}
           <div className="flex items-center gap-1 bg-background border border-border rounded-xl p-1">
-            {(['tutti', 'pending', 'verified', 'rejected'] as StatusFilter[]).map(f => (
+            {(['tutti', 'pending', 'approved', 'rejected'] as StatusFilter[]).map(f => (
               <button
                 key={f}
                 onClick={() => setStatusFilter(f)}
@@ -196,7 +238,7 @@ const AuditTable = ({
                   statusFilter === f ? 'bg-card text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary'
                 )}
               >
-                {f === 'pending' ? 'In Attesa' : f === 'verified' ? 'Approvati' : f === 'rejected' ? 'Rifiutati' : 'Tutti'}
+                {f === 'pending' ? 'In Attesa' : f === 'approved' ? 'Approvati' : f === 'rejected' ? 'Rifiutati' : 'Tutti'}
               </button>
             ))}
           </div>
@@ -204,23 +246,23 @@ const AuditTable = ({
 
         {/* Bulk Actions */}
         <div className="flex items-center gap-2">
-          {selected.size > 0 && (
+          {selectedEntries.length > 0 && (
             <>
               <motion.button
                 initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
-                onClick={() => handleBulkAction('verify')}
+                onClick={() => handleBulkAction('APPROVED')}
                 disabled={approveMut.isPending}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-white text-sm font-bold shadow-lg shadow-accent/20 hover:bg-accent/90 transition-all disabled:opacity-50"
               >
-                <CheckCircle2 size={14} /> Approva {selected.size}{approveMut.isPending && ' …'}
+                <CheckCircle2 size={14} /> Approva {selectedEntries.length}{approveMut.isPending && ' …'}
               </motion.button>
               <motion.button
                 initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
-                onClick={() => handleBulkAction('reject')}
+                onClick={() => handleBulkAction('REJECTED')}
                 disabled={approveMut.isPending}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-danger-bg text-danger-text border border-danger-border text-sm font-bold hover:opacity-80 transition-all disabled:opacity-50"
               >
-                <XCircle size={14} /> Rifiuta {selected.size}
+                <XCircle size={14} /> Rifiuta {selectedEntries.length}
               </motion.button>
             </>
           )}
@@ -246,11 +288,8 @@ const AuditTable = ({
                   <input
                     type="checkbox"
                     className="accent-accent"
-                    checked={selected.size === pendingFiltered.length && pendingFiltered.length > 0}
-                    onChange={() => {
-                      if (selected.size === pendingFiltered.length) setSelected(new Set());
-                      else setSelected(new Set(pendingFiltered.map(e => e.id)));
-                    }}
+                    checked={allPendingSelected}
+                    onChange={toggleAllPending}
                   />
                 </th>
                 <th className="px-5 py-3 text-left">Tipo</th>
@@ -282,7 +321,7 @@ const AuditTable = ({
                     key={`${entry.type}-${entry.id}`}
                     className={cn(
                       'border-b border-border/50 hover:bg-background/60 transition-colors',
-                      selected.has(entry.id) && 'bg-accent/5'
+                      selected.has(auditKey(entry)) && 'bg-accent/5'
                     )}
                   >
                     <td className="px-5 py-3.5">
@@ -290,8 +329,8 @@ const AuditTable = ({
                         <input
                           type="checkbox"
                           className="accent-accent"
-                          checked={selected.has(entry.id)}
-                          onChange={() => toggleSelect(entry.id)}
+                          checked={selected.has(auditKey(entry))}
+                          onChange={() => toggleSelect(entry)}
                         />
                       )}
                     </td>
@@ -307,10 +346,10 @@ const AuditTable = ({
                     </td>
                     <td className="px-5 py-3.5 text-text-secondary">{entry.cantiere_nome ?? '—'}</td>
                     <td className="px-5 py-3.5 text-text-secondary">
-                      {new Date(entry.date).toLocaleDateString('it-IT')}
+                      {formatAuditDate(entry.date)}
                     </td>
                     <td className="px-5 py-3.5 font-bold text-text-primary">
-                      {entry.type === 'ore' ? `${entry.value}h` : `€${Number(entry.value).toLocaleString('it-IT')}`}
+                      {formatAuditValue(entry)}
                     </td>
                     <td className="px-5 py-3.5">
                       <span className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border w-fit', methodBadge.cls)}>
@@ -324,7 +363,7 @@ const AuditTable = ({
                       {entry.status === 'pending' && (
                         <div className="flex items-center gap-1">
                           <button
-                            onClick={() => approveMut.mutate({ ids: [entry.id], action: 'verify' })}
+                            onClick={() => approveMut.mutate({ items: [toAuditMutationItem(entry, 'APPROVED')] })}
                             disabled={approveMut.isPending}
                             className="p-1.5 rounded-lg bg-success-bg text-success-text hover:opacity-80 transition-all disabled:opacity-40"
                             title="Approva"
@@ -332,7 +371,7 @@ const AuditTable = ({
                             <CheckCircle2 size={14} />
                           </button>
                           <button
-                            onClick={() => approveMut.mutate({ ids: [entry.id], action: 'reject' })}
+                            onClick={() => approveMut.mutate({ items: [toAuditMutationItem(entry, 'REJECTED')] })}
                             disabled={approveMut.isPending}
                             className="p-1.5 rounded-lg bg-danger-bg text-danger-text hover:opacity-80 transition-all disabled:opacity-40"
                             title="Rifiuta"

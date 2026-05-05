@@ -40,7 +40,7 @@ async function resolveItemsFromIds(tx, ids, action) {
     const reportEntryIds = new Set(reportEntries.map((r) => r.id));
     const spesaIds = new Set(spese.map((s) => s.id));
     const defaultStatus =
-        action === 'verify' ? ValidationStatus.VERIFIED
+        action === 'verify' ? ValidationStatus.APPROVED
         : action === 'reject' ? ValidationStatus.REJECTED
         : normalizeStatus(action);
 
@@ -86,7 +86,7 @@ export async function bulkUpdateItems(prisma, body) {
                 });
                 if (!entry) throw new DomainError(`Riga ore non trovata: ${id}`, 'NOT_FOUND');
 
-                if (newSt === ValidationStatus.VERIFIED) {
+                if (newSt === ValidationStatus.APPROVED) {
                     await enforceTariffaGuard(tx, entry.report?.employee_id);
                 }
 
@@ -95,7 +95,7 @@ export async function bulkUpdateItems(prisma, body) {
                     data: { stato_validazione: newSt, modified_by_admin_at: iso },
                 });
 
-                if (newSt === ValidationStatus.VERIFIED) {
+                if (newSt === ValidationStatus.APPROVED) {
                     events.push({
                         type: EVENTS.REPORT_ENTRY_VERIFIED,
                         payload: {

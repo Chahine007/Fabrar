@@ -77,13 +77,25 @@ function mapAuditOreRow(entry) {
     };
 }
 
+function resolveSpesaInputMethod(spesa) {
+    const fonte = normalizeOptionalText(spesa.fonte);
+    const inputMethod = normalizeOptionalText(spesa.input_method);
+    const normalizedFonte = String(fonte ?? "").toLowerCase();
+
+    if (normalizedFonte.includes("genya") || normalizedFonte.includes("genia") || normalizedFonte.includes("import")) {
+        return fonte;
+    }
+
+    return inputMethod || fonte || "manual";
+}
+
 function mapAuditSpesaRow(spesa) {
     return {
         id: spesa.id,
         type: AUDIT_TYPE.SPESE,
         // Lowercase per uniformità col frontend (AuditStatus type)
         status: resolveSpesaStatus(spesa).toLowerCase(),
-        input_method: normalizeOptionalText(spesa.input_method) || normalizeOptionalText(spesa.fonte) || "manual",
+        input_method: resolveSpesaInputMethod(spesa),
         date: spesa.timestamp_utc,
         value: toNumber(spesa.importo),
         employee_id: spesa.employee_id,

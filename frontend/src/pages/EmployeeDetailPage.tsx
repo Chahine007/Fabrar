@@ -257,8 +257,8 @@ const TabCosti = ({ emp }: { emp: EmployeeDetail }) => {
 
       {/* Tabulati Link */}
       <div className="bg-card border border-border rounded-2xl p-6">
-        <h3 className="text-sm font-bold text-text-primary uppercase tracking-wider mb-4">Tabulati Orari</h3>
-        <p className="text-sm text-text-secondary mb-4">Visualizza tutte le timbrature e le entry orarie di questo dipendente.</p>
+        <h3 className="text-sm font-bold text-text-primary uppercase tracking-wider mb-4">Tabulati</h3>
+        <p className="text-sm text-text-secondary mb-4">Visualizza tutte le ore, le spese e le timbrature di questo dipendente.</p>
         <button onClick={() => navigate(`/hr/tabulati?employee_id=${emp.id}`)}
           className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-accent text-white font-bold text-sm hover:bg-accent/90 transition-all shadow-lg shadow-accent/20">
           <Clock size={16} /> Vai ai Tabulati <ChevronRight size={16} />
