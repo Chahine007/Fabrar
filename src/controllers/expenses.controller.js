@@ -124,23 +124,43 @@ function normalizeImportHeader(header) {
         .trim()
         .toLowerCase()
         .replace(/^\uFEFF/, "")
-        .replace(/\s+/g, "_");
+        .replace(/[()]/g, "")
+        .replace(/[^\p{L}\p{N}]+/gu, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
 
     const aliases = {
         cantiere: "cantiere_id",
         cantiereid: "cantiere_id",
+        idcantiere: "cantiere_id",
         id_cantiere: "cantiere_id",
+        commessa: "cantiere_id",
+        id_commessa: "cantiere_id",
         commessa_id: "cantiere_id",
+        progetto: "cantiere_id",
+        id_progetto: "cantiere_id",
         progetto_id: "cantiere_id",
         data: "timestamp_utc",
         giorno: "timestamp_utc",
         date: "timestamp_utc",
+        data_spesa: "timestamp_utc",
+        data_documento: "timestamp_utc",
+        data_registrazione: "timestamp_utc",
         totale: "importo",
+        totale_documento: "importo",
+        importo_totale: "importo",
+        importo_eur: "importo",
+        imponibile: "importo",
         amount: "importo",
+        amount_eur: "importo",
         costo: "importo",
+        valore: "importo",
+        prezzo: "importo",
+        fornitore_ragione_sociale: "fornitore",
         supplier: "fornitore",
         vendor: "fornitore",
         note: "descrizione",
+        causale: "descrizione",
         descrizione_spesa: "descrizione",
     };
 
@@ -165,22 +185,53 @@ export function parseImportedMoney(value) {
     return Number(text);
 }
 
+function findCsvHeader(lines, fallbackCantiereId) {
+    const maxHeaderScan = Math.min(lines.length, 30);
+
+    for (let index = 0; index < maxHeaderScan; index++) {
+        const delimiter = detectCsvDelimiter(lines[index]);
+        const headers = parseCsvLine(lines[index], delimiter).map(normalizeImportHeader);
+        const hasImporto = headers.includes("importo");
+        const hasCantiere = headers.includes("cantiere_id") || Boolean(fallbackCantiereId);
+
+        if (hasImporto && hasCantiere) {
+            return { index, delimiter, headers };
+        }
+    }
+
+    return null;
+}
+
+export function parseCantiereIdFromReferer(referer) {
+    if (!referer) return null;
+    const text = String(referer);
+
+    try {
+        const url = new URL(text);
+        const match = url.pathname.match(/\/projects\/(\d+)(?:\/|$)/);
+        return match ? Number(match[1]) : null;
+    } catch {
+        const match = text.match(/\/projects\/(\d+)(?:\/|$)/);
+        return match ? Number(match[1]) : null;
+    }
+}
+
 export function parseExpenseRowsFromCsv(csvText, fallbackCantiereId = null) {
     const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
     if (lines.length <= 1) return [];
 
-    const delimiter = detectCsvDelimiter(lines[0]);
-    const headers = parseCsvLine(lines[0], delimiter).map(normalizeImportHeader);
+    const header = findCsvHeader(lines, fallbackCantiereId);
+    if (!header) return [];
 
-    return lines.slice(1).map((line) => {
-        const values = parseCsvLine(line, delimiter);
+    return lines.slice(header.index + 1).map((line) => {
+        const values = parseCsvLine(line, header.delimiter);
         const row = {};
-        headers.forEach((header, idx) => {
-            row[header] = values[idx] || null;
+        header.headers.forEach((column, idx) => {
+            row[column] = values[idx] || null;
         });
         if (!row.cantiere_id && fallbackCantiereId) row.cantiere_id = fallbackCantiereId;
         return row;
-    }).filter((row) => row.importo && row.cantiere_id);
+    }).filter((row) => row.importo && row.cantiere_id && Number.isFinite(parseImportedMoney(row.importo)));
 }
 
 export const getPricebook = asyncHandler(async (req, res) => {
@@ -219,7 +270,8 @@ export const createManualExpense = asyncHandler(async (req, res) => {
 
 export const bulkImportExpenses = asyncHandler(async (req, res) => {
     let spese_bulk = req.body.spese_bulk;
-    const fallbackCantiereId = parseIdParam(req.body.cantiere_id ?? req.query.cantiere_id);
+    const explicitCantiereId = parseIdParam(req.body.cantiere_id ?? req.query.cantiere_id);
+    const fallbackCantiereId = explicitCantiereId ?? parseCantiereIdFromReferer(req.get?.("referer") ?? req.headers?.referer);
 
     if (req.file) {
         const csvText = req.file.buffer.toString("utf-8");
@@ -227,7 +279,10 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
     }
 
     if (!Array.isArray(spese_bulk) || spese_bulk.length === 0) {
-        return res.status(400).json({ error: "Nessuna spesa fornita o CSV non valido." });
+        return res.status(400).json({
+            error: "Nessuna spesa fornita o CSV non valido.",
+            details: "Verifica che il file contenga una colonna importo/totale e un cantiere, oppure avvia l'import dal dettaglio cantiere.",
+        });
     }
 
     const uploaderEmployeeId = req.user?.employee_id;

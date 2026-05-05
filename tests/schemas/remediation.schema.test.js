@@ -8,7 +8,11 @@ import {
 import { createSupplierSchema, updateSupplierSchema } from '../../src/schemas/suppliers.schema.js';
 import { changePasswordSchema, updateUserSettingsSchema } from '../../src/schemas/user.schema.js';
 import { updateGpsSchema } from '../../src/schemas/cantiere.schema.js';
-import { parseExpenseRowsFromCsv, parseImportedMoney } from '../../src/controllers/expenses.controller.js';
+import {
+  parseCantiereIdFromReferer,
+  parseExpenseRowsFromCsv,
+  parseImportedMoney,
+} from '../../src/controllers/expenses.controller.js';
 
 describe('remediation HTTP schemas', () => {
   it('valida billing installments e invoice payload', () => {
@@ -105,5 +109,34 @@ describe('remediation HTTP schemas', () => {
       },
     ]);
     expect(parseImportedMoney(rows[0].importo)).toBe(1234.56);
+  });
+
+  it('parsa export Genya con righe introduttive e ricava il cantiere dal referer progetto', () => {
+    const cantiereId = parseCantiereIdFromReferer('https://gestionale.myfabdar.com/projects/2');
+    const rows = parseExpenseRowsFromCsv(
+      [
+        'Export Genya spese',
+        'Generato il;05/05/2026',
+        'Data Documento;Totale Documento;Fornitore Ragione Sociale;Causale',
+        '05/05/2026;"824,00";Bianchi Srl;Nolo attrezzatura',
+      ].join('\n'),
+      cantiereId
+    );
+
+    expect(cantiereId).toBe(2);
+    expect(rows).toEqual([
+      {
+        timestamp_utc: '05/05/2026',
+        importo: '824,00',
+        fornitore: 'Bianchi Srl',
+        descrizione: 'Nolo attrezzatura',
+        cantiere_id: 2,
+      },
+    ]);
+  });
+
+  it('rifiuta CSV senza cantiere quando non esiste fallback di progetto', () => {
+    const rows = parseExpenseRowsFromCsv('Data;Importo\n05/05/2026;100,00');
+    expect(rows).toEqual([]);
   });
 });
