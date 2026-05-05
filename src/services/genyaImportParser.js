@@ -1,5 +1,5 @@
 import path from "node:path";
-import ExcelJS from "exceljs";
+import JSZip from "jszip";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const DETAILED_EMPTY_MESSAGE = "Il file dettagliato Genya non contiene importi riga; usa il file semplice oppure esporta il dettaglio con valori.";
@@ -200,10 +200,11 @@ function findTableHeader(table, fallbackCantiereId) {
         const rawHeaders = table[index].map(normalizeHeaderKey);
         const headers = table[index].map(normalizeImportHeader);
         const hasImporto = headers.includes("importo");
+        const hasFornitore = headers.includes("fornitore");
         const hasCantiere = headers.includes("cantiere_id") || Boolean(fallbackCantiereId);
-        const looksLikeGenya = headers.includes("fornitore") && (rawHeaders.includes("numero_rif") || rawHeaders.includes("numero_rif_fornitore"));
+        const looksLikeGenya = hasFornitore && (rawHeaders.includes("numero_rif") || rawHeaders.includes("numero_rif_fornitore"));
 
-        if (hasImporto && (hasCantiere || looksLikeGenya || isDetailedHeader(rawHeaders))) {
+        if (hasImporto && hasFornitore && (hasCantiere || looksLikeGenya || isDetailedHeader(rawHeaders))) {
             return {
                 index,
                 headers,
@@ -286,54 +287,118 @@ export function parseExpenseRowsFromCsv(csvText, fallbackCantiereId = null) {
     return parseExpenseRowsFromTable(table, fallbackCantiereId);
 }
 
-function normalizeExcelCellValue(value) {
-    if (value == null) return null;
-    if (value instanceof Date) return value;
-    if (typeof value !== "object") return value;
-
-    if (Object.prototype.hasOwnProperty.call(value, "result")) {
-        return normalizeExcelCellValue(value.result);
-    }
-    if (typeof value.text === "string") return value.text;
-    if (Array.isArray(value.richText)) {
-        return value.richText.map((part) => part.text ?? "").join("");
-    }
-    if (typeof value.hyperlink === "string" && typeof value.text === "string") {
-        return value.text;
-    }
-
-    return String(value);
+function decodeXmlEntities(value) {
+    return String(value ?? "")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&amp;/g, "&")
+        .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+        .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)));
 }
 
-function worksheetToTable(worksheet) {
-    const rowCount = worksheet.rowCount;
-    const columnCount = worksheet.columnCount;
-    const table = [];
+function getXmlAttribute(tagAttributes, name) {
+    const match = String(tagAttributes ?? "").match(new RegExp(`(?:^|\\s)${name}=(["'])(.*?)\\1`));
+    return match ? decodeXmlEntities(match[2]) : null;
+}
 
-    for (let rowNumber = 1; rowNumber <= rowCount; rowNumber++) {
-        const row = worksheet.getRow(rowNumber);
-        const values = [];
-        for (let columnNumber = 1; columnNumber <= columnCount; columnNumber++) {
-            values.push(normalizeExcelCellValue(row.getCell(columnNumber).value));
+function columnIndexFromRef(ref) {
+    const letters = String(ref ?? "").match(/[A-Z]+/i)?.[0];
+    if (!letters) return null;
+
+    let index = 0;
+    for (const letter of letters.toUpperCase()) {
+        index = index * 26 + letter.charCodeAt(0) - 64;
+    }
+    return index;
+}
+
+function extractXmlTextNodes(xml) {
+    const texts = [];
+    const textPattern = /<(?:\w+:)?t\b[^>]*>([\s\S]*?)<\/(?:\w+:)?t>/g;
+    let match;
+    while ((match = textPattern.exec(xml)) !== null) {
+        texts.push(decodeXmlEntities(match[1]));
+    }
+    return texts;
+}
+
+async function readSharedStrings(zip) {
+    const file = zip.file("xl/sharedStrings.xml");
+    if (!file) return [];
+
+    const xml = await file.async("string");
+    const strings = [];
+    const itemPattern = /<(?:\w+:)?si\b[^>]*>([\s\S]*?)<\/(?:\w+:)?si>/g;
+    let match;
+    while ((match = itemPattern.exec(xml)) !== null) {
+        strings.push(extractXmlTextNodes(match[1]).join(""));
+    }
+    return strings;
+}
+
+function getCellValue(cellAttributes, cellXml, sharedStrings) {
+    const type = getXmlAttribute(cellAttributes, "t");
+    const inlineText = extractXmlTextNodes(cellXml).join("");
+    const valueMatch = cellXml.match(/<(?:\w+:)?v\b[^>]*>([\s\S]*?)<\/(?:\w+:)?v>/);
+    const rawValue = valueMatch ? decodeXmlEntities(valueMatch[1]) : inlineText;
+
+    if (rawValue == null || rawValue === "") return null;
+    if (type === "s") return sharedStrings[Number(rawValue)] ?? null;
+    if (type === "inlineStr") return inlineText || null;
+    return rawValue;
+}
+
+function worksheetXmlToTable(xml, sharedStrings) {
+    const rows = [];
+    const rowPattern = /<(?:\w+:)?row\b[^>]*>([\s\S]*?)<\/(?:\w+:)?row>/g;
+    let rowMatch;
+
+    while ((rowMatch = rowPattern.exec(xml)) !== null) {
+        const cells = [];
+        let sequentialColumn = 1;
+        const cellPattern = /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
+        let cellMatch;
+
+        while ((cellMatch = cellPattern.exec(rowMatch[1])) !== null) {
+            const attributes = cellMatch[1] ?? "";
+            const cellXml = cellMatch[2] ?? "";
+            const refColumn = columnIndexFromRef(getXmlAttribute(attributes, "r"));
+            const columnIndex = refColumn ?? sequentialColumn;
+            cells[columnIndex - 1] = getCellValue(attributes, cellXml, sharedStrings);
+            sequentialColumn = columnIndex + 1;
         }
-        table.push(values);
+
+        rows.push(cells);
     }
 
-    return table;
+    return rows;
+}
+
+function sortWorksheetPaths(paths) {
+    return [...paths].sort((a, b) => {
+        const aNumber = Number(a.match(/sheet(\d+)\.xml$/)?.[1] ?? 0);
+        const bNumber = Number(b.match(/sheet(\d+)\.xml$/)?.[1] ?? 0);
+        return aNumber - bNumber || a.localeCompare(b);
+    });
 }
 
 export async function parseExpenseRowsFromXlsx(buffer, fallbackCantiereId = null) {
-    const workbook = new ExcelJS.Workbook();
+    let zip;
     try {
-        await workbook.xlsx.load(buffer);
+        zip = await JSZip.loadAsync(buffer);
     } catch {
         throw new GenyaImportFormatError("File XLSX Genya non leggibile. Esporta nuovamente il file da One Click Genia e riprova.");
     }
 
-    const sheets = workbook.worksheets.map((worksheet) => ({
-        sheet: worksheet.name,
-        data: worksheetToTable(worksheet),
-    }));
+    const sharedStrings = await readSharedStrings(zip);
+    const worksheetPaths = sortWorksheetPaths(Object.keys(zip.files).filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(name)));
+    const sheets = [];
+    for (const worksheetPath of worksheetPaths) {
+        const xml = await zip.file(worksheetPath).async("string");
+        sheets.push({ sheet: worksheetPath, data: worksheetXmlToTable(xml, sharedStrings) });
+    }
 
     let detailedEmptyError = null;
     for (const sheet of sheets) {

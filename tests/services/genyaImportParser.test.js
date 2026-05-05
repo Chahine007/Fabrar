@@ -1,17 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import {
   parseExpenseRowsFromUploadedFile,
   parseExpenseRowsFromXlsx,
 } from '../../src/services/genyaImportParser.js';
 
+function escapeXml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function cellXml(value) {
+  if (value == null) return '<c t="s"><v>0</v></c>';
+  if (typeof value === 'number') return `<c><v>${value}</v></c>`;
+  return `<c t="str"><v>${escapeXml(value)}</v></c>`;
+}
+
 async function buildWorkbookBuffer(sheets) {
-  const workbook = new ExcelJS.Workbook();
-  for (const sheet of sheets) {
-    const worksheet = workbook.addWorksheet(sheet.name);
-    sheet.rows.forEach((row) => worksheet.addRow(row));
-  }
-  return Buffer.from(await workbook.xlsx.writeBuffer());
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="utf-8"?><x:Types xmlns:x="http://schemas.openxmlformats.org/package/2006/content-types"></x:Types>');
+  zip.file('xl/sharedStrings.xml', '<?xml version="1.0" encoding="utf-8"?><x:sst count="1" uniqueCount="1" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:si><x:t></x:t></x:si></x:sst>');
+
+  sheets.forEach((sheet, index) => {
+    const rows = sheet.rows.map((row) => `<row>${row.map(cellXml).join('')}</row>`).join('');
+    zip.file(`xl/worksheets/sheet${index + 1}.xml`, `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`);
+  });
+
+  return zip.generateAsync({ type: 'nodebuffer' });
 }
 
 describe('Genya import parser XLSX', () => {

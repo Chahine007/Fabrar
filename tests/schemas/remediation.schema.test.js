@@ -195,4 +195,13 @@ describe('remediation HTTP schemas', () => {
       }),
     ]);
   });
+
+  it('non tratta export fatture clienti come import spese Genya', () => {
+    const rows = parseExpenseRowsFromCsv([
+      '"Tipo Documento","Anno","Numero","Data","Cliente","Numero riga","Descrizione","Prezzo Tot.","Stato"',
+      '"Fattura","2026","7","46099","Tahiti Spa","1","Acconto lavori","9242.17","A scadere"',
+    ].join('\n'), 2);
+
+    expect(rows).toEqual([]);
+  });
 });
