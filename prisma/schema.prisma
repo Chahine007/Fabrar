@@ -133,6 +133,8 @@ model WbsNode {
   spese               Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
   rate                Rata[]
+
+  @@index([cantiere_id])
 }
 
 model Report {
@@ -161,6 +163,8 @@ model Report {
   entries  ReportEntry[]
 
   @@unique([employee_id, report_date])
+  @@index([employee_id])
+  @@index([cantiere_id])
 }
 
 model ReportEntry {
@@ -188,6 +192,10 @@ model ReportEntry {
   cantiere Cantiere? @relation(fields: [cantiere_id], references: [id])
   wbs_node WbsNode?  @relation(fields: [wbs_node_id], references: [id])
   task     Task?     @relation(fields: [task_id], references: [id])
+
+  @@index([report_id])
+  @@index([cantiere_id])
+  @@index([wbs_node_id])
 }
 
 model Spesa {
@@ -216,6 +224,10 @@ model Spesa {
   wbs_node  WbsNode?   @relation(fields: [wbs_node_id], references: [id])
   task      Task?      @relation(fields: [task_id], references: [id])
   documento Document?  @relation(fields: [documento_id], references: [id])
+
+  @@index([employee_id])
+  @@index([cantiere_id])
+  @@index([wbs_node_id])
 }
 
 model Tariffa {
@@ -225,6 +237,8 @@ model Tariffa {
   valido_dal   DateTime @db.Date
 
   employee Employee? @relation(fields: [employee_id], references: [id])
+
+  @@index([employee_id])
 }
 
 model Pricebook {
@@ -455,6 +469,7 @@ model Giacenza {
   ubicazione Ubicazione @relation(fields: [ubicazione_id], references: [id])
 
   @@unique([articolo_id, ubicazione_id])
+  @@index([articolo_id])
 }
 
 enum TipoMovimento {
@@ -505,6 +520,9 @@ model MovimentoMagazzino {
   esecutore     User        @relation(fields: [esecutore_id], references: [id])
   documento     Document?   @relation(fields: [documento_id], references: [id])
   fornitore     Fornitore?  @relation(fields: [fornitore_id], references: [id])
+
+  @@index([articolo_id])
+  @@index([cantiere_id])
 }
 
 model RichiestaMateriale {

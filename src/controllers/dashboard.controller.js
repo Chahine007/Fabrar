@@ -3,7 +3,7 @@ import { round2, toNumber } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { getPendingSummary } from "./hr.controller.js";
 import { ValidationStatus } from "../constants.js";
-import { getProjectFinancials } from "../domain/finance/financeService.js";
+import { getMultiProjectFinancials } from "../domain/finance/financeService.js";
 
 export const getRadar = asyncHandler(async (req, res) => {
     const prisma = getDb();
@@ -72,10 +72,24 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
         where: { attivo: 1 },
         select: { id: true, nome: true, budget: true, valore_contratto: true },
     });
+    const financialMap = await getMultiProjectFinancials(prisma, cantieri.map((c) => c.id), cantieri);
 
-    const cantieriAnalysis = await Promise.all(
-        cantieri.map(async (c) => {
-            const financials = await getProjectFinancials(c.id);
+    const cantieriAnalysis = cantieri.map((c) => {
+            const financials = financialMap[c.id] ?? {
+                costoTotale: 0,
+                costoManodopera: 0,
+                costoMateriali: 0,
+                costoSpese: 0,
+                totaleContratto: round2(toNumber(c.valore_contratto ?? c.budget)),
+                totaleFatturato: 0,
+                totaleIncassato: 0,
+                daFatturare: 0,
+                ricaviFatturati: 0,
+                ricaviReali: 0,
+                marginePrevisto: 0,
+                margineFatturato: 0,
+                margineIncassato: 0,
+            };
             const ricavoPrevisto = financials.totaleContratto;
             const costi = {
                 costoTotale: financials.costoTotale,
@@ -110,8 +124,7 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
                 burnRate,
                 cpi,
             };
-        })
-    );
+        });
 
     const budgetTotale = round2(cantieriAnalysis.reduce((s, c) => s + c.valoreContratto, 0));
     const costiTotali = round2(cantieriAnalysis.reduce((s, c) => s + c.costo, 0));

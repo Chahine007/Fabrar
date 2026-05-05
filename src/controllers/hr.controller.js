@@ -38,16 +38,16 @@ export async function getPendingSummary(prisma) {
                 stato_validazione: ValidationStatus.PENDING,
             },
         }),
-        prisma.spesa.findMany({
-            select: {
-                stato_validazione: true,
+        prisma.spesa.count({
+            where: {
+                stato_validazione: ValidationStatus.PENDING,
             },
         }),
     ]);
 
     return {
         reports,
-        spese: spese.filter(isPendingSpesa).length,
+        spese,
     };
 }
 

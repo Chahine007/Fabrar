@@ -62,6 +62,10 @@ function decimalToNumber(value) {
   return Number(value);
 }
 
+function roundMoney(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
 function normalizeUserRole(role, fallback = null) {
   if (typeof role !== "string") return fallback;
   const normalized = role.trim().toUpperCase();
@@ -325,45 +329,86 @@ export async function insertSpesa(employeeId, cantiereId, importo, fornitore, de
   return created.id;
 }
 
-export async function getCantieriStatus({ activeOnly = true } = {}) {
-  // We rewrite the complex dashboard logic in a Prisma query that computes things properly
-  const cantieri = await prisma.cantiere.findMany({
+async function getApprovedLaborCostByCantiere(prismaClient, cantiereIds) {
+  if (cantiereIds.length === 0) return [];
+
+  return prismaClient.$queryRaw(
+    Prisma.sql`
+      WITH latest_tariffe AS (
+        SELECT employee_id, costo_orario
+        FROM (
+          SELECT
+            employee_id,
+            costo_orario,
+            ROW_NUMBER() OVER (
+              PARTITION BY employee_id
+              ORDER BY valido_dal DESC, id DESC
+            ) AS rn
+          FROM "Tariffa"
+          WHERE employee_id IS NOT NULL
+        ) ranked_tariffe
+        WHERE rn = 1
+      )
+      SELECT
+        re.cantiere_id,
+        COALESCE(SUM(COALESCE(re.ore_lavorate, 0) * COALESCE(lt.costo_orario, 0)), 0) AS costo_manodopera
+      FROM "ReportEntry" re
+      INNER JOIN "Report" r ON r.id = re.report_id
+      LEFT JOIN latest_tariffe lt ON lt.employee_id = r.employee_id
+      WHERE re.cantiere_id IN (${Prisma.join(cantiereIds)})
+        AND re.stato_validazione = ${ValidationStatus.APPROVED}
+      GROUP BY re.cantiere_id
+    `
+  );
+}
+
+function buildStatusMoneyMap(rows, getValue) {
+  const map = new Map();
+
+  for (const row of rows ?? []) {
+    const cantiereId = Number(row?.cantiere_id);
+    if (!Number.isInteger(cantiereId) || cantiereId <= 0) continue;
+    map.set(cantiereId, roundMoney(decimalToNumber(getValue(row))));
+  }
+
+  return map;
+}
+
+export async function getCantieriStatus({ activeOnly = true } = {}, prismaClient = prisma) {
+  const cantieri = await prismaClient.cantiere.findMany({
     ...(activeOnly ? { where: { attivo: 1 } } : {}),
-    include: {
-      report_entries: {
-        where: { stato_validazione: { in: [ValidationStatus.APPROVED] } },
-        include: { report: { include: { employee: { include: { tariffe: { orderBy: { valido_dal: 'desc' }, take: 1 } } } } } }
-      },
-      spese: {
-        where: {
-          NOT: { stato_validazione: ValidationStatus.REJECTED },
-        }
-      }
-    },
+    select: { id: true, nome: true, budget: true },
     orderBy: { nome: 'asc' }
   });
 
+  const cantiereIds = cantieri.map((c) => c.id);
+  if (cantiereIds.length === 0) return [];
+
+  const [laborRows, expenseRows] = await Promise.all([
+    getApprovedLaborCostByCantiere(prismaClient, cantiereIds),
+    prismaClient.spesa.groupBy({
+      by: ["cantiere_id"],
+      where: {
+        cantiere_id: { in: cantiereIds },
+        NOT: { stato_validazione: ValidationStatus.REJECTED },
+      },
+      _sum: { importo: true },
+    }),
+  ]);
+
+  const laborMap = buildStatusMoneyMap(laborRows, (row) => row.costo_manodopera);
+  const expenseMap = buildStatusMoneyMap(expenseRows, (row) => row._sum?.importo);
+
   return cantieri.map(c => {
-    let costo_manodopera = 0;
-    let costo_materiali = 0;
-
-    for (const re of c.report_entries) {
-      if (!re.ore_lavorate) continue;
-      const t = decimalToNumber(re.report?.employee?.tariffe?.[0]?.costo_orario) || 0;
-      costo_manodopera += re.ore_lavorate * t;
-    }
-
-    for (const s of c.spese) {
-      costo_materiali += decimalToNumber(s.importo) || 0;
-    }
-
+    const costo_manodopera = laborMap.get(c.id) ?? 0;
+    const costo_materiali = expenseMap.get(c.id) ?? 0;
     return {
       id: c.id,
       nome: c.nome,
       budget: decimalToNumber(c.budget) || 0,
       costo_manodopera,
       costo_materiali,
-      costo_totale: costo_manodopera + costo_materiali
+      costo_totale: roundMoney(costo_manodopera + costo_materiali)
     };
   });
 }
