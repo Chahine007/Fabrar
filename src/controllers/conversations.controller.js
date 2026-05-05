@@ -1,5 +1,5 @@
 import { getDb } from "../db/index.js";
-import { getActiveSockets } from "../sockets/index.js";
+import { employeeRoom } from "../sockets/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { parsePagination } from "../utils/pagination.js";
 
@@ -366,20 +366,15 @@ export const createMessage = asyncHandler(async (req, res) => {
     const io = req.app.get("io");
     if (io) {
         for (const conversationParticipant of participants) {
-            const activeSockets = getActiveSockets(conversationParticipant.employee_id);
-            if (activeSockets.length === 0) continue;
+            io.to(employeeRoom(conversationParticipant.employee_id)).emit("new_message", {
+                conversationId: id,
+                message: newMessage,
+            });
 
-            for (const socketId of activeSockets) {
-                io.to(socketId).emit("new_message", {
-                    conversationId: id,
-                    message: newMessage,
-                });
-
-                io.to(socketId).emit("conversation_updated", {
-                    conversationId: id,
-                    unreadCount: conversationParticipant.unread_count,
-                });
-            }
+            io.to(employeeRoom(conversationParticipant.employee_id)).emit("conversation_updated", {
+                conversationId: id,
+                unreadCount: conversationParticipant.unread_count,
+            });
         }
     }
 

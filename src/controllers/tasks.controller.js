@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { formatEmployeeName } from "../utils/helpers.js";
 import { round2 } from "../utils/helpers.js";
 import { getTaskCostsMap } from "../domain/finance/financeService.js";
+import { canAccessCantiere } from "../domain/shared/accessControl.js";
 
 const TASK_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WORKER"];
 
@@ -119,13 +120,31 @@ function buildTaskInclude() {
 export const getAllTasks = asyncHandler(async (req, res) => {
   const prisma = getDb();
   const { cantiere_id, status, assignee_id, priority } = req.query;
+  const role = req.user?.role;
+  const userId = Number(req.user?.id);
+  const employeeId = Number(req.user?.employee_id);
+  const requestedCantiereId = cantiere_id != null ? Number(cantiere_id) : null;
+
+  if (requestedCantiereId && !(await canAccessCantiere(prisma, req.user, requestedCantiereId, {
+    globalRoles: ["ADMIN", "HR"],
+    ownerRoles: ["PROJECT_MANAGER"],
+  })) && role !== "WORKER") {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+  }
+
+  if (role === "WORKER" && (!Number.isInteger(employeeId) || employeeId <= 0)) {
+    return res.status(403).json({ error: "Utente non collegato a un dipendente." });
+  }
 
   const tasks = await prisma.task.findMany({
     where: {
-      ...(cantiere_id != null ? { cantiere_id: Number(cantiere_id) } : {}),
+      ...(requestedCantiereId != null ? { cantiere_id: requestedCantiereId } : {}),
       ...(status ? { status } : {}),
       ...(priority ? { priority } : {}),
-      ...(assignee_id != null ? { assignee_id: Number(assignee_id) } : {}),
+      ...(role === "WORKER" ? { assignee_id: employeeId } : assignee_id != null ? { assignee_id: Number(assignee_id) } : {}),
+      ...(role === "PROJECT_MANAGER" && !requestedCantiereId
+        ? { cantiere: { OR: [{ pm_id: userId }, { site_manager_id: userId }] } }
+        : {}),
     },
     include: buildTaskInclude(),
     orderBy: [{ cantiere_id: "asc" }, { updated_at: "desc" }, { id: "desc" }],
@@ -154,9 +173,19 @@ export const createTask = asyncHandler(async (req, res) => {
     costo_previsto = null,
   } = req.body;
 
+  if (req.user?.role === "WORKER") {
+    return res.status(403).json({ error: "I WORKER non possono creare task." });
+  }
+
   const cantiereId = Number(cantiere_id);
   if (!(await ensureCantiereExists(prisma, cantiereId))) {
     return res.status(404).json({ error: "Cantiere non trovato." });
+  }
+  if (!(await canAccessCantiere(prisma, req.user, cantiereId, {
+    globalRoles: ["ADMIN", "HR"],
+    ownerRoles: ["PROJECT_MANAGER"],
+  }))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
   }
 
   if (!(await ensureEmployeeExists(prisma, assignee_id))) {
@@ -195,6 +224,18 @@ export const updateTask = asyncHandler(async (req, res) => {
   }
 
   const isWorker = req.user?.role === "WORKER";
+  if (isWorker) {
+    const employeeId = Number(req.user?.employee_id);
+    if (!Number.isInteger(employeeId) || task.assignee_id !== employeeId) {
+      return res.status(403).json({ error: "I WORKER possono modificare solo task assegnati a loro." });
+    }
+  } else if (!(await canAccessCantiere(prisma, req.user, task.cantiere_id, {
+    globalRoles: ["ADMIN", "HR"],
+    ownerRoles: ["PROJECT_MANAGER"],
+  }))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+  }
+
   const nextData = isWorker
     ? Object.fromEntries(Object.entries(req.body).filter(([key]) => key === "status"))
     : Object.fromEntries(
@@ -209,6 +250,9 @@ export const updateTask = asyncHandler(async (req, res) => {
 
   if (nextData.cantiere_id != null) {
     const cantiereId = Number(nextData.cantiere_id);
+    if (cantiereId !== task.cantiere_id && req.user?.role !== "ADMIN") {
+      return res.status(403).json({ error: "Solo ADMIN può spostare task tra cantieri." });
+    }
     if (!(await ensureCantiereExists(prisma, cantiereId))) {
       return res.status(404).json({ error: "Cantiere non trovato." });
     }
@@ -245,11 +289,17 @@ export const deleteTask = asyncHandler(async (req, res) => {
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    select: { id: true },
+    select: { id: true, cantiere_id: true },
   });
 
   if (!task) {
     return res.status(404).json({ error: "Task non trovato." });
+  }
+  if (!(await canAccessCantiere(prisma, req.user, task.cantiere_id, {
+    globalRoles: ["ADMIN", "HR"],
+    ownerRoles: ["PROJECT_MANAGER"],
+  }))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
   }
 
   await prisma.task.delete({

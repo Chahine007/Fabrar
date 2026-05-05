@@ -18,7 +18,7 @@ import {
 } from "../controllers/magazzino.controller.js";
 
 const router = express.Router();
-const WAREHOUSE_MUTATION_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN"];
+const WAREHOUSE_MUTATION_ROLES = ["ADMIN", "PROJECT_MANAGER", "WAREHOUSEMAN"];
 
 const requireAuth = verifyTokenAndRole();
 const requireWarehouseMutationRole = verifyTokenAndRole(WAREHOUSE_MUTATION_ROLES);

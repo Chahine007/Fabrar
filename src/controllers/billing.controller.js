@@ -3,9 +3,10 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { normalizeOptionalText, parseIdParam, round2, toNumber } from "../utils/helpers.js";
 import { getProjectFinancials } from "../domain/finance/financeService.js";
 import { ensureWbsBelongsToCantiere } from "../domain/shared/linkValidators.js";
+import { canAccessCantiere } from "../domain/shared/accessControl.js";
 
-const INSTALLMENT_STATUSES = ["PENDING", "INVOICED", "PAID"];
-const INVOICE_STATUSES = ["DRAFT", "ISSUED", "PAID"];
+const MUTABLE_INSTALLMENT_STATUSES = ["PENDING"];
+const INVOICE_STATUSES = ["DRAFT", "ISSUED"];
 
 function parsePositiveInt(value) {
   const parsed = Number(value);
@@ -15,6 +16,12 @@ function parsePositiveInt(value) {
 function parseOptionalPositiveInt(value) {
   if (value == null || value === "") return null;
   return parsePositiveInt(value);
+}
+
+function httpError(message, status = 400) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
 }
 
 function parseDateValue(value, fieldName, { allowNull = true } = {}) {
@@ -96,6 +103,13 @@ async function ensureCantiereExists(prisma, cantiereId) {
   return cantiere;
 }
 
+async function ensureBillingAccess(prisma, user, cantiereId) {
+  return canAccessCantiere(prisma, user, cantiereId, {
+    globalRoles: ["ADMIN"],
+    ownerRoles: ["PROJECT_MANAGER"],
+  });
+}
+
 async function ensureDocumentBelongsToCantiere(prisma, documentId, cantiereId) {
   if (documentId == null) return true;
 
@@ -108,20 +122,6 @@ async function ensureDocumentBelongsToCantiere(prisma, documentId, cantiereId) {
   });
 
   return Boolean(document);
-}
-
-async function ensureInvoiceBelongsToCantiere(prisma, invoiceId, cantiereId) {
-  if (invoiceId == null) return true;
-
-  const invoice = await prisma.fattura.findFirst({
-    where: {
-      id: invoiceId,
-      cantiere_id: cantiereId,
-    },
-    select: { id: true },
-  });
-
-  return Boolean(invoice);
 }
 
 function buildBillingInclude() {
@@ -189,6 +189,9 @@ export const getProjectBilling = asyncHandler(async (req, res) => {
   if (!cantiere) {
     return res.status(404).json({ error: "Cantiere non trovato." });
   }
+  if (!(await ensureBillingAccess(prisma, req.user, cantiereId))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+  }
 
   const [rate, fatture, financials] = await Promise.all([
     prisma.rata.findMany({
@@ -233,6 +236,9 @@ export const createInstallment = asyncHandler(async (req, res) => {
   if (!cantiere) {
     return res.status(404).json({ error: "Cantiere non trovato." });
   }
+  if (!(await ensureBillingAccess(prisma, req.user, cantiereId))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+  }
 
   const nome = normalizeOptionalText(req.body.nome);
   if (!nome) {
@@ -244,9 +250,9 @@ export const createInstallment = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "Nodo WBS non valido per questo cantiere." });
   }
 
-  const status = normalizeEnumValue(req.body.stato, INSTALLMENT_STATUSES, "PENDING");
+  const status = normalizeEnumValue(req.body.stato, MUTABLE_INSTALLMENT_STATUSES, "PENDING");
   if (!status) {
-    return res.status(400).json({ error: "Stato rata non valido." });
+    return res.status(400).json({ error: "Le rate possono essere create solo in stato PENDING." });
   }
 
   let importoPrevisto;
@@ -292,11 +298,15 @@ export const updateInstallment = asyncHandler(async (req, res) => {
       cantiere_id: true,
       wbs_node_id: true,
       fattura_id: true,
+      stato: true,
     },
   });
 
   if (!existing) {
     return res.status(404).json({ error: "Rata non trovata." });
+  }
+  if (!(await ensureBillingAccess(prisma, req.user, existing.cantiere_id))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
   }
 
   const data = {};
@@ -334,9 +344,12 @@ export const updateInstallment = asyncHandler(async (req, res) => {
   }
 
   if (Object.prototype.hasOwnProperty.call(req.body, "stato")) {
-    const status = normalizeEnumValue(req.body.stato, INSTALLMENT_STATUSES, null);
+    const status = normalizeEnumValue(req.body.stato, MUTABLE_INSTALLMENT_STATUSES, null);
     if (!status) {
-      return res.status(400).json({ error: "Stato rata non valido." });
+      return res.status(400).json({ error: "Lo stato rata è gestito dal flusso di fatturazione." });
+    }
+    if (existing.stato !== "PENDING" || existing.fattura_id != null) {
+      return res.status(409).json({ error: "Rata già collegata al flusso di fatturazione." });
     }
     data.stato = status;
   }
@@ -347,14 +360,6 @@ export const updateInstallment = asyncHandler(async (req, res) => {
       return res.status(400).json({ error: "Nodo WBS non valido per questo cantiere." });
     }
     data.wbs_node_id = wbsNodeId;
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body, "fattura_id")) {
-    const fatturaId = parseOptionalPositiveInt(req.body.fattura_id);
-    if (!(await ensureInvoiceBelongsToCantiere(prisma, fatturaId, existing.cantiere_id))) {
-      return res.status(400).json({ error: "Fattura non valida per questo cantiere." });
-    }
-    data.fattura_id = fatturaId;
   }
 
   if (Object.keys(data).length === 0) {
@@ -381,6 +386,9 @@ export const createInvoice = asyncHandler(async (req, res) => {
   const cantiere = await ensureCantiereExists(prisma, cantiereId);
   if (!cantiere) {
     return res.status(404).json({ error: "Cantiere non trovato." });
+  }
+  if (!(await ensureBillingAccess(prisma, req.user, cantiereId))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
   }
 
   const stato = normalizeEnumValue(req.body.stato, INVOICE_STATUSES, "DRAFT");
@@ -416,17 +424,20 @@ export const createInvoice = asyncHandler(async (req, res) => {
         select: {
           id: true,
           fattura_id: true,
+          stato: true,
           importo_previsto: true,
         },
       });
 
       if (selectedInstallments.length !== installmentIds.length) {
-        throw new Error("Una o più rate selezionate non esistono o non appartengono al cantiere.");
+        throw httpError("Una o più rate selezionate non esistono o non appartengono al cantiere.", 400);
       }
 
-      const alreadyLinked = selectedInstallments.find((installment) => installment.fattura_id != null);
-      if (alreadyLinked) {
-        throw new Error(`La rata ${alreadyLinked.id} è già collegata a una fattura.`);
+      const blocked = selectedInstallments.find(
+        (installment) => installment.fattura_id != null || installment.stato !== "PENDING"
+      );
+      if (blocked) {
+        throw httpError(`La rata ${blocked.id} non è fatturabile nello stato corrente.`, 409);
       }
     }
 
@@ -458,16 +469,22 @@ export const createInvoice = asyncHandler(async (req, res) => {
     });
 
     if (installmentIds.length > 0) {
-      await tx.rata.updateMany({
+      const updatedInstallments = await tx.rata.updateMany({
         where: {
           id: { in: installmentIds },
           cantiere_id: cantiereId,
+          fattura_id: null,
+          stato: "PENDING",
         },
         data: {
           fattura_id: fattura.id,
           stato: "INVOICED",
         },
       });
+
+      if (updatedInstallments.count !== installmentIds.length) {
+        throw httpError("Una o più rate sono già state fatturate da un'altra operazione.", 409);
+      }
     }
 
     return tx.fattura.findUnique({

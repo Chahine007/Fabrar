@@ -22,6 +22,18 @@ describe('remediation HTTP schemas', () => {
       query: {},
       body: { stato: 'ISSUED', installment_ids: ['1', 2] },
     }).body.installment_ids).toEqual([1, 2]);
+
+    expect(createInstallmentSchema.safeParse({
+      params: { cantiereId: 3 },
+      query: {},
+      body: { nome: 'SAL 2', importo_previsto: 1000, stato: 'PAID' },
+    }).success).toBe(false);
+
+    expect(createInvoiceSchema.safeParse({
+      params: { cantiereId: 3 },
+      query: {},
+      body: { stato: 'PAID', importo_totale: 1000 },
+    }).success).toBe(false);
   });
 
   it('rifiuta richieste materiali senza righe e status FULFILLED sul cambio stato', () => {

@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { createDischargeInTransaction } from "../domain/magazzino/warehouseService.js";
 import { domainBus, EVENTS } from "../domain/events/domainBus.js";
 import { parsePagination, positiveCursor } from "../utils/pagination.js";
+import { canAccessCantiere } from "../domain/shared/accessControl.js";
 
 const REQUEST_STATUSES = ["PENDING", "APPROVED", "REJECTED", "FULFILLED"];
 
@@ -71,6 +72,7 @@ async function ensureRequestInput(prisma, body) {
   const cantiereId = parsePositiveInt(body.cantiere_id);
   const taskId = parsePositiveInt(body.task_id);
   const righe = normalizeLines(body.righe ?? body.lines ?? body.items);
+  let task = null;
 
   if (!cantiereId) {
     throw httpError("cantiere_id obbligatorio o non valido.", 400);
@@ -90,12 +92,12 @@ async function ensureRequestInput(prisma, body) {
   }
 
   if (taskId) {
-    const task = await prisma.task.findFirst({
+    task = await prisma.task.findFirst({
       where: {
         id: taskId,
         cantiere_id: cantiereId,
       },
-      select: { id: true },
+      select: { id: true, assignee_id: true },
     });
 
     if (!task) {
@@ -112,7 +114,7 @@ async function ensureRequestInput(prisma, body) {
     throw httpError("Uno o più articoli non esistono.", 404);
   }
 
-  return { cantiereId, taskId, righe };
+  return { cantiereId, taskId, task, righe };
 }
 
 export const createRequest = asyncHandler(async (req, res) => {
@@ -123,7 +125,18 @@ export const createRequest = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "Utente non collegato a un dipendente." });
   }
 
-  const { cantiereId, taskId, righe } = await ensureRequestInput(prisma, req.body);
+  const { cantiereId, taskId, task, righe } = await ensureRequestInput(prisma, req.body);
+
+  if (req.user?.role === "WORKER") {
+    if (!taskId || task?.assignee_id !== richiedenteId) {
+      return res.status(403).json({ error: "I WORKER possono richiedere materiali solo per task assegnati a loro." });
+    }
+  } else if (!(await canAccessCantiere(prisma, req.user, cantiereId, {
+    globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
+    ownerRoles: ["PROJECT_MANAGER"],
+  }))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+  }
 
   const richiesta = await prisma.$transaction(async (tx) => {
     return tx.richiestaMateriale.create({
@@ -163,10 +176,19 @@ export const getRequests = asyncHandler(async (req, res) => {
   if (role === "WORKER" && !employeeId) {
     return res.status(403).json({ error: "Utente non collegato a un dipendente." });
   }
+  if (role === "PROJECT_MANAGER" && cantiereId && !(await canAccessCantiere(prisma, req.user, cantiereId, {
+    globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
+    ownerRoles: ["PROJECT_MANAGER"],
+  }))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+  }
 
   const requests = await prisma.richiestaMateriale.findMany({
     where: {
       ...(role === "WORKER" ? { richiedente_id: employeeId } : {}),
+      ...(role === "PROJECT_MANAGER" && !cantiereId
+        ? { cantiere: { OR: [{ pm_id: Number(req.user?.id) }, { site_manager_id: Number(req.user?.id) }] } }
+        : {}),
       ...(status ? { status } : {}),
       ...(cantiereId ? { cantiere_id: cantiereId } : {}),
     },
@@ -200,16 +222,41 @@ export const updateRequestStatus = asyncHandler(async (req, res) => {
 
   const existing = await prisma.richiestaMateriale.findUnique({
     where: { id: requestId },
-    select: { id: true },
+    select: {
+      id: true,
+      cantiere_id: true,
+      richiedente_id: true,
+      status: true,
+    },
   });
 
   if (!existing) {
     return res.status(404).json({ error: "Richiesta materiale non trovata." });
   }
+  if (!(await canAccessCantiere(prisma, req.user, existing.cantiere_id, {
+    globalRoles: ["ADMIN"],
+    ownerRoles: ["PROJECT_MANAGER"],
+  }))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+  }
+  if (existing.richiedente_id === parsePositiveInt(req.user?.employee_id) && req.user?.role !== "ADMIN") {
+    return res.status(403).json({ error: "Non puoi approvare o respingere una richiesta creata da te." });
+  }
+  if (existing.status !== "PENDING") {
+    return res.status(409).json({ error: "Solo le richieste PENDING possono cambiare stato da questo endpoint." });
+  }
 
-  const richiesta = await prisma.richiestaMateriale.update({
-    where: { id: requestId },
+  const updated = await prisma.richiestaMateriale.updateMany({
+    where: { id: requestId, status: "PENDING" },
     data: { status: nextStatus },
+  });
+
+  if (updated.count !== 1) {
+    return res.status(409).json({ error: "La richiesta è già stata aggiornata da un'altra operazione." });
+  }
+
+  const richiesta = await prisma.richiestaMateriale.findUnique({
+    where: { id: requestId },
     include: materialRequestInclude(),
   });
 
@@ -244,6 +291,13 @@ export const fulfillRequest = asyncHandler(async (req, res) => {
 
     if (!richiesta) {
       throw httpError("Richiesta materiale non trovata.", 404);
+    }
+
+    if (!(await canAccessCantiere(tx, req.user, richiesta.cantiere_id, {
+      globalRoles: ["ADMIN", "WAREHOUSEMAN"],
+      ownerRoles: ["PROJECT_MANAGER"],
+    }))) {
+      throw httpError("Accesso negato al cantiere richiesto.", 403);
     }
 
     if (richiesta.status !== "APPROVED") {

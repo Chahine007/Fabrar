@@ -20,6 +20,14 @@ const DEFAULT_USER_SETTINGS = {
   },
 };
 
+function generateTelegramPairingToken() {
+  return `TG-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(16).toString("hex").toUpperCase()}`;
+}
+
+function hashTelegramPairingToken(code) {
+  return crypto.createHash("sha256").update(String(code).trim().toUpperCase()).digest("hex");
+}
+
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -270,13 +278,11 @@ export const generateTelegramCode = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Nessun profilo dipendente collegato a questo account." });
   }
 
-  // Genera un codice alfanumerico di 4 caratteri (es. A1B2) e prependiamo TG-
-  const randomPart = crypto.randomBytes(2).toString("hex").toUpperCase();
-  const code = `TG-${randomPart}`;
+  const code = generateTelegramPairingToken();
 
   await prisma.employee.update({
     where: { id: emp.id },
-    data: { telegram_pairing_code: code },
+    data: { telegram_pairing_code: hashTelegramPairingToken(code) },
   });
 
   logger.info(

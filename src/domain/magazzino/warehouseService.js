@@ -10,6 +10,46 @@ function emitWarehouseDischarged(eventPayload) {
     domainBus.emit(EVENTS.WAREHOUSE_DISCHARGED, eventPayload);
 }
 
+async function validateDischargeTarget(tx, { cantiere_id, wbs_node_id, task_id, documento_id }) {
+    const cantiere = await tx.cantiere.findFirst({
+        where: { id: cantiere_id, attivo: 1 },
+        select: { id: true },
+    });
+    if (!cantiere) {
+        throw new DomainError('Cantiere non trovato o non attivo.', 'INVALID_CANTIERE');
+    }
+
+    if (wbs_node_id) {
+        const wbsNode = await tx.wbsNode.findFirst({
+            where: { id: wbs_node_id, cantiere_id },
+            select: { id: true },
+        });
+        if (!wbsNode) {
+            throw new DomainError('Nodo WBS non appartenente al cantiere.', 'INVALID_WBS');
+        }
+    }
+
+    if (task_id) {
+        const task = await tx.task.findFirst({
+            where: { id: task_id, cantiere_id },
+            select: { id: true },
+        });
+        if (!task) {
+            throw new DomainError('Task non appartenente al cantiere.', 'INVALID_TASK');
+        }
+    }
+
+    if (documento_id) {
+        const document = await tx.document.findFirst({
+            where: { id: documento_id, cantiere_id },
+            select: { id: true },
+        });
+        if (!document) {
+            throw new DomainError('Documento non appartenente al cantiere.', 'INVALID_DOCUMENT');
+        }
+    }
+}
+
 export async function createDischargeInTransaction(tx, payload, userId, employeeId, options = {}) {
     const { articolo_id, quantita, ubicazione_da_id, cantiere_id, wbs_node_id, task_id, documento_id } = payload;
 
@@ -25,6 +65,8 @@ export async function createDischargeInTransaction(tx, payload, userId, employee
 
     const articolo = await tx.articolo.findUnique({ where: { id: articolo_id } });
     if (!articolo) throw new DomainError('Articolo non trovato.', 'NOT_FOUND');
+
+    await validateDischargeTarget(tx, { cantiere_id, wbs_node_id, task_id, documento_id });
 
     const giacenza = await tx.giacenza.findUnique({
         where: { articolo_id_ubicazione_id: { articolo_id, ubicazione_id: ubicazione_da_id } },

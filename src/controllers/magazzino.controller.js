@@ -2,6 +2,7 @@ import { getDb } from "../db/index.js";
 import { processDischarge, processCarico } from "../domain/magazzino/warehouseService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { parsePagination, positiveCursor } from "../utils/pagination.js";
+import { canAccessCantiere } from "../domain/shared/accessControl.js";
 
 export const createMovimento = asyncHandler(async (req, res) => {
     const prisma     = getDb();
@@ -13,8 +14,17 @@ export const createMovimento = asyncHandler(async (req, res) => {
     const { tipo_movimento } = req.body;
 
     if (tipo_movimento === 'SCARICO_CANTIERE') {
+        if (!(await canAccessCantiere(prisma, req.user, req.body.cantiere_id, {
+            globalRoles: ["ADMIN", "WAREHOUSEMAN"],
+            ownerRoles: ["PROJECT_MANAGER"],
+        }))) {
+            return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+        }
         await processDischarge(prisma, req.body, userId, employeeId);
     } else if (tipo_movimento === 'CARICO') {
+        if (!["ADMIN", "WAREHOUSEMAN"].includes(req.user?.role)) {
+            return res.status(403).json({ error: "Solo ADMIN o WAREHOUSEMAN possono registrare carichi." });
+        }
         await processCarico(prisma, req.body, userId);
     } else {
         return res.status(400).json({ error: `Tipo movimento '${tipo_movimento}' non supportato.` });
@@ -97,6 +107,12 @@ export const getMovimentiCantiere = asyncHandler(async (req, res) => {
     
     if (!cantiere_id) {
         return res.status(400).json({ error: "cantiere_id mancante." });
+    }
+    if (!(await canAccessCantiere(prisma, req.user, Number(cantiere_id), {
+        globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
+        ownerRoles: ["PROJECT_MANAGER"],
+    }))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
     }
 
     const movimenti = await prisma.movimentoMagazzino.findMany({

@@ -30,4 +30,26 @@ export const DEFAULTS = Object.freeze({
 
 export const SECURITY = Object.freeze({
     JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "12h",
+    JWT_ALGORITHM: process.env.JWT_ALGORITHM || "HS256",
+    JWT_ISSUER: process.env.JWT_ISSUER || null,
+    JWT_AUDIENCE: process.env.JWT_AUDIENCE || null,
+    INVITE_CODE_TTL_MS: Number(process.env.INVITE_CODE_TTL_MS || 24 * 60 * 60 * 1000),
+    TELEGRAM_PAIRING_TTL_MS: Number(process.env.TELEGRAM_PAIRING_TTL_MS || 30 * 60 * 1000),
 });
+
+export function getJwtSignOptions() {
+    return {
+        expiresIn: SECURITY.JWT_EXPIRES_IN,
+        algorithm: SECURITY.JWT_ALGORITHM,
+        ...(SECURITY.JWT_ISSUER ? { issuer: SECURITY.JWT_ISSUER } : {}),
+        ...(SECURITY.JWT_AUDIENCE ? { audience: SECURITY.JWT_AUDIENCE } : {}),
+    };
+}
+
+export function getJwtVerifyOptions() {
+    return {
+        algorithms: [SECURITY.JWT_ALGORITHM],
+        ...(SECURITY.JWT_ISSUER ? { issuer: SECURITY.JWT_ISSUER } : {}),
+        ...(SECURITY.JWT_AUDIENCE ? { audience: SECURITY.JWT_AUDIENCE } : {}),
+    };
+}

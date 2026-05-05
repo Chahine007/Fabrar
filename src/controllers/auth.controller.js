@@ -7,12 +7,30 @@ import { findUserByUsername, updateUserLastLogin } from "../db/index.js";
 import bcrypt from "bcrypt";
 import { normalizeRole } from "../middleware/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { SECURITY } from "../constants.js";
+import { SECURITY, getJwtSignOptions } from "../constants.js";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 function normalizedAppRole(role, fallback = "WORKER") {
   return normalizeRole(role, fallback);
+}
+
+function generateInviteToken() {
+  return `INV-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(16).toString("hex").toUpperCase()}`;
+}
+
+function hashInviteToken(code) {
+  return crypto.createHash("sha256").update(String(code).trim().toUpperCase()).digest("hex");
+}
+
+function isFreshInviteToken(code) {
+  const parts = String(code ?? "").trim().toUpperCase().split("-");
+  if (parts.length !== 3 || parts[0] !== "INV") return false;
+
+  const issuedAt = Number.parseInt(parts[1], 36);
+  if (!Number.isFinite(issuedAt)) return false;
+
+  return Date.now() - issuedAt <= SECURITY.INVITE_CODE_TTL_MS;
 }
 
 // ─── Legacy login (username + password) ──────────────────────────────────────
@@ -61,7 +79,7 @@ export const login = asyncHandler(async (req, res) => {
         username: user.username,
       },
       process.env.JWT_SECRET,
-      { expiresIn: SECURITY.JWT_EXPIRES_IN }
+      getJwtSignOptions()
     );
 
     return res.json({ message: "Login effettuato", token });
@@ -86,12 +104,11 @@ export const generateInviteCode = asyncHandler(async (req, res) => {
       return res.status(404).json({ error: "Dipendente non trovato." });
     }
 
-    // Genera codice alfanumerico 6 caratteri maiuscoli
-    const code = crypto.randomBytes(4).toString("hex").slice(0, 6).toUpperCase();
+    const code = generateInviteToken();
 
     await prisma.employee.update({
       where: { id: employeeId },
-      data: { invite_code: code },
+      data: { invite_code: hashInviteToken(code) },
     });
 
     logger.info(
@@ -129,8 +146,14 @@ export const googleLoginOrRegister = asyncHandler(async (req, res) => {
     }
 
     const payload = ticket.getPayload();
+    if (!payload?.sub) {
+      return res.status(401).json({ error: "Token Google non valido o scaduto." });
+    }
     const googleId = payload.sub;
     const email = payload.email;
+    if (payload.email_verified !== true) {
+      return res.status(401).json({ error: "Email Google non verificata." });
+    }
     if (!email) {
       return res.status(400).json({ error: "L'account Google non ha un'email associata." });
     }
@@ -140,11 +163,14 @@ export const googleLoginOrRegister = asyncHandler(async (req, res) => {
     // 2A. Flusso con codice invito → prima registrazione
     if (inviteCode && typeof inviteCode === "string") {
       const code = inviteCode.trim().toUpperCase();
+      if (!isFreshInviteToken(code)) {
+        return res.status(400).json({ error: "Codice invito non valido o scaduto." });
+      }
 
       // Transazione atomica: crea User + aggiorna Employee
       const result = await prisma.$transaction(async (tx) => {
         const employee = await tx.employee.findUnique({
-          where: { invite_code: code },
+          where: { invite_code: hashInviteToken(code) },
         });
         if (!employee) {
           throw Object.assign(new Error("Codice invito non valido o già utilizzato."), { statusCode: 400 });
@@ -193,7 +219,7 @@ export const googleLoginOrRegister = asyncHandler(async (req, res) => {
           username: result.user.username,
         },
         process.env.JWT_SECRET,
-        { expiresIn: SECURITY.JWT_EXPIRES_IN }
+        getJwtSignOptions()
       );
 
       logger.info(
@@ -268,7 +294,7 @@ export const googleLoginOrRegister = asyncHandler(async (req, res) => {
         username: user.username,
       },
       process.env.JWT_SECRET,
-      { expiresIn: SECURITY.JWT_EXPIRES_IN }
+      getJwtSignOptions()
     );
 
     logger.info(

@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { getJwtVerifyOptions } from "../constants.js";
 
 /** Ruoli ammessi per dashboard/API ufficio (Policy 4.1) */
 export const DASHBOARD_ROLES = ["ADMIN", "HR"];
@@ -13,7 +14,7 @@ export function normalizeRole(role, fallback = null) {
  * Normalizza il payload JWT su req.user.
  * Supporta token nuovi (id, employee_id, role) e legacy (employeeId).
  */
-function normalizeUserPayload(decoded) {
+export function normalizeUserPayload(decoded) {
   if (!decoded || typeof decoded !== "object") return null;
   const employee_id = decoded.employee_id ?? decoded.employeeId ?? null;
   const id = decoded.id ?? decoded.userId ?? null;
@@ -68,7 +69,7 @@ export function verifyTokenAndRole(allowedRoles = []) {
     const token = authHeader.split(" ")[1];
 
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, getJwtVerifyOptions());
       req.user = normalizeUserPayload(decoded);
 
       if (!req.user || req.user.role == null) {

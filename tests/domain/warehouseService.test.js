@@ -19,9 +19,18 @@ function buildTx(overrides = {}) {
         costo_medio: new Prisma.Decimal(10),
       }),
     },
+    cantiere: {
+      findFirst: vi.fn().mockResolvedValue({ id: 4 }),
+    },
     giacenza: {
       findUnique: vi.fn().mockResolvedValue({ id: 5 }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    task: {
+      findFirst: vi.fn().mockResolvedValue({ id: 6 }),
+    },
+    document: {
+      findFirst: vi.fn().mockResolvedValue({ id: 7 }),
     },
     wbsNode: {
       findFirst: vi.fn().mockResolvedValue({ id: 9 }),
@@ -94,6 +103,28 @@ describe('warehouseService discharge', () => {
     }, 7, 8)).rejects.toMatchObject({
       name: 'DomainError',
       code: 'INSUFFICIENT_STOCK',
+    });
+
+    expect(tx.movimentoMagazzino.create).not.toHaveBeenCalled();
+    expect(tx.spesa.create).not.toHaveBeenCalled();
+  });
+
+  it('rifiuta collegamenti task non appartenenti al cantiere dello scarico', async () => {
+    const tx = buildTx({
+      task: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+    });
+
+    await expect(createDischargeInTransaction(tx, {
+      articolo_id: 1,
+      quantita: 3,
+      ubicazione_da_id: 2,
+      cantiere_id: 4,
+      task_id: 99,
+    }, 7, 8)).rejects.toMatchObject({
+      name: 'DomainError',
+      code: 'INVALID_TASK',
     });
 
     expect(tx.movimentoMagazzino.create).not.toHaveBeenCalled();

@@ -16,8 +16,8 @@ const optionalDate = z.preprocess(
   z.coerce.date().nullable().optional()
 );
 
-const installmentStatus = z.enum(["PENDING", "INVOICED", "PAID"]);
-const invoiceStatus = z.enum(["DRAFT", "ISSUED", "PAID"]);
+const installmentStatus = z.enum(["PENDING"]);
+const invoiceStatus = z.enum(["DRAFT", "ISSUED"]);
 
 export const createInstallmentSchema = z.object({
   params: z.object({ cantiereId: positiveInt }),
@@ -39,7 +39,6 @@ export const updateInstallmentSchema = z.object({
     .object({
       nome: z.string().trim().min(1).optional(),
       wbs_node_id: optionalPositiveInt,
-      fattura_id: optionalPositiveInt,
       percentuale: z.coerce.number().min(0).max(100).optional().nullable(),
       importo_previsto: z.coerce.number().min(0).optional(),
       data_scadenza_prevista: optionalDate,
