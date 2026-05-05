@@ -67,6 +67,13 @@ export interface Task {
   assignee_employee: TaskAssigneeEmployee | null;
   due: string;
   due_date: string | null;
+  budget_stimato?: number | null;
+  costo_previsto?: number | null;
+  costoManodopera?: number;
+  costoMateriali?: number;
+  costoSpese?: number;
+  costoTotale?: number;
+  deltaBudget?: number | null;
   created_at: string;
   updated_at: string;
   cantiere: TaskProjectRef;
@@ -89,6 +96,8 @@ export interface CreateTaskPayload {
   priority?: TaskPriorityCode;
   assignee_id?: number | null;
   due_date?: string | null;
+  budget_stimato?: number | null;
+  costo_previsto?: number | null;
 }
 
 export interface UpdateTaskPayload {
@@ -99,6 +108,8 @@ export interface UpdateTaskPayload {
   priority?: TaskPriorityCode;
   assignee_id?: number | null;
   due_date?: string | null;
+  budget_stimato?: number | null;
+  costo_previsto?: number | null;
 }
 
 function normalizeOptionalString(value: string | null | undefined) {
@@ -128,6 +139,14 @@ function normalizeTaskPayload<T extends Record<string, unknown>>(payload: T) {
 
   if (Object.prototype.hasOwnProperty.call(nextPayload, 'assignee_id')) {
     nextPayload.assignee_id = normalizeOptionalNumber(nextPayload.assignee_id as number | null | undefined);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(nextPayload, 'budget_stimato')) {
+    nextPayload.budget_stimato = normalizeOptionalNumber(nextPayload.budget_stimato as number | null | undefined);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(nextPayload, 'costo_previsto')) {
+    nextPayload.costo_previsto = normalizeOptionalNumber(nextPayload.costo_previsto as number | null | undefined);
   }
 
   return nextPayload;

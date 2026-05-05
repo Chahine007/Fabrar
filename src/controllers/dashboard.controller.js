@@ -63,7 +63,7 @@ export const getRadar = asyncHandler(async (req, res) => {
 
 /**
  * GET /api/dashboard/bi/finance
- * Margine Globale, Top 3 cantieri burn-rate, CPI medio.
+ * Margine globale, top cantieri per confronto ricavi/costi, CPI medio.
  */
 export const getFinanceKPIs = asyncHandler(async (req, res) => {
     const prisma = getDb();
@@ -79,16 +79,21 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
             const costi = await calculateTrueCost(c.id);
             const burnRate = ricavoPrevisto > 0 ? round2(costi.costoTotale / ricavoPrevisto) : 0;
             const cpi = costi.costoTotale > 0 ? round2(ricavoPrevisto / costi.costoTotale) : null;
+            const margine = round2(ricavoPrevisto - costi.costoTotale);
+            const marginePct = ricavoPrevisto > 0 ? round2((margine / ricavoPrevisto) * 100) : null;
 
             return {
                 id: c.id,
                 nome: c.nome,
                 budget: round2(ricavoPrevisto),
                 valoreContratto: round2(ricavoPrevisto),
+                ricavoPrevisto: round2(ricavoPrevisto),
                 costo: costi.costoTotale,
                 costoManodopera: costi.costoManodopera,
                 costoMateriali: costi.costoMateriali,
                 costoSpese: costi.costoSpese,
+                margine,
+                marginePct,
                 burnRate,
                 cpi,
             };
@@ -99,6 +104,10 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
     const costiTotali = round2(cantieriAnalysis.reduce((s, c) => s + c.costo, 0));
     const margine = round2(budgetTotale - costiTotali);
 
+    const topCantieri = cantieriAnalysis
+        .filter((c) => c.valoreContratto > 0)
+        .sort((a, b) => b.valoreContratto - a.valoreContratto)
+        .slice(0, 5);
     const top3BurnRate = cantieriAnalysis
         .filter((c) => c.valoreContratto > 0)
         .sort((a, b) => b.burnRate - a.burnRate)
@@ -118,6 +127,7 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
         margine,
         marginePct:   budgetTotale > 0 ? round2((margine / budgetTotale) * 100) : null,
         cpiMedio:     avgCPI,
+        topCantieri,
         top3BurnRate,
     });
 });

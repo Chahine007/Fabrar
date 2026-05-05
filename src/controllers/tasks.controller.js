@@ -1,6 +1,8 @@
 import { getDb, formatDateOnly } from "../db/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { formatEmployeeName } from "../utils/helpers.js";
+import { round2 } from "../utils/helpers.js";
+import { calculateTrueCost } from "../domain/finance/financeService.js";
 
 const TASK_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WORKER"];
 
@@ -53,6 +55,20 @@ function mapTask(task) {
           nome: task.cantiere.nome,
         }
       : null,
+  };
+}
+
+async function mapTaskWithCosts(task) {
+  const mappedTask = mapTask(task);
+  const costs = await calculateTrueCost(task.cantiere_id, task.id);
+
+  return {
+    ...mappedTask,
+    ...costs,
+    deltaBudget:
+      mappedTask.budget_stimato == null
+        ? null
+        : round2(mappedTask.budget_stimato - costs.costoTotale),
   };
 }
 
@@ -110,7 +126,12 @@ export const getAllTasks = asyncHandler(async (req, res) => {
     orderBy: [{ cantiere_id: "asc" }, { updated_at: "desc" }, { id: "desc" }],
   });
 
-  res.json(tasks.map(mapTask));
+  if (cantiere_id == null) {
+    return res.json(tasks.map(mapTask));
+  }
+
+  const tasksWithCosts = await Promise.all(tasks.map(mapTaskWithCosts));
+  res.json(tasksWithCosts);
 });
 
 export const createTask = asyncHandler(async (req, res) => {

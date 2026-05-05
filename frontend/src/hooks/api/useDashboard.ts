@@ -37,6 +37,21 @@ export interface FinanceKPIs {
   margine:      number;
   marginePct:   number | null;
   cpiMedio:     number | null;
+  topCantieri?: {
+    id: number;
+    nome: string;
+    budget: number;
+    valoreContratto: number;
+    ricavoPrevisto: number;
+    costo: number;
+    costoManodopera: number;
+    costoMateriali: number;
+    costoSpese: number;
+    margine: number;
+    marginePct: number | null;
+    burnRate: number;
+    cpi: number | null;
+  }[];
   top3BurnRate: { id: number; nome: string; budget: number; costo: number; burnRate: number; cpi: number | null }[];
 }
 

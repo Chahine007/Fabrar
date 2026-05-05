@@ -37,6 +37,7 @@ import CantiereSettingsTab from '../components/CantiereSettingsTab';
 import MaterialiTab from '../components/MaterialiTab';
 import ShareModal from '../components/ShareModal';
 import TaskModal from '../components/tasks/TaskModal';
+import JobCostingTab from '../components/projects/JobCostingTab';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import { useAuthContext } from '../context/AuthContext';
@@ -68,6 +69,7 @@ const TABS = [
   { id: 'overview',    label: 'Overview' },
   { id: 'activities',  label: 'Attività' },
   { id: 'hours',      label: '⏱️ Ore' },
+  { id: 'job-costing', label: '💶 Job Costing' },
   { id: 'wbs',        label: '⚙️ Struttura / WBS' },
   { id: 'materiali',  label: '📦 Materiali' },
   { id: 'documents',   label: 'Documenti' },
@@ -1271,6 +1273,7 @@ export default function ProjectDetailPage() {
       case 'overview':   return <OverviewTab cantiereId={cantiereId} />;
       case 'activities': return <ActivitiesTab cantiereId={cantiereId} onShare={handleShare} />;
       case 'hours':      return <HoursTab cantiereId={cantiereId} />;
+      case 'job-costing': return <JobCostingTab cantiereId={cantiereId} />;
       case 'wbs':        return <WbsTab cantiereId={cantiereId} />;
       case 'messages':   return <MessagesTab cantiereId={cantiereId} cantierNome={cantiere?.nome ?? ''} />;
       case 'documents':  return <DocumentsTab cantiereId={cantiereId} />;
