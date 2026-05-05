@@ -166,11 +166,12 @@ function buildQuery(filters: AuditFilters): string {
  * Lista dipendenti con KPI mensili (costo_orario, ore_mese, costo_mese).
  * Endpoint: GET /api/employees
  */
-export function useEmployees() {
+export function useEmployees(enabled = true) {
   return useQuery({
     queryKey: employeeKeys.list(),
     queryFn:  () => fetchJson<EmployeeWithKPI[]>('/api/employees'),
     staleTime: 60_000,
+    enabled,
   });
 }
 
