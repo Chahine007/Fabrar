@@ -55,6 +55,7 @@ model Employee {
   conversation_participants ConversationParticipant[]
   bot_sessions              BotSession[]
   assigned_tasks            Task[]
+  uploaded_documents        Document[]                @relation("DocumentUploader")
 }
 
 model User {
@@ -317,6 +318,9 @@ model Document {
   file_path   String? // Percorso relativo su disco: cantieri/{id}/{filename}
   type        String
   size        String
+  mime_type   String?
+  dimensione  Int?
+  employee_id Int?
   uploader    String
   created_at  DateTime @default(now())
 
@@ -327,11 +331,13 @@ model Document {
   importo        Decimal?  @db.Decimal(10, 2)
 
   cantiere            Cantiere             @relation(fields: [cantiere_id], references: [id])
+  uploaded_by         Employee?            @relation("DocumentUploader", fields: [employee_id], references: [id])
   spese_collegate     Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
   fatture             Fattura[]
 
   @@index([cantiere_id])
+  @@index([employee_id])
   @@index([tag])
 }
 

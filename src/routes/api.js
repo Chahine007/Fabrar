@@ -15,6 +15,7 @@ import tasksRoutes from "./tasks.routes.js";
 import timesheetsRoutes from "./timesheets.routes.js";
 import userRoutes from "./user.routes.js";
 import billingRoutes from "./billing.routes.js";
+import documentsRoutes from "./documents.routes.js";
 
 const router = express.Router();
 
@@ -39,5 +40,6 @@ router.use("/api/suppliers", suppliersRoutes);
 router.use("/api/material-requests", materialRequestsRoutes);
 router.use("/api/user", userRoutes);
 router.use("/api/billing", billingRoutes);
+router.use("/api/documents", documentsRoutes);
 
 export default router;

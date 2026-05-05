@@ -9,6 +9,23 @@ import {
     getRootWbsId,
 } from "../domain/shared/linkValidators.js";
 import { canAccessCantiere } from "../domain/shared/accessControl.js";
+import {
+    GenyaImportFormatError,
+    parseCantiereIdFromReferer,
+    parseExpenseRowsFromUploadedFile,
+    parseImportedMoney,
+    parseImportedTimestamp,
+} from "../services/genyaImportParser.js";
+
+export {
+    parseCantiereIdFromReferer,
+    parseExpenseRowsFromCsv,
+    parseExpenseRowsFromTable,
+    parseExpenseRowsFromUploadedFile,
+    parseExpenseRowsFromXlsx,
+    parseImportedMoney,
+    parseImportedTimestamp,
+} from "../services/genyaImportParser.js";
 
 const WEB_SOURCE = "WEB";
 const MUTABLE_STATUSES = new Set([ValidationStatus.PENDING, ValidationStatus.REJECTED]);
@@ -62,178 +79,6 @@ async function validateExpenseLinks(prisma, { cantiereId, taskId, wbsNodeId, doc
     return null;
 }
 
-export function parseImportedTimestamp(value) {
-    if (!value) return new Date();
-
-    if (typeof value === "string" && value.includes("/")) {
-        const [day, month, year] = value.split("/");
-        if (day && month && year) {
-            return new Date(`${year}-${month}-${day}T12:00:00.000Z`);
-        }
-    }
-
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-        throw new Error(`Timestamp non valido: ${value}`);
-    }
-
-    return parsed;
-}
-
-function parseCsvLine(line, delimiter) {
-    const values = [];
-    let current = "";
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        const next = line[i + 1];
-
-        if (char === '"' && inQuotes && next === '"') {
-            current += '"';
-            i += 1;
-            continue;
-        }
-
-        if (char === '"') {
-            inQuotes = !inQuotes;
-            continue;
-        }
-
-        if (char === delimiter && !inQuotes) {
-            values.push(current.trim());
-            current = "";
-            continue;
-        }
-
-        current += char;
-    }
-
-    values.push(current.trim());
-    return values.map((value) => value.replace(/^['"]|['"]$/g, ""));
-}
-
-function detectCsvDelimiter(headerLine) {
-    const semicolonCount = (headerLine.match(/;/g) || []).length;
-    const commaCount = (headerLine.match(/,/g) || []).length;
-    return semicolonCount >= commaCount ? ";" : ",";
-}
-
-function normalizeImportHeader(header) {
-    const key = String(header ?? "")
-        .trim()
-        .toLowerCase()
-        .replace(/^\uFEFF/, "")
-        .replace(/[()]/g, "")
-        .replace(/[^\p{L}\p{N}]+/gu, "_")
-        .replace(/_+/g, "_")
-        .replace(/^_+|_+$/g, "");
-
-    const aliases = {
-        cantiere: "cantiere_id",
-        cantiereid: "cantiere_id",
-        idcantiere: "cantiere_id",
-        id_cantiere: "cantiere_id",
-        commessa: "cantiere_id",
-        id_commessa: "cantiere_id",
-        commessa_id: "cantiere_id",
-        progetto: "cantiere_id",
-        id_progetto: "cantiere_id",
-        progetto_id: "cantiere_id",
-        data: "timestamp_utc",
-        giorno: "timestamp_utc",
-        date: "timestamp_utc",
-        data_spesa: "timestamp_utc",
-        data_documento: "timestamp_utc",
-        data_registrazione: "timestamp_utc",
-        totale: "importo",
-        totale_documento: "importo",
-        importo_totale: "importo",
-        importo_eur: "importo",
-        imponibile: "importo",
-        amount: "importo",
-        amount_eur: "importo",
-        costo: "importo",
-        valore: "importo",
-        prezzo: "importo",
-        fornitore_ragione_sociale: "fornitore",
-        supplier: "fornitore",
-        vendor: "fornitore",
-        note: "descrizione",
-        causale: "descrizione",
-        descrizione_spesa: "descrizione",
-    };
-
-    return aliases[key] ?? key;
-}
-
-export function parseImportedMoney(value) {
-    if (typeof value === "number") return value;
-    let text = String(value ?? "").trim().replace(/\s/g, "").replace(/[€]/g, "");
-    if (!text) return NaN;
-
-    const lastComma = text.lastIndexOf(",");
-    const lastDot = text.lastIndexOf(".");
-    if (lastComma !== -1 && lastDot !== -1) {
-        text = lastComma > lastDot
-            ? text.replace(/\./g, "").replace(",", ".")
-            : text.replace(/,/g, "");
-    } else if (lastComma !== -1) {
-        text = text.replace(/\./g, "").replace(",", ".");
-    }
-
-    return Number(text);
-}
-
-function findCsvHeader(lines, fallbackCantiereId) {
-    const maxHeaderScan = Math.min(lines.length, 30);
-
-    for (let index = 0; index < maxHeaderScan; index++) {
-        const delimiter = detectCsvDelimiter(lines[index]);
-        const headers = parseCsvLine(lines[index], delimiter).map(normalizeImportHeader);
-        const hasImporto = headers.includes("importo");
-        const hasCantiere = headers.includes("cantiere_id") || Boolean(fallbackCantiereId);
-
-        if (hasImporto && hasCantiere) {
-            return { index, delimiter, headers };
-        }
-    }
-
-    return null;
-}
-
-export function parseCantiereIdFromReferer(referer) {
-    if (!referer) return null;
-    const text = String(referer);
-
-    try {
-        const url = new URL(text);
-        const match = url.pathname.match(/\/projects\/(\d+)(?:\/|$)/);
-        return match ? Number(match[1]) : null;
-    } catch {
-        const match = text.match(/\/projects\/(\d+)(?:\/|$)/);
-        return match ? Number(match[1]) : null;
-    }
-}
-
-export function parseExpenseRowsFromCsv(csvText, fallbackCantiereId = null) {
-    const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
-    if (lines.length <= 1) return [];
-
-    const header = findCsvHeader(lines, fallbackCantiereId);
-    if (!header) return [];
-
-    return lines.slice(header.index + 1).map((line) => {
-        const values = parseCsvLine(line, header.delimiter);
-        const row = {};
-        header.headers.forEach((column, idx) => {
-            row[column] = values[idx] || null;
-        });
-        if (!row.cantiere_id && fallbackCantiereId) row.cantiere_id = fallbackCantiereId;
-        return row;
-    }).filter((row) => row.importo && row.cantiere_id && Number.isFinite(parseImportedMoney(row.importo)));
-}
-
 export const getPricebook = asyncHandler(async (req, res) => {
     const rows = await listPricebook();
     res.json(rows);
@@ -274,14 +119,20 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
     const fallbackCantiereId = explicitCantiereId ?? parseCantiereIdFromReferer(req.get?.("referer") ?? req.headers?.referer);
 
     if (req.file) {
-        const csvText = req.file.buffer.toString("utf-8");
-        spese_bulk = parseExpenseRowsFromCsv(csvText, fallbackCantiereId);
+        try {
+            spese_bulk = await parseExpenseRowsFromUploadedFile(req.file, fallbackCantiereId);
+        } catch (err) {
+            if (err instanceof GenyaImportFormatError) {
+                return res.status(400).json({ error: err.message });
+            }
+            throw err;
+        }
     }
 
     if (!Array.isArray(spese_bulk) || spese_bulk.length === 0) {
         return res.status(400).json({
             error: "Nessuna spesa fornita o CSV non valido.",
-            details: "Verifica che il file contenga una colonna importo/totale e un cantiere, oppure avvia l'import dal dettaglio cantiere.",
+            details: "Verifica che il file contenga una colonna importo/totale e un cantiere, oppure avvia l'import dal dettaglio cantiere. Per il formato Full Genya servono importi riga valorizzati.",
         });
     }
 

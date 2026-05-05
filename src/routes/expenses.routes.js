@@ -19,17 +19,30 @@ import {
 } from "../controllers/expenses.controller.js";
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+});
 const DATA_ENTRY_ROLES = ["WORKER", "PROJECT_MANAGER", "HR", "ADMIN"];
 const OFFICE_EXPENSE_ROLES = ["HR", "ADMIN"];
 const GENYA_IMPORT_ROLES = ["PROJECT_MANAGER", "HR", "ADMIN"];
+
+function uploadGenyaFile(req, res, next) {
+    upload.single("file")(req, res, (err) => {
+        if (!err) return next();
+        if (err.code === "LIMIT_FILE_SIZE") {
+            return res.status(400).json({ error: "File Genya troppo grande. Limite massimo: 5MB." });
+        }
+        return next(err);
+    });
+}
 
 router.use("/api/pricebook", verifyTokenAndRole(DASHBOARD_ROLES));
 router.use("/api/my-expenses", verifyToken);
 
 router.get("/api/pricebook", getPricebook);
 router.post("/api/admin/spese/manual", verifyTokenAndRole(OFFICE_EXPENSE_ROLES), validate(manualExpenseSchema), createManualExpense);
-router.post("/api/admin/spese/bulk", verifyTokenAndRole(GENYA_IMPORT_ROLES), upload.single("file"), bulkImportExpenses);
+router.post("/api/admin/spese/bulk", verifyTokenAndRole(GENYA_IMPORT_ROLES), uploadGenyaFile, bulkImportExpenses);
 
 router.post(
     "/api/my-expenses",

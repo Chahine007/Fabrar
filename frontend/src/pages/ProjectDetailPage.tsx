@@ -207,7 +207,13 @@ export default function ProjectDetailPage() {
               </span>
             )}
 
-            <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileSelected} />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              onChange={handleFileSelected}
+            />
             <button
               onClick={() => setActiveTab('activities')}
               className="flex items-center gap-2 px-4 py-2.5 bg-accent hover:bg-accent/90 text-white rounded-xl text-sm font-bold transition-all border border-accent shadow-lg shadow-accent/20"
