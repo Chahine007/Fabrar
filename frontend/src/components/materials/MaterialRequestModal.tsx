@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { useCantieri } from '../../hooks/api/useCantieri';
 import { useArticoli } from '../../hooks/api/useMagazzino';
 import { useCreateMaterialRequest } from '../../hooks/api/useMaterialRequests';
+import { useAllTasks } from '../../hooks/api/useTasks';
 
 interface MaterialRequestModalProps {
   isOpen: boolean;
@@ -24,12 +25,16 @@ const emptyLine = (): RequestLineDraft => ({
 
 export default function MaterialRequestModal({ isOpen, onClose }: MaterialRequestModalProps) {
   const [cantiereId, setCantiereId] = useState('');
+  const [taskId, setTaskId] = useState('');
   const [note, setNote] = useState('');
   const [lines, setLines] = useState<RequestLineDraft[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
 
   const { data: cantieri = [], isLoading: loadingCantieri } = useCantieri();
   const { data: articoli = [], isLoading: loadingArticoli } = useArticoli();
+  const { data: tasks = [], isLoading: loadingTasks } = useAllTasks({
+    cantiere_id: cantiereId ? Number(cantiereId) : -1,
+  });
   const createRequest = useCreateMaterialRequest();
 
   const sortedArticles = useMemo(() => {
@@ -49,6 +54,7 @@ export default function MaterialRequestModal({ isOpen, onClose }: MaterialReques
 
   const resetAndClose = () => {
     setCantiereId('');
+    setTaskId('');
     setNote('');
     setLines([emptyLine()]);
     setFormError(null);
@@ -60,6 +66,7 @@ export default function MaterialRequestModal({ isOpen, onClose }: MaterialReques
     setFormError(null);
 
     const parsedCantiereId = Number(cantiereId);
+    const parsedTaskId = taskId ? Number(taskId) : null;
     const parsedLines = lines
       .map((line) => ({
         articolo_id: Number(line.articolo_id),
@@ -81,6 +88,7 @@ export default function MaterialRequestModal({ isOpen, onClose }: MaterialReques
     try {
       await createRequest.mutateAsync({
         cantiere_id: parsedCantiereId,
+        task_id: parsedTaskId,
         note: note.trim() || null,
         righe: parsedLines,
       });
@@ -125,7 +133,10 @@ export default function MaterialRequestModal({ isOpen, onClose }: MaterialReques
               <label className="text-sm font-semibold text-text-secondary">Cantiere</label>
               <select
                 value={cantiereId}
-                onChange={(event) => setCantiereId(event.target.value)}
+                onChange={(event) => {
+                  setCantiereId(event.target.value);
+                  setTaskId('');
+                }}
                 className="w-full p-3 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
                 disabled={loadingCantieri}
               >
@@ -139,6 +150,23 @@ export default function MaterialRequestModal({ isOpen, onClose }: MaterialReques
             </div>
 
             <div className="space-y-1.5">
+              <label className="text-sm font-semibold text-text-secondary">Task / Attività</label>
+              <select
+                value={taskId}
+                onChange={(event) => setTaskId(event.target.value)}
+                className="w-full p-3 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
+                disabled={!cantiereId || loadingTasks}
+              >
+                <option value="">-- Nessun task specifico --</option>
+                {tasks.map((task: any) => (
+                  <option key={task.id} value={task.id}>
+                    {task.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5 md:col-span-2">
               <label className="text-sm font-semibold text-text-secondary">Note generali</label>
               <input
                 value={note}

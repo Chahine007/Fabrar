@@ -263,6 +263,7 @@ model Task {
   report_entries      ReportEntry[]
   spese               Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
+  richieste_materiali RichiestaMateriale[]
 }
 
 enum TaskStatus {
@@ -453,6 +454,7 @@ model MovimentoMagazzino {
 model RichiestaMateriale {
   id             Int           @id @default(autoincrement())
   cantiere_id    Int
+  task_id        Int?
   richiedente_id Int
   data_richiesta DateTime      @default(now())
   status         RequestStatus @default(PENDING)
@@ -461,8 +463,11 @@ model RichiestaMateriale {
   updated_at     DateTime      @updatedAt
 
   cantiere    Cantiere                 @relation(fields: [cantiere_id], references: [id])
+  task        Task?                    @relation(fields: [task_id], references: [id])
   richiedente Employee                 @relation(fields: [richiedente_id], references: [id])
   righe       RigaRichiestaMateriale[]
+
+  @@index([cantiere_id, task_id])
 }
 
 model RigaRichiestaMateriale {

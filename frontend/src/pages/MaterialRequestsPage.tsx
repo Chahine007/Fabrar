@@ -77,6 +77,7 @@ export default function MaterialRequestsPage() {
       const text = [
         request.id,
         request.cantiere?.nome,
+        request.task?.title,
         formatEmployee(request),
         request.note,
         request.status,
@@ -215,6 +216,11 @@ export default function MaterialRequestsPage() {
                         <p className="text-sm text-text-secondary mt-1">
                           Richiedente: <span className="font-semibold text-text-primary">{formatEmployee(request)}</span>
                         </p>
+                        {request.task && (
+                          <p className="text-sm text-text-secondary mt-1">
+                            Task: <span className="font-semibold text-text-primary">{request.task.title}</span>
+                          </p>
+                        )}
                         {request.note && <p className="text-sm text-text-secondary mt-2">{request.note}</p>}
 
                         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">

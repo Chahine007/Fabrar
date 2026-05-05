@@ -1275,9 +1275,10 @@ export default function ProjectDetailPage() {
       case 'hours':      return <HoursTab cantiereId={cantiereId} />;
       case 'job-costing': return <JobCostingTab cantiereId={cantiereId} />;
       case 'wbs':        return <WbsTab cantiereId={cantiereId} />;
+      case 'materiali':  return <MaterialiTab cantiereId={cantiereId} />;
       case 'messages':   return <MessagesTab cantiereId={cantiereId} cantierNome={cantiere?.nome ?? ''} />;
       case 'documents':  return <DocumentsTab cantiereId={cantiereId} />;
-      case 'warehouse':  return <WarehouseTab cantiereId={cantiereId} />;
+      case 'warehouse':  return <MaterialiTab cantiereId={cantiereId} />;
       case 'invoices':   return <InvoicesTab cantiereId={cantiereId} />;
       case 'telegram':   return <TelegramFeedTab cantiereId={cantiereId} />;
       case 'settings':   return <CantiereSettingsTab cantiereId={cantiereId} />;

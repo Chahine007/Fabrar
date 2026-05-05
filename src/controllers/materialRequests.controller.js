@@ -26,6 +26,14 @@ function materialRequestInclude() {
         indirizzo: true,
       },
     },
+    task: {
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        priority: true,
+      },
+    },
     richiedente: {
       select: {
         id: true,
@@ -61,6 +69,7 @@ function normalizeLines(lines) {
 
 async function ensureRequestInput(prisma, body) {
   const cantiereId = parsePositiveInt(body.cantiere_id);
+  const taskId = parsePositiveInt(body.task_id);
   const righe = normalizeLines(body.righe ?? body.lines ?? body.items);
 
   if (!cantiereId) {
@@ -80,6 +89,20 @@ async function ensureRequestInput(prisma, body) {
     throw httpError("Cantiere non trovato.", 404);
   }
 
+  if (taskId) {
+    const task = await prisma.task.findFirst({
+      where: {
+        id: taskId,
+        cantiere_id: cantiereId,
+      },
+      select: { id: true },
+    });
+
+    if (!task) {
+      throw httpError("Task non trovato o non appartenente al cantiere selezionato.", 404);
+    }
+  }
+
   const uniqueArticleIds = [...new Set(righe.map((line) => line.articolo_id))];
   const articleCount = await prisma.articolo.count({
     where: { id: { in: uniqueArticleIds } },
@@ -89,7 +112,7 @@ async function ensureRequestInput(prisma, body) {
     throw httpError("Uno o più articoli non esistono.", 404);
   }
 
-  return { cantiereId, righe };
+  return { cantiereId, taskId, righe };
 }
 
 export const createRequest = asyncHandler(async (req, res) => {
@@ -100,12 +123,13 @@ export const createRequest = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "Utente non collegato a un dipendente." });
   }
 
-  const { cantiereId, righe } = await ensureRequestInput(prisma, req.body);
+  const { cantiereId, taskId, righe } = await ensureRequestInput(prisma, req.body);
 
   const richiesta = await prisma.$transaction(async (tx) => {
     return tx.richiestaMateriale.create({
       data: {
         cantiere_id: cantiereId,
+        task_id: taskId,
         richiedente_id: richiedenteId,
         note: req.body.note ? String(req.body.note).trim() : null,
         righe: {
@@ -269,6 +293,7 @@ export const fulfillRequest = asyncHandler(async (req, res) => {
             quantita: consumed,
             ubicazione_da_id: giacenza.ubicazione_id,
             cantiere_id: richiesta.cantiere_id,
+            task_id: richiesta.task_id ?? null,
             costo_unitario: line.articolo.costo_medio,
             valore_totale: valoreTotale,
             esecutore_id: userId,
@@ -279,6 +304,7 @@ export const fulfillRequest = asyncHandler(async (req, res) => {
           data: {
             employee_id: expenseEmployeeId,
             cantiere_id: richiesta.cantiere_id,
+            task_id: richiesta.task_id ?? null,
             importo: valoreTotale,
             descrizione: `Evasione richiesta materiale #${richiesta.id}: ${line.articolo.descrizione} (${line.articolo.codice_sku})`,
             quantita: consumed,

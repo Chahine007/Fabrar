@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import { magazzinoKeys, cantierKeys } from './queryKeys';
+import { magazzinoKeys, cantierKeys, taskKeys } from './queryKeys';
 
 export const useArticoli = () => {
   return useQuery({
@@ -51,6 +51,7 @@ interface CreaMovimentoParams {
   ubicazione_a_id?: number;
   cantiere_id?: number;
   wbs_node_id?: number | null;
+  task_id?: number | null;
   costo_acquisto?: number;
   documento_id?: number | null;
   fornitore_id?: number | null;
@@ -72,6 +73,7 @@ export const useCreaMovimento = () => {
       if (variables.cantiere_id) {
         queryClient.invalidateQueries({ queryKey: cantierKeys.detail(variables.cantiere_id) });
         queryClient.invalidateQueries({ queryKey: cantierKeys.timeline(variables.cantiere_id) });
+        queryClient.invalidateQueries({ queryKey: taskKeys.all() });
       }
     },
   });

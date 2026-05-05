@@ -7,7 +7,8 @@ import {
   useMovimentiCantiere, 
   useCreaMovimento 
 } from '../hooks/api/useMagazzino';
-import { useWbsHierarchy } from '../hooks/api/useWbs';
+import { useWbsTree } from '../hooks/api/useWbs';
+import { useAllTasks } from '../hooks/api/useTasks';
 import { useAuth } from '../hooks/useAuth';
 import Spinner from './Spinner';
 import ErrorMessage from './ErrorMessage';
@@ -17,6 +18,7 @@ interface ScaricoFormData {
   ubicazione_da_id: number;
   quantita: number;
   wbs_node_id: string; // lo convertiamo in int o null dopo
+  task_id: string;
 }
 
 const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: number, isOpen: boolean, onClose: () => void }) => {
@@ -24,7 +26,8 @@ const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: nu
   const creaMovimento = useCreaMovimento();
   
   const { data: giacenze, isLoading: loadingG } = useGiacenze();
-  const { data: wbsNodes, isLoading: loadingW } = useWbsHierarchy(cantiereId);
+  const { data: wbsNodes, isLoading: loadingW } = useWbsTree(cantiereId);
+  const { data: tasks = [], isLoading: loadingTasks } = useAllTasks({ cantiere_id: cantiereId });
 
   // Filtriamo le giacenze per mostrare solo quelle con quantità > 0
   const giacenzeDisponibili = useMemo(() => {
@@ -44,6 +47,17 @@ const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: nu
   }, [giacenzeDisponibili]);
 
   const selectedArticoloId = watch('articolo_id');
+
+  const flatWbsNodes = useMemo(() => {
+    const flatten = (nodes: any[], depth = 0): any[] => {
+      return nodes.flatMap((node) => [
+        { ...node, label: `${'—'.repeat(depth)} ${node.nome}`.trim() },
+        ...(node.children ? flatten(node.children, depth + 1) : []),
+      ]);
+    };
+
+    return flatten(wbsNodes ?? []);
+  }, [wbsNodes]);
   
   // Ubicazioni che contengono l'articolo selezionato (e quantità > 0)
   const ubicazioniValide = useMemo(() => {
@@ -65,6 +79,7 @@ const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: nu
         quantita: Number(data.quantita),
         cantiere_id: cantiereId,
         wbs_node_id: data.wbs_node_id ? Number(data.wbs_node_id) : null,
+        task_id: data.task_id ? Number(data.task_id) : null,
       });
       reset();
       onClose();
@@ -93,7 +108,7 @@ const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: nu
           </button>
         </div>
 
-        {(loadingG || loadingW) ? (
+        {(loadingG || loadingW || loadingTasks) ? (
           <div className="p-8 flex justify-center"><Spinner label="Caricamento dati..." /></div>
         ) : articoliDisponibili.length === 0 ? (
           <div className="p-8 text-center">
@@ -155,13 +170,31 @@ const PrelevaMaterialeModal = ({ cantiereId, isOpen, onClose }: { cantiereId: nu
                 className="p-3 md:p-3.5 bg-background border border-border rounded-xl text-sm md:text-base focus:ring-2 focus:ring-accent outline-none"
               >
                 <option value="">-- Nessuna (Imputa al Cantiere / Radice) --</option>
-                {wbsNodes?.map((node: any) => (
+                {flatWbsNodes.map((node: any) => (
                   <option key={node.id} value={node.id}>
-                    {node.parent_id ? '↳ ' : ''}{node.nome}
+                    {node.label}
                   </option>
                 ))}
               </select>
               <p className="text-xs text-text-secondary mt-1">Selezionando la fase, il costo del materiale andrà ad intaccare il budget specifico di questo nodo.</p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-semibold text-text-secondary">Task / Attività (Job Costing)</label>
+              <select
+                {...register('task_id')}
+                className="p-3 md:p-3.5 bg-background border border-border rounded-xl text-sm md:text-base focus:ring-2 focus:ring-accent outline-none"
+              >
+                <option value="">-- Nessun task specifico --</option>
+                {tasks.map((task: any) => (
+                  <option key={task.id} value={task.id}>
+                    {task.title}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-text-secondary mt-1">
+                Selezionando un task, il costo materiale finirà nella riga Job Costing della relativa attività.
+              </p>
             </div>
 
             <div className="pt-4 flex justify-end gap-3 border-t border-border mt-2">
@@ -232,6 +265,7 @@ const MaterialiTab: React.FC<MaterialiTabProps> = ({ cantiereId }) => {
                 <th className="px-6 py-4 font-semibold">Articolo</th>
                 <th className="px-6 py-4 font-semibold">Ubicazione Partenza</th>
                 <th className="px-6 py-4 font-semibold">Destinazione WBS</th>
+                <th className="px-6 py-4 font-semibold">Task</th>
                 <th className="px-6 py-4 font-semibold text-right">Q.tà</th>
                 <th className="px-6 py-4 font-semibold text-right">Valore (€)</th>
               </tr>
@@ -239,7 +273,7 @@ const MaterialiTab: React.FC<MaterialiTabProps> = ({ cantiereId }) => {
             <tbody className="divide-y divide-border">
               {(!movimenti || movimenti.length === 0) ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center">
+                  <td colSpan={7} className="px-6 py-12 text-center">
                     <div className="flex flex-col items-center justify-center">
                       <div className="w-16 h-16 bg-background rounded-full flex items-center justify-center mb-4">
                         <Package size={32} className="text-text-secondary opacity-50" />
@@ -275,6 +309,9 @@ const MaterialiTab: React.FC<MaterialiTabProps> = ({ cantiereId }) => {
                       </td>
                       <td className="px-6 py-4 text-sm text-text-primary">
                         {mov.wbs_node ? mov.wbs_node.nome : <span className="text-text-secondary italic">Radice Cantiere</span>}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-text-primary">
+                        {mov.task ? mov.task.title : <span className="text-text-secondary italic">Non allocato</span>}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <span className="text-sm font-bold text-accent">

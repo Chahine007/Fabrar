@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../../lib/api';
-import { cantierKeys, magazzinoKeys, materialRequestKeys } from './queryKeys';
+import { cantierKeys, magazzinoKeys, materialRequestKeys, taskKeys } from './queryKeys';
 
 export type MaterialRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'FULFILLED';
 
@@ -24,6 +24,7 @@ export interface MaterialRequestLine {
 export interface MaterialRequest {
   id: number;
   cantiere_id: number;
+  task_id: number | null;
   richiedente_id: number;
   data_richiesta: string;
   status: MaterialRequestStatus;
@@ -35,6 +36,12 @@ export interface MaterialRequest {
     nome: string;
     indirizzo?: string | null;
   };
+  task: {
+    id: number;
+    title: string;
+    status: string;
+    priority: string;
+  } | null;
   richiedente: {
     id: number;
     nome: string | null;
@@ -51,6 +58,7 @@ export interface MaterialRequestFilters {
 
 export interface CreateMaterialRequestPayload {
   cantiere_id: number;
+  task_id?: number | null;
   note?: string | null;
   righe: {
     articolo_id: number;
@@ -95,6 +103,7 @@ export function useCreateMaterialRequest() {
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: materialRequestKeys.all() });
       qc.invalidateQueries({ queryKey: cantierKeys.detail(vars.cantiere_id) });
+      qc.invalidateQueries({ queryKey: taskKeys.all() });
     },
   });
 }
@@ -126,6 +135,7 @@ export function useFulfillMaterialRequest() {
       qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
       qc.invalidateQueries({ queryKey: cantierKeys.detail(data.richiesta.cantiere_id) });
       qc.invalidateQueries({ queryKey: cantierKeys.timeline(data.richiesta.cantiere_id) });
+      qc.invalidateQueries({ queryKey: taskKeys.all() });
     },
   });
 }

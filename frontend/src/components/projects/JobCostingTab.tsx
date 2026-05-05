@@ -4,6 +4,7 @@ import { cn } from '../../lib/utils';
 import Spinner from '../Spinner';
 import ErrorMessage from '../ErrorMessage';
 import { useAllTasks } from '../../hooks/api/useTasks';
+import { useCantiereDetail } from '../../hooks/api/useCantieri';
 
 const currencyFormatter = new Intl.NumberFormat('it-IT', {
   style: 'currency',
@@ -17,11 +18,67 @@ function formatCurrency(value: number | null | undefined) {
   return currencyFormatter.format(value);
 }
 
+function toSafeNumber(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function nonNegativeDelta(total: number, allocated: number) {
+  const delta = roundCurrency(total - allocated);
+  return delta < 0 && Math.abs(delta) <= 0.01 ? 0 : Math.max(0, delta);
+}
+
 export default function JobCostingTab({ cantiereId }: { cantiereId: number }) {
   const { data: tasks = [], isLoading, error, refetch } = useAllTasks({ cantiere_id: cantiereId });
+  const {
+    data: cantiereDetail,
+    isLoading: isLoadingDetail,
+    error: detailError,
+    refetch: refetchDetail,
+  } = useCantiereDetail(cantiereId);
 
-  if (isLoading) return <Spinner label="Caricamento job costing..." />;
-  if (error) return <ErrorMessage error={(error as Error)?.message ?? 'Errore'} onRetry={refetch} />;
+  if (isLoading || isLoadingDetail) return <Spinner label="Caricamento job costing..." />;
+  if (error || detailError) {
+    return (
+      <ErrorMessage
+        error={(error as Error)?.message ?? (detailError as Error)?.message ?? 'Errore'}
+        onRetry={() => {
+          refetch();
+          refetchDetail();
+        }}
+      />
+    );
+  }
+
+  const taskTotals = tasks.reduce(
+    (acc, task) => ({
+      costoManodopera: acc.costoManodopera + toSafeNumber(task.costoManodopera),
+      costoMateriali: acc.costoMateriali + toSafeNumber(task.costoMateriali),
+      costoSpese: acc.costoSpese + toSafeNumber(task.costoSpese),
+      costoTotale: acc.costoTotale + toSafeNumber(task.costoTotale),
+    }),
+    { costoManodopera: 0, costoMateriali: 0, costoSpese: 0, costoTotale: 0 }
+  );
+
+  const cantiereTotals = {
+    costoManodopera: toSafeNumber(cantiereDetail?.kpi.costoManodopera),
+    costoMateriali: toSafeNumber(cantiereDetail?.kpi.costoMateriali),
+    costoSpese: toSafeNumber(cantiereDetail?.kpi.costoSpese),
+    costoTotale: toSafeNumber(cantiereDetail?.kpi.costoTotale),
+  };
+
+  const unallocated = {
+    costoManodopera: nonNegativeDelta(cantiereTotals.costoManodopera, taskTotals.costoManodopera),
+    costoMateriali: nonNegativeDelta(cantiereTotals.costoMateriali, taskTotals.costoMateriali),
+    costoSpese: nonNegativeDelta(cantiereTotals.costoSpese, taskTotals.costoSpese),
+    costoTotale: nonNegativeDelta(cantiereTotals.costoTotale, taskTotals.costoTotale),
+  };
+
+  const hasUnallocatedCosts = unallocated.costoTotale > 0;
+  const shouldShowTable = tasks.length > 0 || hasUnallocatedCosts;
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -34,7 +91,7 @@ export default function JobCostingTab({ cantiereId }: { cantiereId: number }) {
         </div>
       </div>
 
-      {tasks.length === 0 ? (
+      {!shouldShowTable ? (
         <div className="flex min-h-[240px] flex-col items-center justify-center gap-4 rounded-3xl border border-dashed border-border bg-card text-center text-text-secondary">
           <BarChart3 size={36} className="opacity-30" />
           <div>
@@ -103,6 +160,32 @@ export default function JobCostingTab({ cantiereId }: { cantiereId: number }) {
                   </tr>
                 );
               })}
+              {hasUnallocatedCosts && (
+                <tr className="bg-background/80 font-semibold">
+                  <td className="px-4 py-4">
+                    <div className="space-y-1">
+                      <p className="text-text-primary">Costi Generali / Non Allocati</p>
+                      <p className="max-w-xl text-xs font-normal text-text-secondary">
+                        Differenza tra costo totale del cantiere e somma dei task. Include costi senza task_id.
+                      </p>
+                    </div>
+                  </td>
+                  <td className="px-4 py-4 text-right text-text-secondary">—</td>
+                  <td className="px-4 py-4 text-right text-text-primary">
+                    {formatCurrency(unallocated.costoManodopera)}
+                  </td>
+                  <td className="px-4 py-4 text-right text-text-primary">
+                    {formatCurrency(unallocated.costoMateriali)}
+                  </td>
+                  <td className="px-4 py-4 text-right text-text-primary">
+                    {formatCurrency(unallocated.costoSpese)}
+                  </td>
+                  <td className="px-4 py-4 text-right text-text-primary">
+                    {formatCurrency(unallocated.costoTotale)}
+                  </td>
+                  <td className="px-4 py-4 text-right text-text-secondary">—</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
