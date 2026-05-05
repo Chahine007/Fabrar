@@ -1,3 +1,4 @@
+import pkg from "@prisma/client";
 import {
     getDb,
     createTariffa,
@@ -25,32 +26,31 @@ import {
     parseIdParam,
 } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { AUDIT_TYPE, ValidationStatus } from "../constants.js";
+import { AUDIT_TYPE, LIMITS, ValidationStatus } from "../constants.js";
 import { bulkUpdateItems } from "../domain/hr/auditService.js";
 import { domainBus, EVENTS } from "../domain/events/domainBus.js";
+import { parsePagination } from "../utils/pagination.js";
 
-const MAX_DAILY_HOURS_ALERT = 12;
+const { Prisma } = pkg;
+const MAX_DAILY_HOURS_ALERT = LIMITS.MAX_DAILY_HOURS_ALERT;
 
 export async function getPendingSummary(prisma) {
     const [reports, spese] = await Promise.all([
         prisma.reportEntry.count({
             where: {
-                OR: [
-                    { stato_validazione: "" },
-                    { stato_validazione: ValidationStatus.PENDING },
-                ],
+                stato_validazione: ValidationStatus.PENDING,
             },
         }),
-        prisma.spesa.findMany({
-            select: {
-                stato_validazione: true,
+        prisma.spesa.count({
+            where: {
+                stato_validazione: ValidationStatus.PENDING,
             },
         }),
     ]);
 
     return {
         reports,
-        spese: spese.filter(isPendingSpesa).length,
+        spese,
     };
 }
 
@@ -70,6 +70,8 @@ function mapAuditOreRow(entry) {
         // Priorità: cantiere diretto sull'entry → cantiere del report header → null
         cantiere_nome: entry.cantiere?.nome || entry.report?.cantiere?.nome || entry.luogo_cantiere || null,
         cantiere_id:   entry.cantiere_id || entry.report?.cantiere_id || null,
+        task_id: entry.task_id ?? null,
+        task_title: entry.task?.title ?? null,
         luogo_cantiere: entry.luogo_cantiere || null,
         report_id: entry.report_id,
     };
@@ -87,9 +89,12 @@ function mapAuditSpesaRow(spesa) {
         employee_id: spesa.employee_id,
         nome: spesa.employee?.nome || null,
         cognome: spesa.employee?.cognome || null,
+        fornitore: spesa.fornitore || null,
         note: spesa.descrizione || null,
         cantiere_nome: spesa.cantiere?.nome || null,
         cantiere_id:   spesa.cantiere_id || null,
+        task_id: spesa.task_id ?? null,
+        task_title: spesa.task?.title ?? null,
     };
 }
 
@@ -100,51 +105,37 @@ export const getAlerts = asyncHandler(async (req, res) => {
     const lastThirtyDays = new Date();
     lastThirtyDays.setDate(lastThirtyDays.getDate() - 30);
 
-    const [entries, recentReports] = await Promise.all([
-        prisma.reportEntry.findMany({
-            where: {
-                NOT: { stato_validazione: ValidationStatus.REJECTED },
-            },
-            select: {
-                ore_lavorate: true,
-                report: {
-                    select: {
-                        employee_id: true,
-                        report_date: true,
-                        employee: { select: { nome: true, cognome: true } },
-                    },
-                },
-            },
-        }),
+    const since = parseDateOnly(formatDateOnly(lastThirtyDays));
+    const [dailyHourRows, recentReports] = await Promise.all([
+        prisma.$queryRaw(
+            Prisma.sql`
+                SELECT
+                    r.employee_id,
+                    r.report_date,
+                    e.nome,
+                    e.cognome,
+                    COALESCE(SUM(COALESCE(re.ore_lavorate, 0)), 0) AS total_hours
+                FROM "ReportEntry" re
+                INNER JOIN "Report" r ON r.id = re.report_id
+                LEFT JOIN "Employee" e ON e.id = r.employee_id
+                WHERE r.report_date >= ${since}
+                  AND re.stato_validazione <> ${ValidationStatus.REJECTED}
+                GROUP BY r.employee_id, r.report_date, e.nome, e.cognome
+                HAVING COALESCE(SUM(COALESCE(re.ore_lavorate, 0)), 0) > ${MAX_DAILY_HOURS_ALERT}
+                ORDER BY total_hours DESC
+            `
+        ),
         prisma.report.findMany({
-            where: { report_date: { gte: parseDateOnly(formatDateOnly(lastThirtyDays)) } },
+            where: { report_date: { gte: since } },
             include: { employee: { select: { nome: true, cognome: true } } },
             orderBy: [{ report_date: "desc" }, { id: "desc" }],
         }),
     ]);
 
-    const groupedHours = new Map();
-    for (const entry of entries) {
-        const reportDate = formatDateOnly(entry.report?.report_date);
-        if (!reportDate) continue;
-
-        const key = `${entry.report?.employee_id}:${reportDate}`;
-        const current = groupedHours.get(key) || {
-            employee: entry.report?.employee,
-            employee_id: entry.report?.employee_id,
-            report_date: reportDate,
-            total_hours: 0,
-        };
-        current.total_hours += toNumber(entry.ore_lavorate);
-        groupedHours.set(key, current);
-    }
-
-    const anomalies = Array.from(groupedHours.values())
-        .filter((row) => row.total_hours > MAX_DAILY_HOURS_ALERT)
-        .sort((a, b) => b.total_hours - a.total_hours)
+    const anomalies = dailyHourRows
         .map((row) => {
-            const name = formatEmployeeName(row.employee, row.employee_id);
-            return `Il dipendente ${name} ha registrato ${round2(row.total_hours)}h il ${row.report_date}.`;
+            const name = formatEmployeeName({ nome: row.nome, cognome: row.cognome }, row.employee_id);
+            return `Il dipendente ${name} ha registrato ${round2(toNumber(row.total_hours))}h il ${formatDateOnly(row.report_date)}.`;
         });
 
     const warnings = [];
@@ -199,7 +190,7 @@ export const getEmployeesWithKPIs = asyncHandler(async (req, res) => {
                 include: {
                     entries: {
                         where: {
-                            stato_validazione: { in: [ValidationStatus.VERIFIED] },
+                            stato_validazione: { in: [ValidationStatus.APPROVED] },
                         },
                         select: { ore_lavorate: true },
                     },
@@ -253,7 +244,7 @@ export const getEmployeeDetail = asyncHandler(async (req, res) => {
             reports: {
                 include: {
                     entries: {
-                        where: { stato_validazione: ValidationStatus.VERIFIED },
+                        where: { stato_validazione: ValidationStatus.APPROVED },
                         select: { ore_lavorate: true },
                     },
                 },
@@ -299,7 +290,7 @@ export const generateEmployeeCV = asyncHandler(async (req, res) => {
             reports: {
                 include: {
                     entries: {
-                        where: { stato_validazione: ValidationStatus.VERIFIED },
+                        where: { stato_validazione: ValidationStatus.APPROVED },
                         include: { cantiere: { select: { nome: true } } },
                     },
                 },
@@ -417,14 +408,13 @@ export const getUserKpi = asyncHandler(async (req, res) => {
     const nextMonthStart = new Date(`${month}-01T00:00:00.000Z`);
     nextMonthStart.setUTCMonth(nextMonthStart.getUTCMonth() + 1);
 
-    const [entries, employeeSpese, tariffa] = await Promise.all([
+    const [entries, pendingSpese, tariffa] = await Promise.all([
         prisma.reportEntry.findMany({
             where: { NOT: { stato_validazione: ValidationStatus.REJECTED }, report: { is: { employee_id: Number(employeeId), report_date: { gte: monthStart, lt: nextMonthStart } } } },
             select: { ore_lavorate: true, fonte: true },
         }),
-        prisma.spesa.findMany({
-            where: { employee_id: Number(employeeId) },
-            select: { stato_validazione: true },
+        prisma.spesa.count({
+            where: { employee_id: Number(employeeId), stato_validazione: ValidationStatus.PENDING },
         }),
         prisma.tariffa.findFirst({
             where: { employee_id: Number(employeeId) },
@@ -448,14 +438,16 @@ export const getUserKpi = asyncHandler(async (req, res) => {
         month,
         totalHours,
         inputStats,
-        pendingSpese: employeeSpese.filter(isPendingSpesa).length,
+        pendingSpese,
         costo_orario: toNumber(tariffa?.costo_orario),
     });
 });
 
 export const getAudit = asyncHandler(async (req, res) => {
     const prisma = getDb();
-    const { type, status, employee_id, cantiere_id } = req.query; // Validati da Zod
+    const { type, status, employee_id, cantiere_id, from, to } = req.query; // Validati da Zod
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 200, maxLimit: 500 });
+    const pageWindow = limit + offset;
 
     const isPrivilegedRole = req.user?.role === "ADMIN" || req.user?.role === "HR";
     const scopedEmployeeId = !isPrivilegedRole ? parseIdParam(req.user?.employee_id) : null;
@@ -465,6 +457,8 @@ export const getAudit = asyncHandler(async (req, res) => {
     const employeeId  = scopedEmployeeId ?? (employee_id ? Number(employee_id) : null);
     const cantiereId  = cantiere_id  ? Number(cantiere_id)  : null;
     const statusValue = status ? normalizeStatus(status) : null;
+    const fromDate = from ? parseDateOnly(from) : null;
+    const toDate = to ? parseDateOnly(to) : null;
     let allData = [];
 
     if (!type || type === AUDIT_TYPE.ORE) {
@@ -477,16 +471,29 @@ export const getAudit = asyncHandler(async (req, res) => {
                         { report: { is: { cantiere_id: cantiereId } } },
                     ],
                 } : {}),
-                ...(statusValue ? (statusValue === ValidationStatus.PENDING ? {} : { stato_validazione: { equals: statusValue, mode: "insensitive" } }) : {}),
+                ...(statusValue ? { stato_validazione: statusValue } : {}),
+                ...((fromDate || toDate) ? {
+                    report: {
+                        is: {
+                            ...(employeeId ? { employee_id: employeeId } : {}),
+                            report_date: {
+                                ...(fromDate ? { gte: fromDate } : {}),
+                                ...(toDate ? { lte: toDate } : {}),
+                            },
+                        },
+                    },
+                } : {}),
             },
             include: {
                 report: { include: { employee: { select: { nome: true, cognome: true } }, cantiere: { select: { nome: true } } } },
                 cantiere: { select: { nome: true } },
+                task: { select: { id: true, title: true } },
             },
             orderBy: [{ created_at: "desc" }, { id: "desc" }],
+            take: pageWindow,
         });
 
-        allData = allData.concat(oreRows.map(mapAuditOreRow).filter((row) => (statusValue === ValidationStatus.PENDING ? row.status === ValidationStatus.PENDING : true)));
+        allData = allData.concat(oreRows.map(mapAuditOreRow));
     }
 
     if (!type || type === AUDIT_TYPE.SPESE) {
@@ -494,17 +501,28 @@ export const getAudit = asyncHandler(async (req, res) => {
             where: {
                 ...(employeeId  ? { employee_id: employeeId }  : {}),
                 ...(cantiereId  ? { cantiere_id: cantiereId }  : {}),
-                ...(statusValue ? (statusValue === ValidationStatus.PENDING ? {} : { stato_validazione: { equals: statusValue, mode: "insensitive" } }) : {}),
+                ...(statusValue ? { stato_validazione: statusValue } : {}),
+                ...((fromDate || toDate) ? {
+                    timestamp_utc: {
+                        ...(fromDate ? { gte: fromDate } : {}),
+                        ...(toDate ? { lte: toDate } : {}),
+                    },
+                } : {}),
             },
-            include: { employee: { select: { nome: true, cognome: true } }, cantiere: { select: { nome: true } } },
+            include: {
+                employee: { select: { nome: true, cognome: true } },
+                cantiere: { select: { nome: true } },
+                task: { select: { id: true, title: true } },
+            },
             orderBy: [{ timestamp_utc: "desc" }, { id: "desc" }],
+            take: pageWindow,
         });
 
-        allData = allData.concat(speseRows.map(mapAuditSpesaRow).filter((row) => (statusValue === ValidationStatus.PENDING ? row.status === ValidationStatus.PENDING : true)));
+        allData = allData.concat(speseRows.map(mapAuditSpesaRow));
     }
 
     allData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    res.json(allData);
+    res.json(allData.slice(offset, offset + limit));
 });
 
 export const bulkUpdateAudit = asyncHandler(async (req, res) => {
@@ -544,7 +562,7 @@ export const updateReportEntryAdminCtrl = asyncHandler(async (req, res) => {
     });
     if (!entry) return res.status(404).json({ error: 'Timbratura non trovata.' });
 
-    const wasVerified = entry.stato_validazione === ValidationStatus.VERIFIED;
+    const wasVerified = entry.stato_validazione === ValidationStatus.APPROVED;
 
     // Campi permessi al solo admin
     const allowed = ['ore_lavorate', 'cantiere_id', 'wbs_node_id', 'attivita_svolte'];

@@ -1,7 +1,8 @@
-import asyncHandler from "express-async-handler";
 import { getDb } from "../db/index.js";
 import { processDischarge, processCarico } from "../domain/magazzino/warehouseService.js";
-import { DomainError } from "../domain/shared/DomainError.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { parsePagination, positiveCursor } from "../utils/pagination.js";
+import { canAccessCantiere } from "../domain/shared/accessControl.js";
 
 export const createMovimento = asyncHandler(async (req, res) => {
     const prisma     = getDb();
@@ -13,8 +14,17 @@ export const createMovimento = asyncHandler(async (req, res) => {
     const { tipo_movimento } = req.body;
 
     if (tipo_movimento === 'SCARICO_CANTIERE') {
+        if (!(await canAccessCantiere(prisma, req.user, req.body.cantiere_id, {
+            globalRoles: ["ADMIN", "WAREHOUSEMAN"],
+            ownerRoles: ["PROJECT_MANAGER"],
+        }))) {
+            return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+        }
         await processDischarge(prisma, req.body, userId, employeeId);
     } else if (tipo_movimento === 'CARICO') {
+        if (!["ADMIN", "WAREHOUSEMAN"].includes(req.user?.role)) {
+            return res.status(403).json({ error: "Solo ADMIN o WAREHOUSEMAN possono registrare carichi." });
+        }
         await processCarico(prisma, req.body, userId);
     } else {
         return res.status(400).json({ error: `Tipo movimento '${tipo_movimento}' non supportato.` });
@@ -26,16 +36,37 @@ export const createMovimento = asyncHandler(async (req, res) => {
 export const getArticoli = asyncHandler(async (req, res) => {
     const prisma = getDb();
     const articoli = await prisma.articolo.findMany({
-        include: { giacenze: { include: { ubicazione: true } } }
+        include: {
+            fornitore_default: true,
+            giacenze: { include: { ubicazione: true } }
+        }
     });
     res.json(articoli);
 });
 
 export const createArticolo = asyncHandler(async (req, res) => {
     const prisma = getDb();
-    const { codice_sku, descrizione, unita_misura } = req.body;
+    const {
+        codice_sku,
+        descrizione,
+        unita_misura,
+        costo_medio = 0,
+        scorta_minima = 0,
+        categoria = null,
+        fornitore_default_id = null,
+    } = req.body;
+
     const articolo = await prisma.articolo.create({
-        data: { codice_sku, descrizione, unita_misura }
+        data: {
+            codice_sku,
+            descrizione,
+            unita_misura,
+            costo_medio,
+            scorta_minima: Number(scorta_minima) || 0,
+            categoria,
+            fornitore_default_id: fornitore_default_id ? Number(fornitore_default_id) : null,
+        },
+        include: { fornitore_default: true },
     });
     res.status(201).json(articolo);
 });
@@ -57,8 +88,13 @@ export const createUbicazione = asyncHandler(async (req, res) => {
 
 export const getGiacenze = asyncHandler(async (req, res) => {
     const prisma = getDb();
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 250, maxLimit: 500 });
+    const cursor = positiveCursor(req.query.cursor);
     const giacenze = await prisma.giacenza.findMany({
-        include: { articolo: true, ubicazione: true }
+        include: { articolo: true, ubicazione: true },
+        orderBy: { id: 'asc' },
+        take: limit,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : { skip: offset }),
     });
     res.json(giacenze);
 });
@@ -66,9 +102,17 @@ export const getGiacenze = asyncHandler(async (req, res) => {
 export const getMovimentiCantiere = asyncHandler(async (req, res) => {
     const prisma = getDb();
     const { cantiere_id } = req.params;
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 100, maxLimit: 500 });
+    const cursor = positiveCursor(req.query.cursor);
     
     if (!cantiere_id) {
         return res.status(400).json({ error: "cantiere_id mancante." });
+    }
+    if (!(await canAccessCantiere(prisma, req.user, Number(cantiere_id), {
+        globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
+        ownerRoles: ["PROJECT_MANAGER"],
+    }))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
     }
 
     const movimenti = await prisma.movimentoMagazzino.findMany({
@@ -77,11 +121,16 @@ export const getMovimentiCantiere = asyncHandler(async (req, res) => {
             articolo: true,
             ubicazione_da: true,
             wbs_node: true,
+            task: true,
+            documento: true,
+            fornitore: true,
             esecutore: {
                 include: { employee: true }
             }
         },
-        orderBy: { data_movimento: 'desc' }
+        orderBy: [{ data_movimento: 'desc' }, { id: 'desc' }],
+        take: limit,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : { skip: offset }),
     });
 
     res.json(movimenti);

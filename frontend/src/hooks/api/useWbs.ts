@@ -5,25 +5,15 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../../lib/api';
 import { wbsKeys } from './queryKeys';
+import type { WbsNode } from '../../types/wbs';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export interface WbsBurn {
-  ore_tot: number;
-  costo_manodopera: number;
-  costo_materiali: number;
-  totale: number;
-}
-
-export interface WbsNode {
-  id: number;
-  nome: string;
-  budget_preventivato: number | null;
-  parent_id: number | null;
-  is_variant: boolean;
-  burn: WbsBurn;
-  avanzamento_pct: number | null;
-  children: WbsNode[];
+function getErrorMessage(body: unknown, fallback: string) {
+  return typeof body === 'object' &&
+    body !== null &&
+    'error' in body &&
+    typeof body.error === 'string'
+    ? body.error
+    : fallback;
 }
 
 // ─── Fetch helper ─────────────────────────────────────────────────────────────
@@ -32,7 +22,7 @@ async function fetchJson<T>(path: string): Promise<T> {
   const res = await apiFetch(path);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as any).error ?? `Errore ${res.status}`);
+    throw new Error(getErrorMessage(body, `Errore ${res.status}`));
   }
   return res.json() as Promise<T>;
 }
@@ -64,7 +54,7 @@ export function useCreateWbsNode(cantiereId: number) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? 'Errore creazione fase');
+        throw new Error(getErrorMessage(body, 'Errore creazione fase'));
       }
       return res.json();
     },
@@ -90,7 +80,7 @@ export function useUpdateWbsNode(cantiereId: number) {
       });
       if (!res.ok) {
         const body2 = await res.json().catch(() => ({}));
-        throw new Error((body2 as any).error ?? 'Errore aggiornamento fase');
+        throw new Error(getErrorMessage(body2, 'Errore aggiornamento fase'));
       }
       return res.json();
     },
@@ -110,7 +100,7 @@ export function useDeleteWbsNode(cantiereId: number) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? 'Errore eliminazione fase');
+        throw new Error(getErrorMessage(body, 'Errore eliminazione fase'));
       }
       return res.json();
     },

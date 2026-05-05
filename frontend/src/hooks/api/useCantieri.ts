@@ -5,6 +5,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, api } from '../../lib/api';
 import { cantierKeys } from './queryKeys';
+import type { ProjectDocument } from '../../types/project-detail';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -13,9 +14,13 @@ export interface Cantiere {
   nome: string;
   status: string;
   budget: number | null;
+  valore_contratto?: number | null;
+  budget_spese?: number | null;
   costo_reale: number | null;
   indirizzo?: string | null;
   attivo?: number;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface CantiereDetail {
@@ -25,7 +30,15 @@ export interface CantiereDetail {
     costoTotale: number;
     costoManodopera: number;
     costoMateriali: number;
+    costoSpese?: number;
     margine: number;
+    totaleFatturato?: number;
+    totaleIncassato?: number;
+    daFatturare?: number;
+    ricaviFatturati?: number;
+    ricaviReali?: number;
+    margineFatturato?: number;
+    margineIncassato?: number;
     burnRate: number;
     nMesi: number;
   };
@@ -55,22 +68,22 @@ export interface Task {
   due: string;
 }
 
-export interface ProjectDocument {
-  id: number;
-  name: string;
-  type: string;
-  size: string;
-  date: string;
-  uploader: string;
-}
-
 // ─── Fetch helpers ───────────────────────────────────────────────────────────
+
+function getErrorMessage(body: unknown, fallback: string) {
+  return typeof body === 'object' &&
+    body !== null &&
+    'error' in body &&
+    typeof body.error === 'string'
+    ? body.error
+    : fallback;
+}
 
 async function fetchJson<T>(path: string): Promise<T> {
   const res = await apiFetch(path);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as any).error ?? `Errore ${res.status}`);
+    throw new Error(getErrorMessage(body, `Errore ${res.status}`));
   }
   return res.json() as Promise<T>;
 }
@@ -81,6 +94,7 @@ export function useCantieri() {
   return useQuery({
     queryKey: cantierKeys.list(),
     queryFn: () => fetchJson<Cantiere[]>('/api/cantieri'),
+    staleTime: 120_000,
   });
 }
 
@@ -91,6 +105,7 @@ export function useCantiereDetail(id: number | null) {
     queryKey: cantierKeys.detail(id!),
     queryFn: () => fetchJson<CantiereDetail>(`/api/cantieri/${id}/details`),
     enabled: id !== null,
+    staleTime: 60_000,
   });
 }
 
@@ -101,6 +116,7 @@ export function useFinancialTimeline(id: number | null) {
     queryKey: cantierKeys.timeline(id!),
     queryFn: () => fetchJson<FinancialTimeline>(`/api/cantieri/${id}/financial-timeline`),
     enabled: id !== null,
+    staleTime: 120_000,
   });
 }
 
@@ -152,7 +168,7 @@ export function useUploadDocument(cantiereId: number) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? 'Errore durante il caricamento del file');
+        throw new Error(getErrorMessage(body, 'Errore durante il caricamento del file'));
       }
       return res.json() as Promise<ProjectDocument>;
     },
@@ -172,7 +188,7 @@ export function useUpdateGps(cantiereId: number) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? 'Errore aggiornamento GPS');
+        throw new Error(getErrorMessage(body, 'Errore aggiornamento GPS'));
       }
       return res.json();
     },
@@ -191,6 +207,8 @@ export function useCreateCantiere() {
       nome: string;
       indirizzo?: string;
       budget?: number | null;
+      valore_contratto?: number | null;
+      budget_spese?: number | null;
       lat?: number | null;
       lng?: number | null;
     }) => {
@@ -200,7 +218,7 @@ export function useCreateCantiere() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? 'Errore creazione cantiere');
+        throw new Error(getErrorMessage(body, 'Errore creazione cantiere'));
       }
       return res.json();
     },
@@ -212,12 +230,13 @@ export function useCreateCantiere() {
 
 // ─── Genya bulk import ───────────────────────────────────────────────────────
 
-export function useGenyaImport() {
+export function useGenyaImport(cantiereId?: number | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append('file', file);
+      if (cantiereId) formData.append('cantiere_id', String(cantiereId));
       // Non impostare Content-Type manualmente — fetch gestisce il boundary
       const res = await apiFetch('/api/admin/spese/bulk', {
         method: 'POST',
@@ -226,7 +245,7 @@ export function useGenyaImport() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? `Errore ${res.status}`);
+        throw new Error(getErrorMessage(body, `Errore ${res.status}`));
       }
       return res.json() as Promise<{ inserted: number }>;
     },

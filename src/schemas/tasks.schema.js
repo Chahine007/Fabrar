@@ -59,6 +59,11 @@ const optionalDueDate = z.preprocess(
   z.coerce.date().nullable().optional()
 );
 
+const optionalMoney = z.preprocess(
+  (value) => (value == null || value === "" ? null : value),
+  z.coerce.number().nonnegative("Importo non valido.").nullable().optional()
+);
+
 const optionalTaskStatus = z.preprocess(
   (value) => (value == null || value === "" ? undefined : normalizeTaskStatusInput(value)),
   z.enum(TASK_STATUS_VALUES).optional()
@@ -91,6 +96,8 @@ export const createTaskSchema = z.object({
     priority: optionalTaskPriority,
     due_date: optionalDueDate,
     assignee_id: optionalPositiveInt,
+    budget_stimato: optionalMoney,
+    costo_previsto: optionalMoney,
   }),
 });
 
@@ -108,6 +115,8 @@ export const updateTaskSchema = z.object({
       priority: optionalTaskPriority,
       due_date: optionalDueDate,
       assignee_id: optionalPositiveInt,
+      budget_stimato: optionalMoney,
+      costo_previsto: optionalMoney,
     })
     .refine((data) => Object.values(data).some((value) => value !== undefined), {
       message: "Nessun campo da aggiornare.",

@@ -309,14 +309,13 @@ export async function handleReport(message, employee, reportDate, sendStatus) {
         const { getDb } = await import('../db/index.js');
         const prisma = getDb();
         targetCantiere = await prisma.cantiere.findUnique({ where: { id: extracted.cantiere_id } });
-        if (!targetCantiere || !targetCantiere.is_active) {
+        if (!targetCantiere || targetCantiere.attivo === 0 || targetCantiere.attivo === false) {
             await sendStatus("⚠️ Errore: Il cantiere indicato non esiste o è chiuso. Verifica e reinvia il messaggio.");
             return;
         }
 
         // ─ Gatekeeper GPS ─────────────────────────────────────────────
         if (targetCantiere.bot_checkin_gps) {
-            const { ensureDailyReportHeader } = await import('./bot.js'); // Or ensure we import it at the top
             const reportId = await ensureDailyReportHeader(employee.id, reportDate);
             const gpsEntry = await prisma.reportEntry.findFirst({
                 where: { report_id: reportId, cantiere_id: targetCantiere.id, fonte: "GPS" }

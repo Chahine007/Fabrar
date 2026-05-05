@@ -62,8 +62,9 @@ async function resolveItemsFromIds(tx, ids, action) {
  */
 export async function bulkUpdateItems(prisma, body) {
     const iso = new Date().toISOString();
+    const events = [];
 
-    return prisma.$transaction(async (tx) => {
+    const count = await prisma.$transaction(async (tx) => {
         let items = body?.items;
 
         if (!items) {
@@ -81,7 +82,7 @@ export async function bulkUpdateItems(prisma, body) {
             if (rawItem.type === AUDIT_TYPE.ORE) {
                 const entry = await tx.reportEntry.findUnique({
                     where: { id },
-                    select: { report_id: true, report: { select: { employee_id: true } } },
+                    select: { report_id: true, cantiere_id: true, report: { select: { employee_id: true } } },
                 });
                 if (!entry) throw new DomainError(`Riga ore non trovata: ${id}`, 'NOT_FOUND');
 
@@ -95,12 +96,12 @@ export async function bulkUpdateItems(prisma, body) {
                 });
 
                 if (newSt === ValidationStatus.VERIFIED) {
-                    // Emesso dopo il commit — schedulato via microtask/queueMicrotask
-                    // ma ancora all'interno dell'iterazione; il domainBus emette
-                    // solo quando la transazione è completata.
-                    domainBus.emit(EVENTS.REPORT_ENTRY_VERIFIED, {
-                        entryId:    id,
-                        cantiereId: entry.cantiere_id ?? null,
+                    events.push({
+                        type: EVENTS.REPORT_ENTRY_VERIFIED,
+                        payload: {
+                            entryId:    id,
+                            cantiereId: entry.cantiere_id ?? null,
+                        },
                     });
                 }
 
@@ -120,4 +121,10 @@ export async function bulkUpdateItems(prisma, body) {
 
         return items.length;
     });
+
+    for (const event of events) {
+        domainBus.emit(event.type, event.payload);
+    }
+
+    return count;
 }

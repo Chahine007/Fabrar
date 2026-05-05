@@ -1,8 +1,12 @@
+import pkg from "@prisma/client";
 import { getDb, getCantieriStatus, formatDateOnly, parseDateOnly } from "../db/index.js";
-import { round2, toNumber, isPendingSpesa } from "../utils/helpers.js";
+import { round2, toNumber } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { getPendingSummary } from "./hr.controller.js";
-import { ValidationStatus } from "../constants.js";
+import { LIMITS, ValidationStatus } from "../constants.js";
+import { getMultiProjectFinancials } from "../domain/finance/financeService.js";
+
+const { Prisma } = pkg;
 
 export const getRadar = asyncHandler(async (req, res) => {
     const prisma = getDb();
@@ -19,14 +23,14 @@ export const getRadar = asyncHandler(async (req, res) => {
         getPendingSummary(prisma),
         prisma.reportEntry.findMany({
             where: {
-                NOT: { stato_validazione: { in: ["rejected", "REJECTED"] } },
+                NOT: { stato_validazione: ValidationStatus.REJECTED },
                 report: { is: { report_date: { gte: parseDateOnly(lastMondayStr) } } },
             },
             select: { ore_lavorate: true, report: { select: { report_date: true, employee_id: true } } },
         }),
         prisma.reportEntry.findMany({
             where: {
-                NOT: { stato_validazione: { in: ["rejected", "REJECTED"] } },
+                NOT: { stato_validazione: ValidationStatus.REJECTED },
                 report: { is: { report_date: { gte: parseDateOnly(sevenDaysAgoStr) } } },
             },
             select: { report: { select: { employee_id: true } } },
@@ -62,54 +66,107 @@ export const getRadar = asyncHandler(async (req, res) => {
 
 /**
  * GET /api/dashboard/bi/finance
- * Margine Globale, Top 3 cantieri burn-rate, CPI medio.
+ * Margine globale, top cantieri per confronto ricavi/costi, CPI medio.
  */
 export const getFinanceKPIs = asyncHandler(async (req, res) => {
     const prisma = getDb();
 
-    const [cantieri, spese] = await Promise.all([
-        prisma.cantiere.findMany({
-            where: { attivo: 1 },
-            select: { id: true, nome: true, budget: true },
-        }),
-        prisma.spesa.findMany({
-            where: { NOT: { stato_validazione: ValidationStatus.REJECTED } },
-            select: { cantiere_id: true, importo: true },
-        }),
-    ]);
+    const cantieri = await prisma.cantiere.findMany({
+        where: { attivo: 1 },
+        select: { id: true, nome: true, budget: true, valore_contratto: true },
+    });
+    const financialMap = await getMultiProjectFinancials(prisma, cantieri.map((c) => c.id), cantieri);
 
-    // Spese per cantiere
-    const speseByCantiere = {};
-    for (const s of spese) {
-        speseByCantiere[s.cantiere_id] = (speseByCantiere[s.cantiere_id] ?? 0) + toNumber(s.importo);
-    }
+    const cantieriAnalysis = cantieri.map((c) => {
+            const financials = financialMap[c.id] ?? {
+                costoTotale: 0,
+                costoManodopera: 0,
+                costoMateriali: 0,
+                costoSpese: 0,
+                totaleContratto: round2(toNumber(c.valore_contratto ?? c.budget)),
+                totaleFatturato: 0,
+                totaleIncassato: 0,
+                daFatturare: 0,
+                ricaviFatturati: 0,
+                ricaviReali: 0,
+                marginePrevisto: 0,
+                margineFatturato: 0,
+                margineIncassato: 0,
+            };
+            const ricavoPrevisto = financials.totaleContratto;
+            const costi = {
+                costoTotale: financials.costoTotale,
+                costoManodopera: financials.costoManodopera,
+                costoMateriali: financials.costoMateriali,
+                costoSpese: financials.costoSpese,
+            };
+            const burnRate = ricavoPrevisto > 0 ? round2(costi.costoTotale / ricavoPrevisto) : 0;
+            const cpi = costi.costoTotale > 0 ? round2(ricavoPrevisto / costi.costoTotale) : null;
+            const margine = round2(ricavoPrevisto - costi.costoTotale);
+            const marginePct = ricavoPrevisto > 0 ? round2((margine / ricavoPrevisto) * 100) : null;
 
-    const budgetTotale = cantieri.reduce((s, c) => s + toNumber(c.budget), 0);
-    const speseTotali  = Object.values(speseByCantiere).reduce((s, v) => s + v, 0);
-    const margine      = round2(budgetTotale - speseTotali);
+            return {
+                id: c.id,
+                nome: c.nome,
+                budget: round2(ricavoPrevisto),
+                valoreContratto: round2(ricavoPrevisto),
+                ricavoPrevisto: round2(ricavoPrevisto),
+                costo: costi.costoTotale,
+                costoManodopera: costi.costoManodopera,
+                costoMateriali: costi.costoMateriali,
+                costoSpese: costi.costoSpese,
+                margine,
+                marginePct,
+                totaleFatturato: financials.totaleFatturato,
+                totaleIncassato: financials.totaleIncassato,
+                daFatturare: financials.daFatturare,
+                ricaviFatturati: financials.ricaviFatturati,
+                ricaviReali: financials.ricaviReali,
+                margineFatturato: financials.margineFatturato,
+                margineIncassato: financials.margineIncassato,
+                burnRate,
+                cpi,
+            };
+        });
 
-    // Burn rate per cantiere e CPI
-    const cantieriAnalysis = cantieri
-        .map(c => {
-            const budget = toNumber(c.budget);
-            const costo  = speseByCantiere[c.id] ?? 0;
-            const burnRate = budget > 0 ? round2(costo / budget) : 0;
-            const cpi      = costo > 0 ? round2(budget / costo) : null; // CPI = EV/AC (simplified)
-            return { id: c.id, nome: c.nome, budget: round2(budget), costo: round2(costo), burnRate, cpi };
-        })
-        .filter(c => c.budget > 0);
+    const budgetTotale = round2(cantieriAnalysis.reduce((s, c) => s + c.valoreContratto, 0));
+    const costiTotali = round2(cantieriAnalysis.reduce((s, c) => s + c.costo, 0));
+    const margine = round2(budgetTotale - costiTotali);
+    const totaleFatturato = round2(cantieriAnalysis.reduce((s, c) => s + c.totaleFatturato, 0));
+    const totaleIncassato = round2(cantieriAnalysis.reduce((s, c) => s + c.totaleIncassato, 0));
+    const daFatturare = round2(cantieriAnalysis.reduce((s, c) => s + c.daFatturare, 0));
 
-    const top3BurnRate = [...cantieriAnalysis].sort((a, b) => b.burnRate - a.burnRate).slice(0, 3);
+    const topCantieri = cantieriAnalysis
+        .filter((c) => c.valoreContratto > 0)
+        .sort((a, b) => b.valoreContratto - a.valoreContratto)
+        .slice(0, 5);
+    const top3BurnRate = cantieriAnalysis
+        .filter((c) => c.valoreContratto > 0)
+        .sort((a, b) => b.burnRate - a.burnRate)
+        .slice(0, 3);
     const avgCPI = cantieriAnalysis.filter(c => c.cpi !== null).length > 0
         ? round2(cantieriAnalysis.filter(c => c.cpi !== null).reduce((s, c) => s + c.cpi, 0) / cantieriAnalysis.filter(c => c.cpi !== null).length)
         : null;
 
     res.json({
         budgetTotale: round2(budgetTotale),
-        speseTotali:  round2(speseTotali),
+        valoreContrattoTotale: round2(budgetTotale),
+        speseTotali:  costiTotali,
+        costiTotali,
+        costoManodoperaTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoManodopera, 0)),
+        costoMaterialiTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoMateriali, 0)),
+        costoSpeseTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoSpese, 0)),
+        totaleFatturato,
+        totaleIncassato,
+        daFatturare,
+        ricaviFatturati: totaleFatturato,
+        ricaviReali: totaleIncassato,
         margine,
         marginePct:   budgetTotale > 0 ? round2((margine / budgetTotale) * 100) : null,
+        margineFatturato: round2(totaleFatturato - costiTotali),
+        margineIncassato: round2(totaleIncassato - costiTotali),
         cpiMedio:     avgCPI,
+        topCantieri,
         top3BurnRate,
     });
 });
@@ -121,43 +178,53 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
 export const getWarehouseKPIs = asyncHandler(async (req, res) => {
     const prisma = getDb();
 
-    const [giacenze, movimenti] = await Promise.all([
-        prisma.giacenza.findMany({
-            include: { articolo: { select: { descrizione: true, costo_medio: true, codice_sku: true } } },
+    const [stockRows, lastMoveRows, totalMovimenti] = await Promise.all([
+        prisma.$queryRaw(
+            Prisma.sql`
+                SELECT
+                    g.articolo_id,
+                    a.codice_sku,
+                    a.descrizione,
+                    a.costo_medio,
+                    COALESCE(SUM(g.quantita_disponibile), 0) AS quantita_disponibile,
+                    COALESCE(SUM(g.quantita_riservata), 0) AS quantita_riservata,
+                    COALESCE(SUM((g.quantita_disponibile + g.quantita_riservata) * a.costo_medio), 0) AS valore_totale,
+                    COALESCE(SUM(g.quantita_disponibile * a.costo_medio), 0) AS valore_disponibile
+                FROM "Giacenza" g
+                INNER JOIN "Articolo" a ON a.id = g.articolo_id
+                GROUP BY g.articolo_id, a.codice_sku, a.descrizione, a.costo_medio
+            `
+        ),
+        prisma.movimentoMagazzino.groupBy({
+            by: ['articolo_id'],
+            _max: { data_movimento: true },
         }),
-        prisma.movimentoMagazzino.findMany({
-            orderBy: { data_movimento: 'desc' },
-            select: { articolo_id: true, data_movimento: true },
-        }),
+        prisma.movimentoMagazzino.count(),
     ]);
 
     // Capitale immobilizzato = Σ (quantità * costo_medio)
-    let capitaleImmobilizzato = 0;
-    let totalArticoli = 0;
-    for (const g of giacenze) {
-        const qty   = toNumber(g.quantita_disponibile) + toNumber(g.quantita_riservata);
-        const costo = toNumber(g.articolo.costo_medio);
-        capitaleImmobilizzato += qty * costo;
-        if (qty > 0) totalArticoli++;
-    }
+    const capitaleImmobilizzato = stockRows.reduce((sum, row) => sum + toNumber(row.valore_totale), 0);
+    const totalArticoli = stockRows.filter((row) => (
+        toNumber(row.quantita_disponibile) + toNumber(row.quantita_riservata)
+    ) > 0).length;
 
     // Ultimo movimento per articolo
     const lastMove = {};
-    for (const m of movimenti) {
-        if (!lastMove[m.articolo_id]) lastMove[m.articolo_id] = m.data_movimento;
+    for (const row of lastMoveRows) {
+        lastMove[row.articolo_id] = row._max?.data_movimento ?? null;
     }
 
-    // Dead stock: articoli con giacenza > 0 ma ultimo movimento > 60 giorni fa (o mai)
-    const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000);
-    const deadStock = giacenze
-        .filter(g => (toNumber(g.quantita_disponibile) + toNumber(g.quantita_riservata)) > 0)
-        .map(g => ({
-            articolo_id:   g.articolo_id,
-            codice_sku:    g.articolo.codice_sku,
-            descrizione:   g.articolo.descrizione,
-            quantita:      round2(toNumber(g.quantita_disponibile)),
-            valore:        round2(toNumber(g.quantita_disponibile) * toNumber(g.articolo.costo_medio)),
-            ultimo_movimento: lastMove[g.articolo_id] ?? null,
+    // Dead stock: articoli con giacenza > 0 ma ultimo movimento oltre soglia (o mai)
+    const sixtyDaysAgo = new Date(Date.now() - LIMITS.DEAD_STOCK_DAYS * 86400000);
+    const deadStock = stockRows
+        .filter(row => (toNumber(row.quantita_disponibile) + toNumber(row.quantita_riservata)) > 0)
+        .map(row => ({
+            articolo_id:   row.articolo_id,
+            codice_sku:    row.codice_sku,
+            descrizione:   row.descrizione,
+            quantita:      round2(toNumber(row.quantita_disponibile)),
+            valore:        round2(toNumber(row.valore_disponibile)),
+            ultimo_movimento: lastMove[row.articolo_id] ?? null,
         }))
         .filter(g => !g.ultimo_movimento || new Date(g.ultimo_movimento) < sixtyDaysAgo)
         .sort((a, b) => b.valore - a.valore)
@@ -166,7 +233,7 @@ export const getWarehouseKPIs = asyncHandler(async (req, res) => {
     res.json({
         capitaleImmobilizzato: round2(capitaleImmobilizzato),
         totalArticoli,
-        totalMovimenti: movimenti.length,
+        totalMovimenti,
         deadStock,
     });
 });
@@ -234,13 +301,13 @@ export const getOpsKPIs = asyncHandler(async (req, res) => {
         // Solo le verified CON timestamp admin → per calcolo time-to-approval
         prisma.reportEntry.findMany({
             where: {
-                stato_validazione: ValidationStatus.VERIFIED,
+                stato_validazione: ValidationStatus.APPROVED,
                 modified_by_admin_at: { not: null },
             },
             select: { created_at: true, modified_by_admin_at: true },
         }),
         // TUTTE le verified → per conteggio corretto pending
-        prisma.reportEntry.count({ where: { stato_validazione: ValidationStatus.VERIFIED } }),
+        prisma.reportEntry.count({ where: { stato_validazione: ValidationStatus.APPROVED } }),
         prisma.reportEntry.count({ where: { stato_validazione: ValidationStatus.REJECTED } }),
         prisma.reportEntry.count(),
     ]);
@@ -271,4 +338,3 @@ export const getOpsKPIs = asyncHandler(async (req, res) => {
         totalPending:     total - totalVerifiedCount - rejected,
     });
 });
-

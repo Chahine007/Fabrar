@@ -1,14 +1,22 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import { magazzinoKeys, cantierKeys } from './queryKeys';
+import { magazzinoKeys, cantierKeys, taskKeys } from './queryKeys';
+import type {
+  WarehouseArticle,
+  WarehouseLocation,
+  WarehouseMovementCreatePayload,
+  WarehouseMovementRow,
+  WarehouseStockRow,
+} from '../../types/warehouse';
 
 export const useArticoli = () => {
   return useQuery({
     queryKey: magazzinoKeys.articoli(),
     queryFn: async () => {
       const res = await api.get('/api/magazzino/articoli');
-      return res.json();
+      return res.json() as Promise<WarehouseArticle[]>;
     },
+    staleTime: 120_000,
   });
 };
 
@@ -17,8 +25,9 @@ export const useUbicazioni = () => {
     queryKey: magazzinoKeys.ubicazioni(),
     queryFn: async () => {
       const res = await api.get('/api/magazzino/ubicazioni');
-      return res.json();
+      return res.json() as Promise<WarehouseLocation[]>;
     },
+    staleTime: 120_000,
   });
 };
 
@@ -27,8 +36,9 @@ export const useGiacenze = () => {
     queryKey: magazzinoKeys.giacenze(),
     queryFn: async () => {
       const res = await api.get('/api/magazzino/giacenze');
-      return res.json();
+      return res.json() as Promise<WarehouseStockRow[]>;
     },
+    staleTime: 30_000,
   });
 };
 
@@ -37,39 +47,28 @@ export const useMovimentiCantiere = (cantiereId: number) => {
     queryKey: magazzinoKeys.cantiere(cantiereId),
     queryFn: async () => {
       const res = await api.get(`/api/magazzino/cantiere/${cantiereId}`);
-      return res.json();
+      return res.json() as Promise<WarehouseMovementRow[]>;
     },
     enabled: !!cantiereId,
+    staleTime: 30_000,
   });
 };
-
-interface CreaMovimentoParams {
-  tipo_movimento: 'CARICO' | 'SCARICO_CANTIERE';
-  articolo_id: number;
-  quantita: number;
-  ubicazione_da_id?: number;
-  ubicazione_a_id?: number;
-  cantiere_id?: number;
-  wbs_node_id?: number | null;
-  costo_acquisto?: number;
-}
 
 export const useCreaMovimento = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (payload: CreaMovimentoParams) => {
+    mutationFn: async (payload: WarehouseMovementCreatePayload) => {
       const res = await api.post('/api/magazzino/movimenti', payload);
-      return res.json();
+      return res.json() as Promise<WarehouseMovementRow>;
     },
     onSuccess: (data, variables) => {
-      // Invalida le chiavi magazzino per rifrescare le giacenze/articoli
       queryClient.invalidateQueries({ queryKey: magazzinoKeys.all() });
       
-      // Se era uno scarico su un cantiere, invalida il cantiere (per far ripartire la wbs e la timeline costi)
       if (variables.cantiere_id) {
         queryClient.invalidateQueries({ queryKey: cantierKeys.detail(variables.cantiere_id) });
         queryClient.invalidateQueries({ queryKey: cantierKeys.timeline(variables.cantiere_id) });
+        queryClient.invalidateQueries({ queryKey: taskKeys.all() });
       }
     },
   });

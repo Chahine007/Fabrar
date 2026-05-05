@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { verifyToken } from "../middleware/auth.js";
-import { authorizeRoles } from "../middlewares/role.middleware.js";
+import { authorizeRoles } from "../middleware/auth.js";
 import { validate } from "../middleware/validation.js";
 import {
   createTaskSchema,
@@ -34,7 +34,7 @@ function injectCantiereIdInBody(req, _res, next) {
   next();
 }
 
-router.use(verifyToken);
+router.use(["/api/tasks", "/api/tasks/:taskId", "/api/cantieri/:id/tasks"], verifyToken);
 
 router.get("/api/tasks", authorizeRoles(...TASK_ROLES), validate(listTasksSchema), getAllTasks);
 router.post("/api/tasks", authorizeRoles(...TASK_ROLES), validate(createTaskSchema), createTask);

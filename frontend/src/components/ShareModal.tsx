@@ -3,12 +3,13 @@ import { X, Send, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { useConversations } from '../hooks/api/useConversations';
+import type { ProjectShareItem } from '../types/project-detail';
 
 interface ShareModalProps {
   isOpen: boolean;
   onClose: () => void;
-  itemToShare: any;
-  onShare: (conversationId: string, message: string, item: any) => void;
+  itemToShare: ProjectShareItem | null;
+  onShare: (conversationId: string, message: string, item: ProjectShareItem | null) => void;
 }
 
 export default function ShareModal({ isOpen, onClose, itemToShare, onShare }: ShareModalProps) {

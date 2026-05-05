@@ -5,7 +5,8 @@ import { GoogleLogin, CredentialResponse } from '@react-oauth/google';
 import { useGoogleLogin } from '../hooks/api/useAuth';
 import { useAuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { setToken } from '../lib/api';
+import { getApiErrorMessage, type ApiErrorPayload } from '../lib/api';
+import type { DecodedAuthToken } from '../types/auth';
 
 export default function LoginPage() {
   // Legacy login state
@@ -41,7 +42,7 @@ export default function LoginPage() {
       if (!res.ok) throw new Error(data.error ?? 'Credenziali non valide.');
       
       // Update Context
-      const payload = JSON.parse(atob(data.token.split('.')[1]));
+      const payload = JSON.parse(atob(data.token.split('.')[1])) as DecodedAuthToken;
       login(data.token, {
         id: payload.id,
         username: payload.username,
@@ -49,8 +50,8 @@ export default function LoginPage() {
         employee_id: payload.employee_id,
       });
       navigate('/'); // Redirect to dashboard
-    } catch (err: any) {
-      setError(err instanceof Error ? err.message : 'Errore di connessione.');
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Errore di connessione.'));
     } finally {
       setIsLoading(false);
     }
@@ -83,12 +84,13 @@ export default function LoginPage() {
         cognome: data.user.cognome,
       });
       navigate('/');
-    } catch (err: any) {
-      if (err.needsInviteCode) {
+    } catch (err: unknown) {
+      const payload = typeof err === 'object' && err !== null ? err as ApiErrorPayload : {};
+      if (payload.needsInviteCode) {
         setIsNewEmployee(true);
         setError("Account Google non registrato. Inserisci il codice invito ricevuto dall'amministratore.");
       } else {
-        setError(err.error || "Errore durante l'accesso con Google.");
+        setError(getApiErrorMessage(err, "Errore durante l'accesso con Google."));
       }
     } finally {
       setIsLoading(false);

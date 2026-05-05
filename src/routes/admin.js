@@ -37,7 +37,10 @@ router.get("/admin/export.csv", verifyTokenAndRole(DASHBOARD_ROLES), async (req,
 
   const escapeCsv = (value) => {
     if (value === null || value === undefined) return "";
-    const s = String(value);
+    let s = String(value);
+    if (/^[=+\-@\t\r]/.test(s)) {
+      s = `'${s}`;
+    }
     if (s.includes("\"") || s.includes(",") || s.includes("\n") || s.includes("\r")) {
       return `"${s.replace(/\"/g, "\"\"")}"`;
     }

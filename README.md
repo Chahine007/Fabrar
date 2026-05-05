@@ -63,7 +63,18 @@ L'infrastruttura usa Cloudflare Tunnel per esporre in modo sicuro il bot su rete
 
 ## Autenticazione dashboard
 
-La dashboard e le API richiedono l'autenticazione JWT. Le credenziali iniziali di amministrazione sono definite in `.env` da `DASH_USER` e `DASH_PASS`.
+La dashboard e le API richiedono autenticazione JWT.
+
+Per creare l'utente amministratore iniziale usare lo script seed:
+
+```bash
+SEED_TELEGRAM_ID=123456 SEED_USERNAME=admin@example.com SEED_PASSWORD='PasswordSicura123!' npm run seed:admin
+```
+
+Variabili usate dal seed:
+- `SEED_TELEGRAM_ID`: Telegram ID numerico del dipendente da collegare.
+- `SEED_USERNAME`: username/email usata per il login web.
+- `SEED_PASSWORD`: password iniziale (minimo 8 caratteri).
 
 ## Export CSV (admin)
 

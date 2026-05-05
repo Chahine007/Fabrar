@@ -13,15 +13,17 @@ export const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
  */
 export function normalizeStatus(value, fallback = ValidationStatus.PENDING) {
     const upper = String(value ?? '').trim().toUpperCase();
+    if (upper === 'VERIFIED' || upper === 'VERIFY') return ValidationStatus.APPROVED;
+    if (upper === 'APPROVED' || upper === 'APPROVE') return ValidationStatus.APPROVED;
     return Object.values(ValidationStatus).includes(upper) ? upper : fallback;
 }
 
 export function isRejectedStatus(value) {
-    return String(value ?? '').toUpperCase() === ValidationStatus.REJECTED;
+    return normalizeStatus(value) === ValidationStatus.REJECTED;
 }
 
 export function isVerifiedStatus(value) {
-    return String(value ?? '').toUpperCase() === ValidationStatus.VERIFIED;
+    return normalizeStatus(value) === ValidationStatus.APPROVED;
 }
 
 export function isPendingStatus(value) {

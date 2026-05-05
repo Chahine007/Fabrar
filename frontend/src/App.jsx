@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { AuthProvider, useAuthContext } from "./context/AuthContext";
 import { ProtectedRoute, RoleRoute } from "./components/auth/RoleGuard";
+import { ToastProvider } from "./components/ui";
 
 // Unified Shell
 import ERPProShell from "./components/layout/ERPProShell";
@@ -18,8 +19,9 @@ import TabulatiOrariPage  from "./pages/TabulatiOrariPage";
 import TelegramAuditPage  from "./pages/TelegramAuditPage";
 import SettingsPage       from "./pages/SettingsPage";
 import WarehousePage      from "./pages/WarehousePage";
+import SuppliersPage      from "./pages/SuppliersPage";
+import MaterialRequestsPage from "./pages/MaterialRequestsPage";
 import ActivitiesPage     from "./pages/ActivitiesPage";
-import PlaceholderPage    from "./pages/PlaceholderPage";
 
 // Public Guard Component (redirects to home if already logged in)
 const PublicRoute = ({ children }) => {
@@ -40,7 +42,8 @@ const PublicRoute = ({ children }) => {
   return children;
 };
 
-const ALL_AUTH_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WORKER"];
+const ALL_AUTH_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN", "WORKER"];
+const WAREHOUSE_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN"];
 
 const HomeRedirect = () => {
   const { user } = useAuthContext();
@@ -51,6 +54,9 @@ const HomeRedirect = () => {
     case "HR":
       return <Navigate to="/hr" replace />;
     case "PROJECT_MANAGER":
+      return <Navigate to="/projects" replace />;
+    case "WAREHOUSEMAN":
+      return <Navigate to="/warehouse" replace />;
     case "WORKER":
       return <Navigate to="/timesheets" replace />;
     default:
@@ -82,30 +88,32 @@ function AppRoutes() {
         {/* ── OPERATIVO ── */}
         <Route path="/"           element={<HomeRedirect />} />
         <Route path="/dashboard"  element={<RoleRoute allowedRoles={["ADMIN"]}><Dashboard /></RoleRoute>} />
-        <Route path="/messages"   element={<MessagesPage />} />
+        <Route path="/messages"   element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><MessagesPage /></RoleRoute>} />
 
         {/* Pilastro 1: Routing a due livelli per i Progetti */}
-        <Route path="/projects"         element={<ProjectListPage />} />
-        <Route path="/projects/:id"     element={<ProjectDetailPage />} />
+        <Route path="/projects"         element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ProjectListPage /></RoleRoute>} />
+        <Route path="/projects/:id"     element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ProjectDetailPage /></RoleRoute>} />
 
-        <Route path="/activities" element={<ActivitiesPage />} />
+        <Route path="/activities" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ActivitiesPage /></RoleRoute>} />
 
         {/* ── RISORSE ── */}
         <Route path="/hr"                element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><EmployeesPage /></RoleRoute>} />
         <Route path="/personnel"         element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><Navigate to="/hr" replace /></RoleRoute>} />
         <Route path="/hr/employees/:id"  element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><EmployeeDetailPage /></RoleRoute>} />
         <Route path="/hr/tabulati"       element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><TabulatiOrariPage /></RoleRoute>} />
-        <Route path="/timesheets"        element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><TabulatiOrariPage /></RoleRoute>} />
+        <Route path="/timesheets"        element={<RoleRoute allowedRoles={["WORKER"]}><TabulatiOrariPage /></RoleRoute>} />
         {/* Legacy: /hr/audit → /hr/tabulati */}
         <Route path="/hr/audit"          element={<Navigate to="/hr/tabulati" replace />} />
-        <Route path="/documents"         element={<PlaceholderPage title="Documenti" description="Archivio file e gestione documentale." />} />
-        <Route path="/warehouse"         element={<RoleRoute allowedRoles={["ADMIN"]}><WarehousePage /></RoleRoute>} />
+        <Route path="/warehouse"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES}><WarehousePage /></RoleRoute>} />
+        <Route path="/suppliers"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES}><SuppliersPage /></RoleRoute>} />
+        <Route path="/material-requests" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><MaterialRequestsPage /></RoleRoute>} />
         <Route path="/finance"           element={<RoleRoute allowedRoles={["ADMIN"]}><Navigate to="/dashboard?tab=finanza" replace /></RoleRoute>} />
 
-        {/* ── BUSINESS ── */}
-        <Route path="/clients"  element={<PlaceholderPage title="Clienti" description="Anagrafica clienti e storico." />} />
-        <Route path="/invoices" element={<PlaceholderPage title="Fatture" description="Fatturazione attiva e passiva." />} />
-        <Route path="/reports"  element={<PlaceholderPage title="Report" description="Esportazione dati e reportistica." />} />
+        {/* Hidden until real production pages exist */}
+        <Route path="/documents" element={<Navigate to="/" replace />} />
+        <Route path="/clients"   element={<Navigate to="/" replace />} />
+        <Route path="/invoices"  element={<Navigate to="/" replace />} />
+        <Route path="/reports"   element={<Navigate to="/" replace />} />
 
         <Route path="/account"  element={<Navigate to="/settings/account" replace />} />
 
@@ -131,9 +139,11 @@ function App() {
   return (
     <GoogleOAuthProvider clientId={clientId}>
       <AuthProvider>
-        <BrowserRouter>
-          <AppRoutes />
-        </BrowserRouter>
+        <ToastProvider>
+          <BrowserRouter>
+            <AppRoutes />
+          </BrowserRouter>
+        </ToastProvider>
       </AuthProvider>
     </GoogleOAuthProvider>
   );

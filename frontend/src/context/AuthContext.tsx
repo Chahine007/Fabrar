@@ -1,15 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { jwtDecode } from 'jwt-decode';
 import { getToken, setToken as saveToken, clearToken } from '../lib/api';
-
-export interface UserData {
-  id: number;
-  username: string;
-  role: string;
-  employee_id: number | null;
-  nome?: string | null;
-  cognome?: string | null;
-}
+import type { DecodedAuthToken, UserData } from '../types/auth';
 
 interface AuthContextType {
   user: UserData | null;
@@ -30,7 +22,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const token = getToken();
       if (token) {
         try {
-          const decoded = jwtDecode<any>(token);
+          const decoded = jwtDecode<DecodedAuthToken>(token);
           // Check expiration
           if (decoded.exp && Date.now() / 1000 > decoded.exp) {
             clearToken();

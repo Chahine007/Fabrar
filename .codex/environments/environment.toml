@@ -9,3 +9,8 @@ script = ""
 name = "Run"
 icon = "run"
 command = "docker compose up -d --build"
+
+[[actions]]
+name = "log"
+icon = "debug"
+command = "docker compose logs -f backend"

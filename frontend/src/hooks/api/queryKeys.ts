@@ -12,6 +12,17 @@ export const magazzinoKeys = {
   cantiere:   (id: number) => [...magazzinoKeys.all(), 'cantiere', id] as const,
 };
 
+export const supplierKeys = {
+  all:    () => ['suppliers'] as const,
+  list:   (filters?: object) => [...supplierKeys.all(), 'list', filters ?? {}] as const,
+  detail: (id: number) => [...supplierKeys.all(), 'detail', id] as const,
+};
+
+export const materialRequestKeys = {
+  all:  () => ['material-requests'] as const,
+  list: (filters?: object) => [...materialRequestKeys.all(), 'list', filters ?? {}] as const,
+};
+
 export const cantierKeys = {
   all:    ()                => ['cantieri'] as const,
   list:   ()                => [...cantierKeys.all(), 'list'] as const,
@@ -53,6 +64,11 @@ export const dashboardKeys = {
   kpi: ()                   => [...dashboardKeys.all(), 'kpi'] as const,
 };
 
+export const billingKeys = {
+  all: () => ['billing'] as const,
+  project: (cantiereId: number) => [...billingKeys.all(), cantiereId] as const,
+};
+
 export const wbsKeys = {
   all:  ()                  => ['wbs'] as const,
   tree: (cantiereId: number) => [...wbsKeys.all(), 'tree', cantiereId] as const,
@@ -64,9 +80,17 @@ export const taskKeys = {
   detail: (id: number)           => [...taskKeys.all(), 'detail', id] as const,
 };
 
+export const timesheetKeys = {
+  all: () => ['timesheets'] as const,
+};
+
+export const expenseKeys = {
+  all: () => ['expenses'] as const,
+};
+
 export const userKeys = {
   all:              () => ['user'] as const,
   settings:         () => [...userKeys.all(), 'settings'] as const,
-  materialRequests: () => [...userKeys.all(), 'material-requests'] as const,
+  materialMovements: () => [...userKeys.all(), 'material-movements'] as const,
   supportContact:   () => [...userKeys.all(), 'support-contact'] as const,
 };

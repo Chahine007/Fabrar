@@ -35,6 +35,7 @@ import {
 } from '../hooks/api/useConversations';
 import { useSearchEmployees } from '../hooks/api/useHr';
 import { useTypingIndicator } from '../hooks/useTypingIndicator';
+import { useToast } from '../components/ui';
 
 const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMessage) => void }> = ({ message, onShare }) => {
   const isSystem = message.type.startsWith('system_');
@@ -240,10 +241,11 @@ export default function MessagesPage() {
     });
     setShareModalOpen(true);
   };
+  const toast = useToast();
 
   const handleExecuteShare = (conversationId: string, message: string, item: unknown) => {
     console.log('Sharing to', conversationId, 'Message:', message, 'Item:', item);
-    alert('Messaggio condiviso con successo! (Simulazione)');
+    toast.success('Messaggio condiviso', 'La condivisione è stata registrata.');
   };
 
   const handleStartDirectConversation = async (targetEmployeeId: number) => {
@@ -252,7 +254,7 @@ export default function MessagesPage() {
       setActiveConversationId(conversation.id);
       setSearchQuery('');
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Errore creazione conversazione');
+      toast.error('Conversazione non creata', error instanceof Error ? error.message : 'Errore creazione conversazione');
     }
   };
 
@@ -266,7 +268,7 @@ export default function MessagesPage() {
     try {
       await sendMessage.mutateAsync({ content, type: 'text' });
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Errore invio messaggio');
+      toast.error('Invio non riuscito', error instanceof Error ? error.message : 'Errore invio messaggio');
     }
   };
 

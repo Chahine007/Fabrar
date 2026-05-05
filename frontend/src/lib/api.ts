@@ -53,6 +53,23 @@ export function getTokenPayload(): Record<string, unknown> | null {
   }
 }
 
+export interface ApiErrorPayload {
+  error?: string;
+  message?: string;
+  details?: unknown;
+  needsInviteCode?: boolean;
+}
+
+export function getApiErrorMessage(error: unknown, fallback = 'Errore imprevisto'): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error !== null) {
+    const payload = error as ApiErrorPayload;
+    if (typeof payload.error === 'string') return payload.error;
+    if (typeof payload.message === 'string') return payload.message;
+  }
+  return fallback;
+}
+
 /**
  * Fetch autenticata — wrapper su fetch() con Authorization header automatico.
  * Gestisce automaticamente 401: cancella il token e ricarica la pagina.
@@ -60,9 +77,11 @@ export function getTokenPayload(): Record<string, unknown> | null {
 export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
   const token = getToken();
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...(opts.headers as Record<string, string> || {}),
   };
+  if (!(opts.body instanceof FormData) && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }

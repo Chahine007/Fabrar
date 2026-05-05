@@ -3,7 +3,7 @@
  * Endpoint: GET /api/dashboard/radar + /api/dashboard/bi/*
  */
 import { useQuery } from '@tanstack/react-query';
-import { apiFetch } from '../../lib/api';
+import { apiFetch, getApiErrorMessage } from '../../lib/api';
 import { dashboardKeys } from './queryKeys';
 
 // ─── Types (radar) ───────────────────────────────────────────────────────────
@@ -29,9 +29,29 @@ export interface DashboardRadar {
 export interface FinanceKPIs {
   budgetTotale: number;
   speseTotali:  number;
+  costiTotali?: number;
+  valoreContrattoTotale?: number;
+  costoManodoperaTotale?: number;
+  costoMaterialiTotale?: number;
+  costoSpeseTotale?: number;
   margine:      number;
   marginePct:   number | null;
   cpiMedio:     number | null;
+  topCantieri?: {
+    id: number;
+    nome: string;
+    budget: number;
+    valoreContratto: number;
+    ricavoPrevisto: number;
+    costo: number;
+    costoManodopera: number;
+    costoMateriali: number;
+    costoSpese: number;
+    margine: number;
+    marginePct: number | null;
+    burnRate: number;
+    cpi: number | null;
+  }[];
   top3BurnRate: { id: number; nome: string; budget: number; costo: number; burnRate: number; cpi: number | null }[];
 }
 
@@ -73,7 +93,7 @@ async function fetchJson<T>(path: string): Promise<T> {
   const res = await apiFetch(path);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as any).error ?? `Errore ${res.status}`);
+    throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
   }
   return res.json() as Promise<T>;
 }

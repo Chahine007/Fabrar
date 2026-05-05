@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import { DateTime } from "luxon";
 import logger from "../logger.js";
 import {
@@ -25,9 +26,51 @@ import { handleGdprAccept, sendGdprNotice } from "./registration.js";
 import { handleReport, saveManualReportRows, buildConfirmMessage, calcOreFromOrari, buildWbsKeyboard } from "./reportHandler.js";
 
 import { handleExpensePhoto, consumePendingExpense } from "./expenseHandler.js";
-import { ValidationStatus } from "../constants.js";
+import { SECURITY, ValidationStatus } from "../constants.js";
 
 const log = logger.child({ module: "bot" });
+const pairingAttempts = new Map();
+const PAIRING_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+const MAX_PAIRING_ATTEMPTS = 5;
+
+function isFreshTelegramPairingCode(code) {
+  const parts = String(code ?? "").trim().toUpperCase().split("-");
+  if (parts.length !== 3 || parts[0] !== "TG") return false;
+
+  const issuedAt = Number.parseInt(parts[1], 36);
+  if (!Number.isFinite(issuedAt)) return false;
+
+  return Date.now() - issuedAt <= SECURITY.TELEGRAM_PAIRING_TTL_MS;
+}
+
+function hashTelegramPairingCode(code) {
+  return crypto.createHash("sha256").update(String(code).trim().toUpperCase()).digest("hex");
+}
+
+function canAttemptPairing(telegramId) {
+  const key = String(telegramId);
+  const now = Date.now();
+  const entry = pairingAttempts.get(key);
+  if (!entry || now > entry.resetAt) {
+    pairingAttempts.set(key, { count: 0, resetAt: now + PAIRING_ATTEMPT_WINDOW_MS });
+    return true;
+  }
+  return entry.count < MAX_PAIRING_ATTEMPTS;
+}
+
+function recordFailedPairingAttempt(telegramId) {
+  const key = String(telegramId);
+  const now = Date.now();
+  const entry = pairingAttempts.get(key) ?? { count: 0, resetAt: now + PAIRING_ATTEMPT_WINDOW_MS };
+  pairingAttempts.set(key, {
+    count: entry.count + 1,
+    resetAt: entry.resetAt,
+  });
+}
+
+function resetPairingAttempts(telegramId) {
+  pairingAttempts.delete(String(telegramId));
+}
 const TIMEZONE = process.env.TIMEZONE || "Europe/Rome";
 
 function isGdprAccepted(employee) {
@@ -242,9 +285,20 @@ export async function handleTelegramUpdate(update) {
 
   if (!employee) {
     if (text.toUpperCase().startsWith("TG-")) {
+      if (!canAttemptPairing(telegramId)) {
+        await tgSendMessage(chatId, "❌ Troppi tentativi. Genera un nuovo codice dalla Web App e riprova più tardi.");
+        return;
+      }
+
       const { getDb } = await import("../db/index.js");
       const code = text.toUpperCase();
-      const empByCode = await getDb().employee.findUnique({ where: { telegram_pairing_code: code } });
+      if (!isFreshTelegramPairingCode(code)) {
+        recordFailedPairingAttempt(telegramId);
+        await tgSendMessage(chatId, "❌ Codice non valido o scaduto.");
+        return;
+      }
+
+      const empByCode = await getDb().employee.findUnique({ where: { telegram_pairing_code: hashTelegramPairingCode(code) } });
       if (empByCode) {
         await updateEmployee(empByCode.id, { 
           telegram_id: telegramId, 
@@ -252,9 +306,11 @@ export async function handleTelegramUpdate(update) {
           telegram_pairing_code: null,
           stato_registrazione: "registrato"
         });
+        resetPairingAttempts(telegramId);
         await tgSendMessage(chatId, `✅ Account collegato con successo! Benvenuto ${empByCode.nome || "Dipendente"}. Usa /accetto_gdpr per continuare.`);
         return;
       } else {
+        recordFailedPairingAttempt(telegramId);
         await tgSendMessage(chatId, "❌ Codice non valido o scaduto.");
         return;
       }
@@ -438,7 +494,7 @@ export async function handleTelegramUpdate(update) {
     await createReportEntry({
       report_id: reportId,
       cantiere_id: targetCantiere.id,
-      stato_validazione: ValidationStatus.VERIFIED,
+      stato_validazione: ValidationStatus.APPROVED,
       fonte: "GPS",
     });
     await updateReportHeader(reportId, { data_utc: new Date().toISOString() });

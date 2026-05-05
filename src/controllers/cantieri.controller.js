@@ -29,6 +29,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ValidationStatus } from "../constants.js";
 import { syncCantiereBudget, computeFinancialTimeline, computeFinancialKpis } from "../domain/cantiere/cantiereService.js";
 import { buildWbsTree, validateNodeDepth } from "../domain/cantiere/wbsService.js";
+import { getProjectFinancials } from "../domain/finance/financeService.js";
 
 async function loadCantiereCostDataset(prisma, cantiereId) {
     const cantiere = await prisma.cantiere.findUnique({
@@ -71,7 +72,7 @@ export const listCantieri = asyncHandler(async (req, res) => {
 
 export const createCantiere = asyncHandler(async (req, res) => {
     // La validazione e la coercizione dei tipi sono già state eseguite dal middleware Zod.
-    const { nome, indirizzo, lat, lng, budget } = req.body;
+    const { nome, indirizzo, lat, lng, budget, valore_contratto, budget_spese } = req.body;
 
     await dbCreateCantiere({
         nome,
@@ -79,6 +80,8 @@ export const createCantiere = asyncHandler(async (req, res) => {
         lat,
         lng,
         budget,
+        valore_contratto,
+        budget_spese,
     });
     res.status(201).json({ ok: true });
 });
@@ -109,7 +112,7 @@ export const getFinancialTimeline = asyncHandler(async (req, res) => {
 
     res.json({
         nome:             dataset.cantiere.nome,
-        budget:           toNumber(dataset.cantiere.budget),
+        budget:           toNumber(dataset.cantiere.valore_contratto ?? dataset.cantiere.budget),
         raggio_tolleranza: dataset.cantiere.raggio_tolleranza || 300,
         months, costoReale, costoPerMese,
     });
@@ -122,10 +125,40 @@ export const getDetails = asyncHandler(async (req, res) => {
     const dataset = await loadCantiereCostDataset(getDb(), cantiereId);
     if (!dataset) return res.status(404).json({ error: "Cantiere non trovato." });
 
-    const { kpi, perDipendente } = computeFinancialKpis(dataset);
+    const { kpi: legacyKpi, perDipendente } = computeFinancialKpis(dataset);
+    const financials = await getProjectFinancials(cantiereId);
+    const budget = toNumber(dataset.cantiere.valore_contratto ?? dataset.cantiere.budget);
+    const nMesi = legacyKpi.nMesi ?? 1;
+    const kpi = {
+        ...legacyKpi,
+        budget,
+        costoTotale: financials.costoTotale,
+        costoManodopera: financials.costoManodopera,
+        costoMateriali: financials.costoMateriali,
+        costoSpese: financials.costoSpese,
+        totaleFatturato: financials.totaleFatturato,
+        totaleIncassato: financials.totaleIncassato,
+        daFatturare: financials.daFatturare,
+        ricaviFatturati: financials.ricaviFatturati,
+        ricaviReali: financials.ricaviReali,
+        margine: round2(budget - financials.costoTotale),
+        margineFatturato: financials.margineFatturato,
+        margineIncassato: financials.margineIncassato,
+        burnRate: round2(financials.costoTotale / Math.max(nMesi, 1)),
+        nMesi,
+    };
     const { report_entries: _e, spese: _s, ...cantiere } = dataset.cantiere;
 
-    res.json({ cantiere: { ...cantiere, budget: kpi.budget }, kpi, perDipendente });
+    res.json({
+        cantiere: {
+            ...cantiere,
+            budget: kpi.budget,
+            valore_contratto: toNumber(cantiere.valore_contratto),
+            budget_spese: toNumber(cantiere.budget_spese),
+        },
+        kpi,
+        perDipendente,
+    });
 });
 
 export const getCantiereMaterials = asyncHandler(async (req, res) => {
@@ -224,7 +257,12 @@ export const downloadDocument = asyncHandler(async (req, res) => {
     const uploadDir = process.env.UPLOAD_DIR
         ? path.resolve(process.env.UPLOAD_DIR)
         : path.resolve('./uploads');
-    const filePath = path.join(uploadDir, doc.file_path);
+    const resolvedUploadDir = path.resolve(uploadDir);
+    const filePath = path.resolve(resolvedUploadDir, doc.file_path);
+
+    if (filePath !== resolvedUploadDir && !filePath.startsWith(`${resolvedUploadDir}${path.sep}`)) {
+        return res.status(403).json({ error: "Percorso documento non autorizzato." });
+    }
 
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: "File fisico non trovato." });
     res.download(filePath, doc.name);
@@ -259,7 +297,7 @@ export const getCantiereSettings = asyncHandler(async (req, res) => {
             bot_checkin_gps: true, bot_anomaly_action: true, bot_wbs_prompt_thr: true,
             budget_contingency: true, kpi_warning_thr: true, kpi_critical_thr: true,
             client_name: true, client_ref_email: true, pm_id: true, site_manager_id: true,
-            budget: true,
+            budget: true, valore_contratto: true, budget_spese: true,
         }
     });
     if (!cantiere) return res.status(404).json({ error: "Cantiere non trovato." });
@@ -270,17 +308,53 @@ export const getCantiereSettings = asyncHandler(async (req, res) => {
         select: { id: true, username: true, employee: { select: { nome: true, cognome: true } } }
     });
 
-    res.json({ settings: cantiere, pms });
+    res.json({
+        settings: {
+            ...cantiere,
+            budget: toNumber(cantiere.budget),
+            valore_contratto: toNumber(cantiere.valore_contratto),
+            budget_spese: toNumber(cantiere.budget_spese),
+            budget_contingency: toNumber(cantiere.budget_contingency),
+        },
+        pms,
+    });
 });
 
 export const updateCantiereSettings = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
 
+    const allowed = [
+        "nome",
+        "indirizzo",
+        "lat",
+        "lng",
+        "raggio_tolleranza",
+        "bot_checkin_gps",
+        "bot_anomaly_action",
+        "bot_wbs_prompt_thr",
+        "budget_contingency",
+        "valore_contratto",
+        "budget_spese",
+        "kpi_warning_thr",
+        "kpi_critical_thr",
+        "client_name",
+        "client_ref_email",
+        "pm_id",
+        "site_manager_id",
+    ];
+    const data = {};
+    for (const key of allowed) {
+        if (req.body[key] !== undefined) data[key] = req.body[key];
+    }
+    if (Object.keys(data).length === 0) {
+        return res.status(400).json({ error: "Nessuna impostazione valida fornita." });
+    }
+
     const prisma = getDb();
     const cantiere = await prisma.cantiere.update({
         where: { id: cantiereId },
-        data: req.body
+        data,
     });
 
     res.json(cantiere);

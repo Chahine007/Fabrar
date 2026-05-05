@@ -3,7 +3,7 @@
  * Supporta filtri query (type, status, employee_id) per selezione granulare.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '../../lib/api';
+import { apiFetch, getApiErrorMessage } from '../../lib/api';
 import { hrKeys, employeeKeys } from './queryKeys';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -102,8 +102,18 @@ export interface HrAlert {
   last_report_date: string | null;
 }
 
+export interface HrAlertsResponse {
+  pending: {
+    reports: number;
+    spese: number;
+    total: number;
+  };
+  anomalies: string[];
+  warnings: Array<{ type: string; name: string; text: string }>;
+}
+
 export type AuditType = 'ore' | 'spese';
-export type AuditStatus = 'pending' | 'verified' | 'rejected';
+export type AuditStatus = 'pending' | 'verified' | 'approved' | 'rejected';
 
 export interface AuditEntry {
   id: number;
@@ -115,9 +125,12 @@ export interface AuditEntry {
   employee_id: number;
   nome: string | null;
   cognome: string | null;
+  fornitore?: string | null;
   note: string | null;
   cantiere_nome: string | null;
   cantiere_id: number | null;
+  task_id?: number | null;
+  task_title?: string | null;
   luogo_cantiere: string | null;
   report_id?: number;
 }
@@ -143,7 +156,7 @@ async function fetchJson<T>(path: string): Promise<T> {
   const res = await apiFetch(path);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as any).error ?? `Errore ${res.status}`);
+    throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
   }
   return res.json() as Promise<T>;
 }
@@ -166,11 +179,12 @@ function buildQuery(filters: AuditFilters): string {
  * Lista dipendenti con KPI mensili (costo_orario, ore_mese, costo_mese).
  * Endpoint: GET /api/employees
  */
-export function useEmployees() {
+export function useEmployees(enabled = true) {
   return useQuery({
     queryKey: employeeKeys.list(),
     queryFn:  () => fetchJson<EmployeeWithKPI[]>('/api/employees'),
     staleTime: 60_000,
+    enabled,
   });
 }
 
@@ -224,7 +238,7 @@ export function useUpdateEmployee() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? `Errore ${res.status}`);
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
       }
       return res.json();
     },
@@ -246,7 +260,7 @@ export function useCreateEmployee() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? `Errore ${res.status}`);
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
       }
       return res.json();
     },
@@ -271,7 +285,7 @@ export function useSetEmployeeCost() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? `Errore ${res.status}`);
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
       }
       return res.json();
     },
@@ -286,7 +300,7 @@ export function useSetEmployeeCost() {
 export function useHrAlerts(enabled = true) {
   return useQuery({
     queryKey: hrKeys.alerts(),
-    queryFn: () => fetchJson<HrAlert[]>('/api/hr/alerts'),
+    queryFn: () => fetchJson<HrAlertsResponse>('/api/hr/alerts'),
     staleTime: 60_000, // alert non cambiano ogni secondo
     enabled,
   });
@@ -350,7 +364,7 @@ export function useUpdateReportEntry() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as any).error ?? `Errore ${res.status}`);
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
       }
       return res.json();
     },

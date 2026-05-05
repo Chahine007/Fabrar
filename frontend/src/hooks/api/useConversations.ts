@@ -249,6 +249,7 @@ export function useMessages(conversationId: string | null) {
     queryKey: conversationId ? conversationKeys.messages(conversationId) : ['messages', 'idle'],
     queryFn: () => fetchJson<ChatMessage[]>(`/api/conversations/${conversationId}/messages`),
     enabled: Boolean(conversationId),
+    staleTime: 5_000,
   });
 }
 

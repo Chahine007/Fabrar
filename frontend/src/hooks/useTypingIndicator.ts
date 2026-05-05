@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSocket } from './useSocket';
+import type { UserData } from '../types/auth';
 
 interface TypingUserEntry {
     userId: number;
@@ -10,7 +11,7 @@ interface TypingUsersState {
     [conversationId: string]: TypingUserEntry[];
 }
 
-export const useTypingIndicator = (activeConvId: string | null, currentUser: any) => {
+export const useTypingIndicator = (activeConvId: string | null, currentUser: UserData | null) => {
     const { socket } = useSocket(currentUser?.employee_id);
     const [typingUsers, setTypingUsers] = useState<TypingUsersState>({});
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);

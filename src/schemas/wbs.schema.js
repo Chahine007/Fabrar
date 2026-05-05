@@ -34,3 +34,12 @@ export const updateWbsNodeSchema = z.object({
       message: "Nessun campo da aggiornare.",
     }),
 });
+
+export const deleteWbsNodeSchema = z.object({
+  params: z.object({
+    id: z.coerce.number().positive("ID cantiere non valido."),
+    nodeId: z.coerce.number().positive("ID nodo non valido."),
+  }),
+  query: z.object({}).passthrough(),
+  body: z.object({}).passthrough(),
+});
