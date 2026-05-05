@@ -12,9 +12,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Building2, Users, Clock, AlertCircle, CheckSquare, FileText,
-  MessageSquare, Plus, ChevronRight, UploadCloud, FileText as FileTextIcon,
+  MessageSquare, Plus, ChevronRight, ChevronDown, UploadCloud, FileText as FileTextIcon,
   Image as ImageIcon, CheckCircle2, Paperclip, Send, Download,
-  Activity, ArrowLeft, Bot, RefreshCw, MessageCircle, Hash, BarChart3, Euro, X, Trash2,
+  Activity, ArrowLeft, Bot, RefreshCw, MessageCircle, Hash, BarChart3, Euro, X, Trash2, Package,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -67,16 +67,12 @@ import { UI_LABELS } from '../lib/labels';
 // ─── Tab Configuration ────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: 'overview',    label: 'Overview' },
-  { id: 'activities',  label: 'Attività' },
-  { id: 'hours',      label: '⏱️ Ore' },
-  { id: 'job-costing', label: '💶 Job Costing' },
-  { id: 'billing',    label: '🧾 Fatturazione' },
-  { id: 'wbs',        label: '⚙️ Struttura / WBS' },
-  { id: 'materiali',  label: '📦 Materiali' },
-  { id: 'documents',   label: 'Documenti' },
-  { id: 'telegram',    label: '🤖 Feed / Log' },
-  { id: 'settings',   label: '⚙️ Impostazioni' }
+  { id: 'overview', label: 'Panoramica' },
+  { id: 'operations', label: 'Operativita' },
+  { id: 'resources', label: 'Risorse' },
+  { id: 'finance', label: 'Contabilita' },
+  { id: 'documents', label: 'Documenti' },
+  { id: 'settings', label: 'Impostazioni' }
 ];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -1225,6 +1221,176 @@ const InvoicesTab = ({ cantiereId }: { cantiereId: number }) => {
   );
 };
 
+type ProjectSubTab = {
+  id: string;
+  label: string;
+  description?: string;
+  icon: React.ElementType;
+  render: () => React.ReactNode;
+};
+
+const ProjectSubTabs = ({
+  tabs,
+  initialTab,
+}: {
+  tabs: ProjectSubTab[];
+  initialTab?: string;
+}) => {
+  const firstTab = tabs[0]?.id ?? '';
+  const [activeSubTab, setActiveSubTab] = useState(initialTab ?? firstTab);
+
+  useEffect(() => {
+    if (initialTab && tabs.some((tab) => tab.id === initialTab)) {
+      setActiveSubTab(initialTab);
+    }
+  }, [initialTab]);
+
+  const activeTabConfig = tabs.find((tab) => tab.id === activeSubTab) ?? tabs[0];
+
+  if (!activeTabConfig) return null;
+
+  return (
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="bg-card border border-border rounded-3xl p-2 shadow-sm">
+        <div className="flex flex-wrap gap-2">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeSubTab === tab.id;
+
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveSubTab(tab.id)}
+                className={cn(
+                  'flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold transition-all',
+                  'border min-h-[44px]',
+                  isActive
+                    ? 'bg-accent text-white border-accent shadow-lg shadow-accent/20'
+                    : 'bg-background text-text-secondary border-border hover:text-text-primary hover:border-accent/30'
+                )}
+              >
+                <Icon size={16} />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {activeTabConfig.description && (
+        <div className="rounded-2xl border border-border bg-card px-5 py-4 text-sm text-text-secondary shadow-sm">
+          {activeTabConfig.description}
+        </div>
+      )}
+
+      <div>{activeTabConfig.render()}</div>
+    </div>
+  );
+};
+
+const ProjectOperationsTab = ({
+  cantiereId,
+  cantiereName,
+  onShare,
+  initialTab,
+}: {
+  cantiereId: number;
+  cantiereName: string;
+  onShare: (item: unknown) => void;
+  initialTab?: string;
+}) => (
+  <ProjectSubTabs
+    initialTab={initialTab}
+    tabs={[
+      {
+        id: 'tasks',
+        label: 'Attivita',
+        description: 'Task, assegnazioni e stato operativo del cantiere.',
+        icon: CheckSquare,
+        render: () => <ActivitiesTab cantiereId={cantiereId} onShare={onShare} />,
+      },
+      {
+        id: 'wbs',
+        label: 'WBS',
+        description: 'Struttura di lavoro e nodi tecnici del progetto.',
+        icon: Hash,
+        render: () => <WbsTab cantiereId={cantiereId} />,
+      },
+      {
+        id: 'project-messages',
+        label: 'Messaggi',
+        description: 'Conversazione collegata al cantiere.',
+        icon: MessageSquare,
+        render: () => <MessagesTab cantiereId={cantiereId} cantierNome={cantiereName} />,
+      },
+      {
+        id: 'feed',
+        label: 'Feed / Log',
+        description: 'Eventi Telegram e registrazioni operative importate.',
+        icon: Bot,
+        render: () => <TelegramFeedTab cantiereId={cantiereId} />,
+      },
+    ]}
+  />
+);
+
+const ProjectResourcesTab = ({
+  cantiereId,
+  initialTab,
+}: {
+  cantiereId: number;
+  initialTab?: string;
+}) => (
+  <ProjectSubTabs
+    initialTab={initialTab}
+    tabs={[
+      {
+        id: 'hours',
+        label: 'Ore',
+        description: 'Tabulati, consuntivi e costo manodopera del cantiere.',
+        icon: Clock,
+        render: () => <HoursTab cantiereId={cantiereId} />,
+      },
+      {
+        id: 'materials',
+        label: 'Materiali',
+        description: 'Movimenti, scarichi e materiali imputati al progetto.',
+        icon: Package,
+        render: () => <MaterialiTab cantiereId={cantiereId} />,
+      },
+    ]}
+  />
+);
+
+const ProjectFinanceTab = ({
+  cantiereId,
+  initialTab,
+}: {
+  cantiereId: number;
+  initialTab?: string;
+}) => (
+  <ProjectSubTabs
+    initialTab={initialTab}
+    tabs={[
+      {
+        id: 'job-costing',
+        label: 'Job Costing',
+        description: 'Confronto tra budget, costi reali e delta per attivita.',
+        icon: BarChart3,
+        render: () => <JobCostingTab cantiereId={cantiereId} />,
+      },
+      {
+        id: 'billing',
+        label: 'Fatturazione',
+        description: 'Piano rate, fatture emesse e incassi del cantiere.',
+        icon: Euro,
+        render: () => <BillingTab cantiereId={cantiereId} />,
+      },
+    ]}
+  />
+);
+
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -1237,6 +1403,7 @@ export default function ProjectDetailPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [activeTab, setActiveTab] = useState('overview');
+  const [projectActionsOpen, setProjectActionsOpen] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [itemToShare, setItemToShare] = useState<unknown>(null);
 
@@ -1277,19 +1444,52 @@ export default function ProjectDetailPage() {
 
   const renderTab = () => {
     switch (activeTab) {
-      case 'overview':   return <OverviewTab cantiereId={cantiereId} />;
-      case 'activities': return <ActivitiesTab cantiereId={cantiereId} onShare={handleShare} />;
-      case 'hours':      return <HoursTab cantiereId={cantiereId} />;
-      case 'job-costing': return <JobCostingTab cantiereId={cantiereId} />;
-      case 'billing':    return <BillingTab cantiereId={cantiereId} />;
-      case 'wbs':        return <WbsTab cantiereId={cantiereId} />;
-      case 'materiali':  return <MaterialiTab cantiereId={cantiereId} />;
-      case 'messages':   return <MessagesTab cantiereId={cantiereId} cantierNome={cantiere?.nome ?? ''} />;
+      case 'overview':
+        return <OverviewTab cantiereId={cantiereId} />;
+      case 'operations':
+      case 'activities':
+      case 'wbs':
+      case 'messages':
+      case 'telegram':
+        return (
+          <ProjectOperationsTab
+            cantiereId={cantiereId}
+            cantiereName={cantiere?.nome ?? ''}
+            onShare={handleShare}
+            initialTab={
+              activeTab === 'wbs'
+                ? 'wbs'
+                : activeTab === 'messages'
+                  ? 'project-messages'
+                  : activeTab === 'telegram'
+                    ? 'feed'
+                    : 'tasks'
+            }
+          />
+        );
+      case 'resources':
+      case 'hours':
+      case 'materiali':
+      case 'warehouse':
+        return (
+          <ProjectResourcesTab
+            cantiereId={cantiereId}
+            initialTab={activeTab === 'materiali' || activeTab === 'warehouse' ? 'materials' : 'hours'}
+          />
+        );
+      case 'finance':
+      case 'job-costing':
+      case 'billing':
+      case 'invoices':
+        return (
+          <ProjectFinanceTab
+            cantiereId={cantiereId}
+            initialTab={activeTab === 'billing' ? 'billing' : 'job-costing'}
+          />
+        );
       case 'documents':  return <DocumentsTab cantiereId={cantiereId} />;
-      case 'warehouse':  return <MaterialiTab cantiereId={cantiereId} />;
-      case 'telegram':   return <TelegramFeedTab cantiereId={cantiereId} />;
       case 'settings':   return <CantiereSettingsTab cantiereId={cantiereId} />;
-      default:           return null;
+      default:           return <OverviewTab cantiereId={cantiereId} />;
     }
   };
 
@@ -1342,7 +1542,7 @@ export default function ProjectDetailPage() {
             </div>
           </div>
 
-          {/* Action Buttons */}
+          {/* Action Bar */}
           <div className="flex flex-wrap items-center gap-3">
             {genyaImport.data && (
               <span className="text-xs font-medium text-text-secondary bg-card border border-border px-3 py-2 rounded-xl">
@@ -1357,35 +1557,78 @@ export default function ProjectDetailPage() {
 
             <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileSelected} />
             <button
-              onClick={handleGenyaImport}
-              disabled={genyaImport.isPending}
-              className="flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-background text-text-primary rounded-xl text-sm font-bold transition-all border border-border shadow-sm disabled:opacity-50"
-              title={UI_LABELS.module.genya.ui}
-            >
-              {genyaImport.isPending
-                ? <div className="w-4 h-4 border-2 border-border border-t-accent rounded-full animate-spin" />
-                : <Download size={16} />}
-              {UI_LABELS.module.genya.ui}
-            </button>
-
-            <button
-              onClick={() => setActiveTab('documents')}
-              className="flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-background text-text-primary rounded-xl text-sm font-bold transition-all border border-border shadow-sm"
-            >
-              <FileText size={16} /> Documenti
-            </button>
-            <button
               onClick={() => setActiveTab('activities')}
-              className="flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-background text-text-primary rounded-xl text-sm font-bold transition-all border border-border shadow-sm"
+              className="flex items-center gap-2 px-4 py-2.5 bg-accent hover:bg-accent/90 text-white rounded-xl text-sm font-bold transition-all border border-accent shadow-lg shadow-accent/20"
             >
               <CheckSquare size={16} /> Nuovo Task
             </button>
-            <button className="flex items-center gap-2 px-4 py-2.5 bg-success-bg hover:opacity-80 text-success-text rounded-xl text-sm font-bold transition-all border border-success-border shadow-sm">
+            <button
+              onClick={() => setActiveTab('hours')}
+              className="flex items-center gap-2 px-4 py-2.5 bg-success-bg hover:opacity-80 text-success-text rounded-xl text-sm font-bold transition-all border border-success-border shadow-sm"
+            >
               <Clock size={16} /> Log Ore
             </button>
-            <button className="flex items-center gap-2 px-4 py-2.5 bg-danger-bg hover:opacity-80 text-danger-text rounded-xl text-sm font-bold transition-all border border-danger-border shadow-sm">
-              <AlertCircle size={16} /> Segnala
-            </button>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setProjectActionsOpen((open) => !open)}
+                className="flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-background text-text-primary rounded-xl text-sm font-bold transition-all border border-border shadow-sm"
+              >
+                Azioni
+                <ChevronDown
+                  size={16}
+                  className={cn('transition-transform', projectActionsOpen && 'rotate-180')}
+                />
+              </button>
+
+              <AnimatePresence>
+                {projectActionsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                    transition={{ duration: 0.14 }}
+                    className="absolute right-0 top-full mt-2 w-64 rounded-2xl border border-border bg-card p-2 shadow-xl z-30"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectActionsOpen(false);
+                        handleGenyaImport();
+                      }}
+                      disabled={genyaImport.isPending}
+                      className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-primary hover:bg-background transition-colors disabled:opacity-50"
+                    >
+                      {genyaImport.isPending
+                        ? <div className="w-4 h-4 border-2 border-border border-t-accent rounded-full animate-spin" />
+                        : <Download size={16} />}
+                      {UI_LABELS.module.genya.ui}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectActionsOpen(false);
+                        setActiveTab('documents');
+                      }}
+                      className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-primary hover:bg-background transition-colors"
+                    >
+                      <FileText size={16} /> Vai ai Documenti
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectActionsOpen(false);
+                        setActiveTab('messages');
+                      }}
+                      className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-danger-text hover:bg-danger-bg transition-colors"
+                    >
+                      <AlertCircle size={16} /> Segnala Problema
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
 

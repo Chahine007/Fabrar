@@ -7,7 +7,6 @@ import {
   FileStack, 
   Package, 
   Activity, 
-  BarChart3, 
   Euro,
   Settings, 
   Search, 
@@ -17,7 +16,6 @@ import {
   LogOut,
   Briefcase,
   Menu,
-  Bot,
   ClipboardList,
   ChevronDown,
   Truck,
@@ -51,41 +49,48 @@ const WAREHOUSE_ROLES = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'];
 
 const NAV_GROUPS: NavGroup[] = [
   {
-    title: 'OPERATIVO',
+    title: 'DASHBOARD',
     items: [
       { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard', id: 'dashboard', roles: ['ADMIN'] },
-      { icon: MessageSquare, label: 'Messaggi', path: '/messages', id: 'messages' },
-      { icon: Briefcase, label: 'Progetti', path: '/projects', id: 'projects' },
-      { icon: Activity, label: 'Attività', path: '/activities', id: 'activities' },
     ]
   },
   {
-    title: 'RISORSE',
+    title: 'OPERATIVITA',
+    items: [
+      { icon: Briefcase, label: 'Progetti', path: '/projects', id: 'projects' },
+      { icon: Activity, label: 'Attività', path: '/activities', id: 'activities' },
+      { icon: MessageSquare, label: 'Messaggi', path: '/messages', id: 'messages' },
+    ]
+  },
+  {
+    title: 'RISORSE UMANE',
     items: [
       { 
         icon: Users,          
         label: 'Gestione Personale', 
         path: '/hr',          
         id: 'hr',
-        roles: ['ADMIN', 'HR'],
-        subItems: [
-          { icon: ClipboardList, label: 'Tabulati Orari', path: '/hr/tabulati', id: 'hr-tabulati', roles: ['ADMIN', 'HR'] }
-        ]
+        roles: ['ADMIN', 'HR']
       },
-      { icon: ClipboardList, label: 'Le Mie Ore / Spese', path: '/timesheets', id: 'my-timesheets' },
-      { icon: FileStack,      label: 'Documenti',           path: '/documents',   id: 'documents' },
+      { icon: ClipboardList, label: 'Tabulati Orari', path: '/hr/tabulati', id: 'hr-tabulati', roles: ['ADMIN', 'HR'] },
+      { icon: ClipboardList, label: 'Le Mie Ore / Spese', path: '/timesheets', id: 'my-timesheets', roles: ['WORKER'] },
+    ]
+  },
+  {
+    title: 'LOGISTICA',
+    items: [
       { icon: Package,        label: 'Magazzino',           path: '/warehouse',   id: 'warehouse', roles: WAREHOUSE_ROLES },
       { icon: Truck,          label: 'Fornitori',           path: '/suppliers',   id: 'suppliers', roles: WAREHOUSE_ROLES },
       { icon: ClipboardList,  label: 'Richieste Materiali', path: '/material-requests', id: 'material-requests', roles: ALL_AUTH_ROLES },
     ]
   },
   {
-    title: 'BUSINESS',
+    title: 'AMMINISTRAZIONE',
     items: [
       { icon: Euro, label: 'Finanza', path: '/finance', id: 'finance', roles: ['ADMIN'] },
-      { icon: UserCircle, label: 'Clienti', path: '/clients', id: 'clients' },
-      { icon: FileText, label: 'Fatture', path: '/invoices', id: 'invoices' },
-      { icon: BarChart3, label: 'Report', path: '/reports', id: 'reports' },
+      { icon: FileText, label: 'Fatture', path: '/invoices', id: 'invoices', roles: ['ADMIN', 'PROJECT_MANAGER'] },
+      { icon: UserCircle, label: 'Clienti', path: '/clients', id: 'clients', roles: ['ADMIN', 'PROJECT_MANAGER'] },
+      { icon: FileStack, label: 'Documenti', path: '/documents', id: 'documents' },
     ]
   }
 ];
@@ -97,8 +102,26 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: bo
   const [isHovered, setIsHovered] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
   const location = useLocation();
+  const { user } = useAuthContext();
+  const role = user?.role;
   
   const isExpanded = isLockedExpanded || isHovered;
+
+  const visibleNavGroups = React.useMemo(() => {
+    const canAccessItem = (item: NavItem) => !item.roles || (!!role && item.roles.includes(role));
+
+    return NAV_GROUPS
+      .map((group) => ({
+        ...group,
+        items: group.items
+          .map((item) => ({
+            ...item,
+            subItems: item.subItems?.filter(canAccessItem),
+          }))
+          .filter(canAccessItem),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [role]);
 
   const toggleExpandedItem = (id: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -143,7 +166,7 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: bo
 
       {/* Scrollable Navigation Area */}
       <nav className="flex-1 px-4 space-y-6 mt-4 overflow-y-auto no-scrollbar">
-        {NAV_GROUPS.map((group, index) => (
+        {visibleNavGroups.map((group, index) => (
           <div key={group.title} className="space-y-2">
             {isExpanded ? (
               <h3 className="px-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest truncate">
