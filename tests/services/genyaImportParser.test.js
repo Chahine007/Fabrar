@@ -1,25 +1,26 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import readExcelFile from 'read-excel-file/node';
+import { describe, expect, it } from 'vitest';
+import ExcelJS from 'exceljs';
 import {
   parseExpenseRowsFromUploadedFile,
   parseExpenseRowsFromXlsx,
 } from '../../src/services/genyaImportParser.js';
 
-vi.mock('read-excel-file/node', () => ({
-  default: vi.fn(),
-}));
+async function buildWorkbookBuffer(sheets) {
+  const workbook = new ExcelJS.Workbook();
+  for (const sheet of sheets) {
+    const worksheet = workbook.addWorksheet(sheet.name);
+    sheet.rows.forEach((row) => worksheet.addRow(row));
+  }
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
 
 describe('Genya import parser XLSX', () => {
-  beforeEach(() => {
-    vi.mocked(readExcelFile).mockReset();
-  });
-
   it('parsa il primo foglio XLSX valido usando lo stesso mapping del CSV semplice', async () => {
-    vi.mocked(readExcelFile).mockResolvedValue([
-      { sheet: 'Note', data: [['Export vuoto']] },
+    const buffer = await buildWorkbookBuffer([
+      { name: 'Note', rows: [['Export vuoto']] },
       {
-        sheet: 'Fatture',
-        data: [
+        name: 'Fatture',
+        rows: [
           ['Elenco documenti'],
           ['Elenco documenti presenti in Fattura SMART'],
           [],
@@ -29,7 +30,7 @@ describe('Genya import parser XLSX', () => {
       },
     ]);
 
-    const rows = await parseExpenseRowsFromXlsx(Buffer.from('xlsx'), 2);
+    const rows = await parseExpenseRowsFromXlsx(buffer, 2);
 
     expect(rows).toEqual([
       expect.objectContaining({
@@ -43,9 +44,15 @@ describe('Genya import parser XLSX', () => {
   });
 
   it('rifiuta XLSX senza header Genya valido', async () => {
-    vi.mocked(readExcelFile).mockResolvedValue([{ sheet: 'Foglio1', data: [['Nome', 'Valore'], ['A', 'B']] }]);
+    const buffer = await buildWorkbookBuffer([{ name: 'Foglio1', rows: [['Nome', 'Valore'], ['A', 'B']] }]);
 
-    await expect(parseExpenseRowsFromXlsx(Buffer.from('xlsx'), 2)).resolves.toEqual([]);
+    await expect(parseExpenseRowsFromXlsx(buffer, 2)).resolves.toEqual([]);
+  });
+
+  it('trasforma XLSX corrotti/non leggibili in errore 400 di formato', async () => {
+    await expect(parseExpenseRowsFromXlsx(Buffer.from('not-an-xlsx'), 2))
+      .rejects
+      .toThrow('File XLSX Genya non leggibile');
   });
 
   it('rifiuta file caricati con estensione non supportata', async () => {

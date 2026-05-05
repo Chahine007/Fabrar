@@ -1,5 +1,5 @@
 import path from "node:path";
-import readExcelFile from "read-excel-file/node";
+import ExcelJS from "exceljs";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const DETAILED_EMPTY_MESSAGE = "Il file dettagliato Genya non contiene importi riga; usa il file semplice oppure esporta il dettaglio con valori.";
@@ -286,11 +286,54 @@ export function parseExpenseRowsFromCsv(csvText, fallbackCantiereId = null) {
     return parseExpenseRowsFromTable(table, fallbackCantiereId);
 }
 
+function normalizeExcelCellValue(value) {
+    if (value == null) return null;
+    if (value instanceof Date) return value;
+    if (typeof value !== "object") return value;
+
+    if (Object.prototype.hasOwnProperty.call(value, "result")) {
+        return normalizeExcelCellValue(value.result);
+    }
+    if (typeof value.text === "string") return value.text;
+    if (Array.isArray(value.richText)) {
+        return value.richText.map((part) => part.text ?? "").join("");
+    }
+    if (typeof value.hyperlink === "string" && typeof value.text === "string") {
+        return value.text;
+    }
+
+    return String(value);
+}
+
+function worksheetToTable(worksheet) {
+    const rowCount = worksheet.rowCount;
+    const columnCount = worksheet.columnCount;
+    const table = [];
+
+    for (let rowNumber = 1; rowNumber <= rowCount; rowNumber++) {
+        const row = worksheet.getRow(rowNumber);
+        const values = [];
+        for (let columnNumber = 1; columnNumber <= columnCount; columnNumber++) {
+            values.push(normalizeExcelCellValue(row.getCell(columnNumber).value));
+        }
+        table.push(values);
+    }
+
+    return table;
+}
+
 export async function parseExpenseRowsFromXlsx(buffer, fallbackCantiereId = null) {
-    const workbook = await readExcelFile(buffer);
-    const sheets = Array.isArray(workbook) && workbook[0]?.data
-        ? workbook
-        : [{ sheet: "Sheet1", data: workbook }];
+    const workbook = new ExcelJS.Workbook();
+    try {
+        await workbook.xlsx.load(buffer);
+    } catch {
+        throw new GenyaImportFormatError("File XLSX Genya non leggibile. Esporta nuovamente il file da One Click Genia e riprova.");
+    }
+
+    const sheets = workbook.worksheets.map((worksheet) => ({
+        sheet: worksheet.name,
+        data: worksheetToTable(worksheet),
+    }));
 
     let detailedEmptyError = null;
     for (const sheet of sheets) {
