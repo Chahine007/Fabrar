@@ -11,6 +11,7 @@ import {
 } from '../hooks/api/useSuppliers';
 import ErrorMessage from '../components/ErrorMessage';
 import { ConfirmDialog, EmptyState, IconButton, TableSkeleton, useToast } from '../components/ui';
+import { getApiErrorMessage } from '../lib/api';
 
 interface SupplierModalProps {
   supplier: Supplier | null;
@@ -82,8 +83,8 @@ function SupplierModal({ supplier, onClose }: SupplierModalProps) {
         await createSupplier.mutateAsync(payload);
       }
       onClose();
-    } catch (err: any) {
-      setError(err.message ?? 'Errore salvataggio fornitore.');
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Errore salvataggio fornitore.'));
     }
   };
 
@@ -236,8 +237,8 @@ export default function SuppliersPage() {
       await deleteSupplier.mutateAsync(supplierToDelete.id);
       toast.success('Fornitore eliminato', supplierToDelete.ragione_sociale);
       setSupplierToDelete(null);
-    } catch (err: any) {
-      toast.error('Eliminazione non riuscita', err.message ?? 'Errore eliminazione fornitore.');
+    } catch (err: unknown) {
+      toast.error('Eliminazione non riuscita', getApiErrorMessage(err, 'Errore eliminazione fornitore.'));
     }
   };
 

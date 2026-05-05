@@ -196,6 +196,7 @@ model ReportEntry {
   @@index([report_id])
   @@index([cantiere_id])
   @@index([wbs_node_id])
+  @@index([task_id])
 }
 
 model Spesa {
@@ -228,6 +229,9 @@ model Spesa {
   @@index([employee_id])
   @@index([cantiere_id])
   @@index([wbs_node_id])
+  @@index([task_id])
+  @@index([pricebook_id])
+  @@index([documento_id])
 }
 
 model Tariffa {
@@ -281,6 +285,10 @@ model Task {
   spese               Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
   richieste_materiali RichiestaMateriale[]
+
+  @@index([cantiere_id])
+  @@index([assignee_id])
+  @@index([cantiere_id, status, priority])
 }
 
 enum TaskStatus {
@@ -322,6 +330,9 @@ model Document {
   spese_collegate     Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
   fatture             Fattura[]
+
+  @@index([cantiere_id])
+  @@index([tag])
 }
 
 enum InstallmentStatus {
@@ -353,6 +364,7 @@ model Fattura {
   rate      Rata[]
 
   @@index([cantiere_id, stato])
+  @@index([documento_id])
 }
 
 model Rata {
@@ -374,6 +386,7 @@ model Rata {
 
   @@index([cantiere_id, stato])
   @@index([cantiere_id, wbs_node_id])
+  @@index([fattura_id])
 }
 
 model Conversation {
@@ -386,6 +399,8 @@ model Conversation {
 
   messages     Message[]
   participants ConversationParticipant[]
+
+  @@index([cantiere_id])
 }
 
 model Message {
@@ -398,6 +413,9 @@ model Message {
 
   conversation Conversation @relation(fields: [conversation_id], references: [id])
   sender       Employee?    @relation(fields: [sender_id], references: [id])
+
+  @@index([conversation_id, created_at])
+  @@index([sender_id])
 }
 
 model ConversationParticipant {
@@ -411,6 +429,7 @@ model ConversationParticipant {
   employee     Employee     @relation(fields: [employee_id], references: [id], onDelete: Cascade)
 
   @@unique([conversation_id, employee_id])
+  @@index([employee_id])
 }
 
 // ==========================================
@@ -446,6 +465,8 @@ model Articolo {
   movimenti         MovimentoMagazzino[]
   fornitore_default Fornitore?               @relation(fields: [fornitore_default_id], references: [id])
   righe_richieste   RigaRichiestaMateriale[]
+
+  @@index([fornitore_default_id])
 }
 
 model Ubicazione {
@@ -523,6 +544,14 @@ model MovimentoMagazzino {
 
   @@index([articolo_id])
   @@index([cantiere_id])
+  @@index([wbs_node_id])
+  @@index([task_id])
+  @@index([ubicazione_da_id])
+  @@index([ubicazione_a_id])
+  @@index([esecutore_id])
+  @@index([documento_id])
+  @@index([fornitore_id])
+  @@index([articolo_id, data_movimento])
 }
 
 model RichiestaMateriale {
@@ -542,6 +571,8 @@ model RichiestaMateriale {
   righe       RigaRichiestaMateriale[]
 
   @@index([cantiere_id, task_id])
+  @@index([richiedente_id])
+  @@index([status, data_richiesta])
 }
 
 model RigaRichiestaMateriale {
@@ -553,6 +584,9 @@ model RigaRichiestaMateriale {
 
   richiesta RichiestaMateriale @relation(fields: [richiesta_id], references: [id], onDelete: Cascade)
   articolo  Articolo           @relation(fields: [articolo_id], references: [id])
+
+  @@index([richiesta_id])
+  @@index([articolo_id])
 }
 
 // ==========================================

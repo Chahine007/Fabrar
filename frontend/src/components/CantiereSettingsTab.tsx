@@ -1,6 +1,11 @@
 import React, { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { useCantiereSettings, useUpdateCantiereSettings } from '../hooks/api/useCantiereSettings';
+import {
+  type CantiereSettingsPatch,
+  type ProjectManagerOption,
+  useCantiereSettings,
+  useUpdateCantiereSettings,
+} from '../hooks/api/useCantiereSettings';
 import Spinner from './Spinner';
 import ErrorMessage from './ErrorMessage';
 import { MapPin, Bell, User as UserIcon, ShieldAlert, Building2 } from 'lucide-react';
@@ -10,7 +15,8 @@ import L from 'leaflet';
 import { useToast } from './ui';
 
 // Fix per l'icona del marker di Leaflet in React
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+type LeafletDefaultIconPrototype = L.Icon.Default & { _getIconUrl?: unknown };
+delete (L.Icon.Default.prototype as LeafletDefaultIconPrototype)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
@@ -21,6 +27,7 @@ interface SettingsFormData {
   lat: number | null;
   lng: number | null;
   raggio_tolleranza: number;
+  bot_checkin_gps: boolean;
   bot_anomaly_action: string;
   bot_wbs_prompt_thr: number;
   budget_contingency: number | null;
@@ -68,8 +75,10 @@ export default function CantiereSettingsTab({ cantiereId }: { cantiereId: number
   const onSubmit = async (formData: SettingsFormData) => {
     try {
       // transform empty strings back to null
-      const processedData = {
-        ...formData,
+      const { budget: _budget, ...editableFormData } = formData;
+      void _budget;
+      const processedData: CantiereSettingsPatch = {
+        ...editableFormData,
         lat: formData.lat || null,
         lng: formData.lng || null,
         budget_contingency: formData.budget_contingency || null,
@@ -79,15 +88,12 @@ export default function CantiereSettingsTab({ cantiereId }: { cantiereId: number
         site_manager_id: formData.site_manager_id ? Number(formData.site_manager_id) : null,
         nome: formData.nome || null,
         indirizzo: formData.indirizzo || null,
-        // Budget is read-only so we exclude it entirely, but if we need to let them edit we could add it back.
       };
-      // Budget totale preventivato IS readonly as requested by user.
-      delete (processedData as any).budget;
 
       await updateSettings.mutateAsync(processedData);
       toast.success('Impostazioni salvate');
-    } catch (err: any) {
-      toast.error('Salvataggio non riuscito', err.message);
+    } catch (err: unknown) {
+      toast.error('Salvataggio non riuscito', err instanceof Error ? err.message : undefined);
     }
   };
 
@@ -253,7 +259,7 @@ export default function CantiereSettingsTab({ cantiereId }: { cantiereId: number
               <label className="text-sm font-semibold text-text-secondary">Project Manager Assegnato</label>
               <select {...register('pm_id')} className="p-2.5 bg-background border border-border rounded-xl text-sm md:w-1/2">
                 <option value="">-- Nessun PM --</option>
-                {pms.map((pm: any) => (
+                {pms.map((pm: ProjectManagerOption) => (
                   <option key={pm.id} value={pm.id}>
                     {pm.employee?.nome} {pm.employee?.cognome} ({pm.username})
                   </option>
@@ -265,7 +271,7 @@ export default function CantiereSettingsTab({ cantiereId }: { cantiereId: number
               <label className="text-sm font-semibold text-text-secondary">Capo Cantiere Assegnato (Bot/Dashboard)</label>
               <select {...register('site_manager_id')} className="p-2.5 bg-background border border-border rounded-xl text-sm md:w-1/2">
                 <option value="">-- Nessun Capo Cantiere --</option>
-                {pms.map((pm: any) => (
+                {pms.map((pm: ProjectManagerOption) => (
                   <option key={pm.id} value={pm.id}>
                     {pm.employee?.nome} {pm.employee?.cognome} ({pm.username})
                   </option>

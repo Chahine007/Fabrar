@@ -2,7 +2,7 @@ import { getDb, formatDateOnly } from "../db/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { formatEmployeeName } from "../utils/helpers.js";
 import { round2 } from "../utils/helpers.js";
-import { calculateTrueCost } from "../domain/finance/financeService.js";
+import { getTaskCostsMap } from "../domain/finance/financeService.js";
 
 const TASK_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WORKER"];
 
@@ -58,17 +58,22 @@ function mapTask(task) {
   };
 }
 
-async function mapTaskWithCosts(task) {
+function mapTaskWithCosts(task, costs = null) {
   const mappedTask = mapTask(task);
-  const costs = await calculateTrueCost(task.cantiere_id, task.id);
+  const resolvedCosts = costs ?? {
+    costoManodopera: 0,
+    costoMateriali: 0,
+    costoSpese: 0,
+    costoTotale: 0,
+  };
 
   return {
     ...mappedTask,
-    ...costs,
+    ...resolvedCosts,
     deltaBudget:
       mappedTask.budget_stimato == null
         ? null
-        : round2(mappedTask.budget_stimato - costs.costoTotale),
+        : round2(mappedTask.budget_stimato - resolvedCosts.costoTotale),
   };
 }
 
@@ -130,7 +135,8 @@ export const getAllTasks = asyncHandler(async (req, res) => {
     return res.json(tasks.map(mapTask));
   }
 
-  const tasksWithCosts = await Promise.all(tasks.map(mapTaskWithCosts));
+  const costsMap = await getTaskCostsMap(Number(cantiere_id), tasks.map((task) => task.id), prisma);
+  const tasksWithCosts = tasks.map((task) => mapTaskWithCosts(task, costsMap.get(task.id)));
   res.json(tasksWithCosts);
 });
 

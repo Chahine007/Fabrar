@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../../lib/api';
+import { api, type ApiErrorPayload } from '../../lib/api';
 
 export interface GoogleLoginParams {
   idToken: string;
@@ -71,7 +71,7 @@ const loginFetch = async (params: GoogleLoginParams): Promise<AuthResponse> => {
 };
 
 export const useGoogleLogin = () => {
-  return useMutation<AuthResponse, any, GoogleLoginParams>({
+  return useMutation<AuthResponse, ApiErrorPayload, GoogleLoginParams>({
     mutationFn: loginFetch,
   });
 };

@@ -1,4 +1,5 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
 import logger from "../logger.js";
 import { tgSetWebhook } from "../services/telegram.js";
 import { handleTelegramUpdate } from "../services/bot.js";
@@ -8,6 +9,13 @@ const router = express.Router();
 const MAX_SEEN_UPDATES = Number(process.env.IDEMPOTENCY_CACHE_SIZE || 200);
 const seenUpdates = new Set();
 const seenQueue = [];
+const setWebhookLimiter = rateLimit({
+  windowMs: 60_000,
+  max: Number(process.env.SET_WEBHOOK_RATE_LIMIT_PER_MINUTE || 5),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: "Too many webhook setup requests." },
+});
 
 function isDuplicateUpdate(updateId) {
   if (updateId == null) return false;
@@ -65,10 +73,26 @@ async function handleSetWebhook(req, res) {
     res.json({ ok: true, result });
   } catch (err) {
     logger.error({ err, event: "set_webhook_failed" }, "set_webhook_failed");
-    res.status(500).json({ ok: false, error: err.message });
+    const message = process.env.NODE_ENV === "production"
+      ? "Webhook setup failed."
+      : err.message;
+    res.status(500).json({ ok: false, error: message });
   }
 }
 
-router.post("/set-webhook", handleSetWebhook);
+export function requireWebhookSetupSecret(req, res, next) {
+  const expected = process.env.SET_WEBHOOK_SECRET || process.env.TELEGRAM_SECRET;
+  const allowLocalWithoutSecret = process.env.NODE_ENV !== "production" && !expected;
+  if (allowLocalWithoutSecret) return next();
+
+  const provided = req.header("X-Webhook-Setup-Secret") || req.header("X-Fabrar-Service-Secret");
+  if (!expected || provided !== expected) {
+    return res.status(403).json({ ok: false, error: "Forbidden" });
+  }
+
+  next();
+}
+
+router.post("/set-webhook", setWebhookLimiter, requireWebhookSetupSecret, handleSetWebhook);
 
 export default router;

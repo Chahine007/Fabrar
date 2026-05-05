@@ -1,6 +1,6 @@
 import { ValidationStatus } from '../constants.js';
 import { getDb } from './client.js';
-import { decimalOrNull, decimalToNumber } from './shared.js';
+import { Prisma, decimalOrNull, decimalToNumber } from './shared.js';
 
 export async function getWbsNodesByCantiere(cantiereId) {
   return getDb().wbsNode.findMany({
@@ -60,48 +60,61 @@ export async function getWbsBurnData(cantiereId) {
   const prisma = getDb();
   const id = Number(cantiereId);
 
-  const [entries, spese] = await Promise.all([
-    prisma.reportEntry.findMany({
-      where: {
-        cantiere_id: id,
-        stato_validazione: { in: [ValidationStatus.APPROVED] },
-        wbs_node_id: { not: null },
-      },
-      include: {
-        report: {
-          include: {
-            employee: {
-              include: { tariffe: { orderBy: { valido_dal: 'desc' }, take: 1 } },
-            },
-          },
-        },
-      },
-    }),
-    prisma.spesa.findMany({
+  const [laborRows, spesaRows] = await Promise.all([
+    prisma.$queryRaw(
+      Prisma.sql`
+        WITH latest_tariffe AS (
+          SELECT employee_id, costo_orario
+          FROM (
+            SELECT
+              employee_id,
+              costo_orario,
+              ROW_NUMBER() OVER (
+                PARTITION BY employee_id
+                ORDER BY valido_dal DESC, id DESC
+              ) AS rn
+            FROM "Tariffa"
+            WHERE employee_id IS NOT NULL
+          ) ranked_tariffe
+          WHERE rn = 1
+        )
+        SELECT
+          re.wbs_node_id,
+          COALESCE(SUM(COALESCE(re.ore_lavorate, 0)), 0) AS ore_tot,
+          COALESCE(SUM(COALESCE(re.ore_lavorate, 0) * COALESCE(lt.costo_orario, 0)), 0) AS costo_manodopera
+        FROM "ReportEntry" re
+        INNER JOIN "Report" r ON r.id = re.report_id
+        LEFT JOIN latest_tariffe lt ON lt.employee_id = r.employee_id
+        WHERE re.cantiere_id = ${id}
+          AND re.stato_validazione = ${ValidationStatus.APPROVED}
+          AND re.wbs_node_id IS NOT NULL
+        GROUP BY re.wbs_node_id
+      `
+    ),
+    prisma.spesa.groupBy({
+      by: ['wbs_node_id'],
       where: {
         cantiere_id: id,
         wbs_node_id: { not: null },
         NOT: { stato_validazione: ValidationStatus.REJECTED },
       },
+      _sum: { importo: true },
     }),
   ]);
 
   const burnMap = new Map();
 
-  for (const entry of entries) {
-    const nodeId = entry.wbs_node_id;
-    const ore = entry.ore_lavorate ?? 0;
-    const tariffa = decimalToNumber(entry.report?.employee?.tariffe?.[0]?.costo_orario) ?? 0;
-    const costo = ore * tariffa;
+  for (const row of laborRows) {
+    const nodeId = Number(row.wbs_node_id);
     const current = burnMap.get(nodeId) ?? { ore_tot: 0, costo_manodopera: 0, costo_materiali: 0 };
-    current.ore_tot += ore;
-    current.costo_manodopera += costo;
+    current.ore_tot += decimalToNumber(row.ore_tot) ?? 0;
+    current.costo_manodopera += decimalToNumber(row.costo_manodopera) ?? 0;
     burnMap.set(nodeId, current);
   }
 
-  for (const spesa of spese) {
-    const nodeId = spesa.wbs_node_id;
-    const importo = decimalToNumber(spesa.importo) ?? 0;
+  for (const row of spesaRows) {
+    const nodeId = Number(row.wbs_node_id);
+    const importo = decimalToNumber(row._sum?.importo) ?? 0;
     const current = burnMap.get(nodeId) ?? { ore_tot: 0, costo_manodopera: 0, costo_materiali: 0 };
     current.costo_materiali += importo;
     burnMap.set(nodeId, current);

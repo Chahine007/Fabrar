@@ -1,9 +1,9 @@
-import pkg from "@prisma/client";
 import { getDb } from "../db/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { ValidationStatus } from "../constants.js";
+import { createDischargeInTransaction } from "../domain/magazzino/warehouseService.js";
+import { domainBus, EVENTS } from "../domain/events/domainBus.js";
+import { parsePagination, positiveCursor } from "../utils/pagination.js";
 
-const { Prisma } = pkg;
 const REQUEST_STATUSES = ["PENDING", "APPROVED", "REJECTED", "FULFILLED"];
 
 function parsePositiveInt(value) {
@@ -153,6 +153,8 @@ export const getRequests = asyncHandler(async (req, res) => {
   const employeeId = parsePositiveInt(req.user?.employee_id);
   const status = req.query.status ? String(req.query.status).toUpperCase() : null;
   const cantiereId = req.query.cantiere_id ? parsePositiveInt(req.query.cantiere_id) : null;
+  const { limit, offset } = parsePagination(req.query, { defaultLimit: 100, maxLimit: 250 });
+  const cursor = positiveCursor(req.query.cursor);
 
   if (status && !REQUEST_STATUSES.includes(status)) {
     return res.status(400).json({ error: "Stato richiesta non valido." });
@@ -170,6 +172,8 @@ export const getRequests = asyncHandler(async (req, res) => {
     },
     include: materialRequestInclude(),
     orderBy: [{ data_richiesta: "desc" }, { id: "desc" }],
+    take: limit,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : { skip: offset }),
   });
 
   res.json(requests);
@@ -226,6 +230,7 @@ export const fulfillRequest = asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Utente non identificato per l'operazione." });
   }
 
+  const events = [];
   const result = await prisma.$transaction(async (tx) => {
     const richiesta = await tx.richiestaMateriale.findUnique({
       where: { id: requestId },
@@ -250,7 +255,7 @@ export const fulfillRequest = asyncHandler(async (req, res) => {
     const expenseEmployeeId = executorEmployeeId ?? richiesta.richiedente_id;
 
     for (const line of richiesta.righe) {
-      let remaining = new Prisma.Decimal(line.quantita);
+      let remaining = Number(line.quantita);
 
       const giacenze = await tx.giacenza.findMany({
         where: {
@@ -261,61 +266,36 @@ export const fulfillRequest = asyncHandler(async (req, res) => {
       });
 
       const totalAvailable = giacenze.reduce(
-        (sum, giacenza) => sum.add(giacenza.quantita_disponibile),
-        new Prisma.Decimal(0)
+        (sum, giacenza) => sum + Number(giacenza.quantita_disponibile),
+        0
       );
 
-      if (totalAvailable.lessThan(remaining)) {
+      if (totalAvailable < remaining) {
         throw httpError(
-          `Giacenza insufficiente per ${line.articolo.codice_sku}: richiesta ${line.quantita}, disponibile ${totalAvailable.toString()}.`,
+          `Giacenza insufficiente per ${line.articolo.codice_sku}: richiesta ${line.quantita}, disponibile ${totalAvailable}.`,
           409
         );
       }
 
       for (const giacenza of giacenze) {
-        if (remaining.lte(0)) break;
+        if (remaining <= 0) break;
 
-        const available = giacenza.quantita_disponibile;
-        const consumed = available.lessThan(remaining) ? available : remaining;
-        const valoreTotale = line.articolo.costo_medio.mul(consumed);
-
-        await tx.giacenza.update({
-          where: { id: giacenza.id },
-          data: {
-            quantita_disponibile: { decrement: consumed },
-          },
+        const available = Number(giacenza.quantita_disponibile);
+        const consumed = Math.min(available, remaining);
+        const discharge = await createDischargeInTransaction(tx, {
+          articolo_id: line.articolo_id,
+          quantita: consumed,
+          ubicazione_da_id: giacenza.ubicazione_id,
+          cantiere_id: richiesta.cantiere_id,
+          task_id: richiesta.task_id ?? null,
+        }, userId, expenseEmployeeId, {
+          description: `Evasione richiesta materiale #${richiesta.id}: ${line.articolo.descrizione} (${line.articolo.codice_sku})`,
         });
 
-        const movimento = await tx.movimentoMagazzino.create({
-          data: {
-            tipo_movimento: "SCARICO_CANTIERE",
-            articolo_id: line.articolo_id,
-            quantita: consumed,
-            ubicazione_da_id: giacenza.ubicazione_id,
-            cantiere_id: richiesta.cantiere_id,
-            task_id: richiesta.task_id ?? null,
-            costo_unitario: line.articolo.costo_medio,
-            valore_totale: valoreTotale,
-            esecutore_id: userId,
-          },
-        });
-
-        const spesa = await tx.spesa.create({
-          data: {
-            employee_id: expenseEmployeeId,
-            cantiere_id: richiesta.cantiere_id,
-            task_id: richiesta.task_id ?? null,
-            importo: valoreTotale,
-            descrizione: `Evasione richiesta materiale #${richiesta.id}: ${line.articolo.descrizione} (${line.articolo.codice_sku})`,
-            quantita: consumed,
-            fonte: "MAGAZZINO",
-            stato_validazione: ValidationStatus.VERIFIED,
-          },
-        });
-
-        createdMovements.push(movimento);
-        createdExpenses.push(spesa);
-        remaining = remaining.minus(consumed);
+        createdMovements.push(discharge.movimento);
+        createdExpenses.push(discharge.spesa);
+        events.push({ type: EVENTS.WAREHOUSE_DISCHARGED, payload: discharge.eventPayload });
+        remaining -= consumed;
       }
     }
 
@@ -331,6 +311,10 @@ export const fulfillRequest = asyncHandler(async (req, res) => {
       spese: createdExpenses,
     };
   });
+
+  for (const event of events) {
+    domainBus.emit(event.type, event.payload);
+  }
 
   res.json(result);
 });

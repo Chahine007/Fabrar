@@ -8,6 +8,7 @@ import logger from "./logger.js";
 import webhookRoutes from "./routes/webhook.js";
 import apiRoutes from "./routes/api.js";
 import adminRoutes from "./routes/admin.js";
+import { errorHandler } from "./middleware/errorHandler.js";
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -54,8 +55,40 @@ export function createApp() {
   }));
 
   app.use(pinoHttp({ logger }));
-  app.use("/telegram/webhook", rateLimit({ windowMs: 60_000, max: 300 }));
-  app.use("/api/login", rateLimit({ windowMs: 60_000, max: 10 }));
+
+  const apiLimiter = rateLimit({
+    windowMs: 60_000,
+    max: Number(process.env.API_RATE_LIMIT_PER_MINUTE || 300),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Troppe richieste API. Riprova tra poco." },
+  });
+  const expensiveApiLimiter = rateLimit({
+    windowMs: 60_000,
+    max: Number(process.env.EXPENSIVE_API_RATE_LIMIT_PER_MINUTE || 60),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Troppe richieste su endpoint intensivo. Riprova tra poco." },
+  });
+  const uploadLimiter = rateLimit({
+    windowMs: 60_000,
+    max: Number(process.env.UPLOAD_RATE_LIMIT_PER_MINUTE || 30),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Troppi upload. Riprova tra poco." },
+  });
+
+  app.use("/telegram/webhook", rateLimit({ windowMs: 60_000, max: 300, standardHeaders: true, legacyHeaders: false }));
+  app.use("/api/login", rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false }));
+  app.use("/api/cantieri/:id/documents/upload", uploadLimiter);
+  app.use([
+    "/api/hr/audit",
+    "/api/admin/pending-summary",
+    "/api/dashboard/bi",
+    "/api/material-requests",
+    "/api/user/material-movements",
+  ], expensiveApiLimiter);
+  app.use("/api", apiLimiter);
 
   app.get("/health", (req, res) => {
     res.json({ ok: true, time: new Date().toISOString() });
@@ -100,10 +133,7 @@ export function createApp() {
     res.sendFile(path.join(publicDir, "index.html"));
   });
 
-  app.use((err, req, res, next) => {
-    logger.error({ err, event: "unhandled_error" }, "unhandled_error");
-    res.status(500).json({ ok: false });
-  });
+  app.use(errorHandler);
 
   return app;
 }

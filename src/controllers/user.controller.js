@@ -280,7 +280,7 @@ export const generateTelegramCode = asyncHandler(async (req, res) => {
   });
 
   logger.info(
-    { event: "telegram_code_generated", userId, employeeId: emp.id, code },
+    { event: "telegram_code_generated", userId, employeeId: emp.id },
     "Codice Telegram generato"
   );
 

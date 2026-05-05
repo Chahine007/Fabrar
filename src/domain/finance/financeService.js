@@ -34,6 +34,18 @@ function buildMoneyMap(rows, getAmount) {
   return map;
 }
 
+function buildKeyedMoneyMap(rows, keyName, getAmount) {
+  const map = new Map();
+
+  for (const row of rows ?? []) {
+    const key = parseOptionalId(row?.[keyName]);
+    if (!key) continue;
+    map.set(key, round2(toNumber(getAmount(row))));
+  }
+
+  return map;
+}
+
 function buildContractTotal(cantiere) {
   return round2(toNumber(cantiere?.valore_contratto ?? cantiere?.budget));
 }
@@ -297,6 +309,87 @@ export async function calculateTrueCost(cantiere_id, task_id = null) {
     costoSpese,
     costoTotale,
   };
+}
+
+async function getTaskLaborCosts(prismaClient, cantiereId, taskIds) {
+  if (taskIds.length === 0) return [];
+
+  return prismaClient.$queryRaw(
+    Prisma.sql`
+      WITH latest_tariffe AS (
+        SELECT employee_id, costo_orario
+        FROM (
+          SELECT
+            employee_id,
+            costo_orario,
+            ROW_NUMBER() OVER (
+              PARTITION BY employee_id
+              ORDER BY valido_dal DESC, id DESC
+            ) AS rn
+          FROM "Tariffa"
+          WHERE employee_id IS NOT NULL
+        ) ranked_tariffe
+        WHERE rn = 1
+      )
+      SELECT
+        re.task_id,
+        COALESCE(SUM(COALESCE(re.ore_lavorate, 0) * COALESCE(lt.costo_orario, 0)), 0) AS costo_manodopera
+      FROM "ReportEntry" re
+      INNER JOIN "Report" r ON r.id = re.report_id
+      LEFT JOIN latest_tariffe lt ON lt.employee_id = r.employee_id
+      WHERE re.cantiere_id = ${cantiereId}
+        AND re.task_id IN (${Prisma.join(taskIds)})
+        AND re.stato_validazione = ${ValidationStatus.APPROVED}
+      GROUP BY re.task_id
+    `
+  );
+}
+
+export async function getTaskCostsMap(cantiere_id, taskIds, prismaClient = getDb()) {
+  const cantiereId = parseOptionalId(cantiere_id);
+  const normalizedTaskIds = [...new Set((taskIds ?? []).map(parseOptionalId).filter(Boolean))];
+  if (!cantiereId || normalizedTaskIds.length === 0) return new Map();
+
+  const [laborRows, materialRows, expenseRows] = await Promise.all([
+    getTaskLaborCosts(prismaClient, cantiereId, normalizedTaskIds),
+    prismaClient.movimentoMagazzino.groupBy({
+      by: ["task_id"],
+      where: {
+        cantiere_id: cantiereId,
+        task_id: { in: normalizedTaskIds },
+        tipo_movimento: "SCARICO_CANTIERE",
+      },
+      _sum: { valore_totale: true },
+    }),
+    prismaClient.spesa.groupBy({
+      by: ["task_id"],
+      where: {
+        cantiere_id: cantiereId,
+        task_id: { in: normalizedTaskIds },
+        stato_validazione: ValidationStatus.APPROVED,
+        OR: [{ fonte: null }, { fonte: { not: "MAGAZZINO" } }],
+      },
+      _sum: { importo: true },
+    }),
+  ]);
+
+  const laborMap = buildKeyedMoneyMap(laborRows, "task_id", (row) => row.costo_manodopera);
+  const materialMap = buildKeyedMoneyMap(materialRows, "task_id", (row) => row._sum?.valore_totale);
+  const expenseMap = buildKeyedMoneyMap(expenseRows, "task_id", (row) => row._sum?.importo);
+
+  return new Map(normalizedTaskIds.map((taskId) => {
+    const costoManodopera = laborMap.get(taskId) ?? 0;
+    const costoMateriali = materialMap.get(taskId) ?? 0;
+    const costoSpese = expenseMap.get(taskId) ?? 0;
+    const costoTotale = round2(costoManodopera + costoMateriali + costoSpese);
+
+    return [taskId, {
+      costoManodopera,
+      costoMateriali,
+      costoSpese,
+      costoTotale,
+    }];
+  }));
 }
 
 export async function getProjectFinancials(cantiere_id) {

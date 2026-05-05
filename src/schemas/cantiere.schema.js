@@ -33,6 +33,25 @@ export const updateCantiereSchema = z.object({
     }),
 });
 
+export const toggleCantiereSchema = z.object({
+    params: z.object({
+        id: z.coerce.number().positive("ID cantiere non valido."),
+    }),
+    query: z.object({}).passthrough(),
+    body: z.object({}).passthrough(),
+});
+
+export const updateGpsSchema = z.object({
+    params: z.object({
+        id: z.coerce.number().positive("ID cantiere non valido."),
+    }),
+    query: z.object({}).passthrough(),
+    body: z.object({
+        lat: z.coerce.number().min(-90, "Latitudine non valida.").max(90, "Latitudine non valida."),
+        lng: z.coerce.number().min(-180, "Longitudine non valida.").max(180, "Longitudine non valida."),
+    }),
+});
+
 export const updateCantiereSettingsSchema = z.object({
     params: z.object({
         id: z.coerce.number().positive("ID cantiere non valido."),

@@ -1,10 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { X, Plus, Trash2, Loader2, Package } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useCantieri } from '../../hooks/api/useCantieri';
+import { type Cantiere, useCantieri } from '../../hooks/api/useCantieri';
 import { useArticoli } from '../../hooks/api/useMagazzino';
 import { useCreateMaterialRequest } from '../../hooks/api/useMaterialRequests';
-import { useAllTasks } from '../../hooks/api/useTasks';
+import { type Task, useAllTasks } from '../../hooks/api/useTasks';
+import { getApiErrorMessage } from '../../lib/api';
+import type { WarehouseArticle } from '../../types/warehouse';
 
 interface MaterialRequestModalProps {
   isOpen: boolean;
@@ -38,7 +40,7 @@ export default function MaterialRequestModal({ isOpen, onClose }: MaterialReques
   const createRequest = useCreateMaterialRequest();
 
   const sortedArticles = useMemo(() => {
-    return [...(articoli as any[])].sort((a, b) =>
+    return [...(articoli as WarehouseArticle[])].sort((a, b) =>
       `${a.codice_sku} ${a.descrizione}`.localeCompare(`${b.codice_sku} ${b.descrizione}`)
     );
   }, [articoli]);
@@ -93,8 +95,8 @@ export default function MaterialRequestModal({ isOpen, onClose }: MaterialReques
         righe: parsedLines,
       });
       resetAndClose();
-    } catch (err: any) {
-      setFormError(err.message ?? 'Errore durante la creazione della richiesta.');
+    } catch (err: unknown) {
+      setFormError(getApiErrorMessage(err, 'Errore durante la creazione della richiesta.'));
     }
   };
 
@@ -141,7 +143,7 @@ export default function MaterialRequestModal({ isOpen, onClose }: MaterialReques
                 disabled={loadingCantieri}
               >
                 <option value="">-- Seleziona Cantiere --</option>
-                {(cantieri as any[]).map((cantiere) => (
+                {(cantieri as Cantiere[]).map((cantiere) => (
                   <option key={cantiere.id} value={cantiere.id}>
                     {cantiere.nome}
                   </option>
@@ -158,7 +160,7 @@ export default function MaterialRequestModal({ isOpen, onClose }: MaterialReques
                 disabled={!cantiereId || loadingTasks}
               >
                 <option value="">-- Nessun task specifico --</option>
-                {tasks.map((task: any) => (
+                {(tasks as Task[]).map((task) => (
                   <option key={task.id} value={task.id}>
                     {task.title}
                   </option>
@@ -200,7 +202,7 @@ export default function MaterialRequestModal({ isOpen, onClose }: MaterialReques
                     disabled={loadingArticoli}
                   >
                     <option value="">-- Articolo --</option>
-                    {sortedArticles.map((articolo: any) => (
+                    {sortedArticles.map((articolo) => (
                       <option key={articolo.id} value={articolo.id}>
                         {articolo.codice_sku} - {articolo.descrizione}
                       </option>

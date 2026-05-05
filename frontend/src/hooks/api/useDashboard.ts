@@ -3,7 +3,7 @@
  * Endpoint: GET /api/dashboard/radar + /api/dashboard/bi/*
  */
 import { useQuery } from '@tanstack/react-query';
-import { apiFetch } from '../../lib/api';
+import { apiFetch, getApiErrorMessage } from '../../lib/api';
 import { dashboardKeys } from './queryKeys';
 
 // ─── Types (radar) ───────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ async function fetchJson<T>(path: string): Promise<T> {
   const res = await apiFetch(path);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as any).error ?? `Errore ${res.status}`);
+    throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
   }
   return res.json() as Promise<T>;
 }

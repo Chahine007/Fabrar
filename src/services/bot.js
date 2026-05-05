@@ -438,7 +438,7 @@ export async function handleTelegramUpdate(update) {
     await createReportEntry({
       report_id: reportId,
       cantiere_id: targetCantiere.id,
-      stato_validazione: ValidationStatus.VERIFIED,
+      stato_validazione: ValidationStatus.APPROVED,
       fonte: "GPS",
     });
     await updateReportHeader(reportId, { data_utc: new Date().toISOString() });

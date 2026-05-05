@@ -1,9 +1,12 @@
+import pkg from "@prisma/client";
 import { getDb, getCantieriStatus, formatDateOnly, parseDateOnly } from "../db/index.js";
 import { round2, toNumber } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { getPendingSummary } from "./hr.controller.js";
-import { ValidationStatus } from "../constants.js";
+import { LIMITS, ValidationStatus } from "../constants.js";
 import { getMultiProjectFinancials } from "../domain/finance/financeService.js";
+
+const { Prisma } = pkg;
 
 export const getRadar = asyncHandler(async (req, res) => {
     const prisma = getDb();
@@ -175,43 +178,53 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
 export const getWarehouseKPIs = asyncHandler(async (req, res) => {
     const prisma = getDb();
 
-    const [giacenze, movimenti] = await Promise.all([
-        prisma.giacenza.findMany({
-            include: { articolo: { select: { descrizione: true, costo_medio: true, codice_sku: true } } },
+    const [stockRows, lastMoveRows, totalMovimenti] = await Promise.all([
+        prisma.$queryRaw(
+            Prisma.sql`
+                SELECT
+                    g.articolo_id,
+                    a.codice_sku,
+                    a.descrizione,
+                    a.costo_medio,
+                    COALESCE(SUM(g.quantita_disponibile), 0) AS quantita_disponibile,
+                    COALESCE(SUM(g.quantita_riservata), 0) AS quantita_riservata,
+                    COALESCE(SUM((g.quantita_disponibile + g.quantita_riservata) * a.costo_medio), 0) AS valore_totale,
+                    COALESCE(SUM(g.quantita_disponibile * a.costo_medio), 0) AS valore_disponibile
+                FROM "Giacenza" g
+                INNER JOIN "Articolo" a ON a.id = g.articolo_id
+                GROUP BY g.articolo_id, a.codice_sku, a.descrizione, a.costo_medio
+            `
+        ),
+        prisma.movimentoMagazzino.groupBy({
+            by: ['articolo_id'],
+            _max: { data_movimento: true },
         }),
-        prisma.movimentoMagazzino.findMany({
-            orderBy: { data_movimento: 'desc' },
-            select: { articolo_id: true, data_movimento: true },
-        }),
+        prisma.movimentoMagazzino.count(),
     ]);
 
     // Capitale immobilizzato = Σ (quantità * costo_medio)
-    let capitaleImmobilizzato = 0;
-    let totalArticoli = 0;
-    for (const g of giacenze) {
-        const qty   = toNumber(g.quantita_disponibile) + toNumber(g.quantita_riservata);
-        const costo = toNumber(g.articolo.costo_medio);
-        capitaleImmobilizzato += qty * costo;
-        if (qty > 0) totalArticoli++;
-    }
+    const capitaleImmobilizzato = stockRows.reduce((sum, row) => sum + toNumber(row.valore_totale), 0);
+    const totalArticoli = stockRows.filter((row) => (
+        toNumber(row.quantita_disponibile) + toNumber(row.quantita_riservata)
+    ) > 0).length;
 
     // Ultimo movimento per articolo
     const lastMove = {};
-    for (const m of movimenti) {
-        if (!lastMove[m.articolo_id]) lastMove[m.articolo_id] = m.data_movimento;
+    for (const row of lastMoveRows) {
+        lastMove[row.articolo_id] = row._max?.data_movimento ?? null;
     }
 
-    // Dead stock: articoli con giacenza > 0 ma ultimo movimento > 60 giorni fa (o mai)
-    const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000);
-    const deadStock = giacenze
-        .filter(g => (toNumber(g.quantita_disponibile) + toNumber(g.quantita_riservata)) > 0)
-        .map(g => ({
-            articolo_id:   g.articolo_id,
-            codice_sku:    g.articolo.codice_sku,
-            descrizione:   g.articolo.descrizione,
-            quantita:      round2(toNumber(g.quantita_disponibile)),
-            valore:        round2(toNumber(g.quantita_disponibile) * toNumber(g.articolo.costo_medio)),
-            ultimo_movimento: lastMove[g.articolo_id] ?? null,
+    // Dead stock: articoli con giacenza > 0 ma ultimo movimento oltre soglia (o mai)
+    const sixtyDaysAgo = new Date(Date.now() - LIMITS.DEAD_STOCK_DAYS * 86400000);
+    const deadStock = stockRows
+        .filter(row => (toNumber(row.quantita_disponibile) + toNumber(row.quantita_riservata)) > 0)
+        .map(row => ({
+            articolo_id:   row.articolo_id,
+            codice_sku:    row.codice_sku,
+            descrizione:   row.descrizione,
+            quantita:      round2(toNumber(row.quantita_disponibile)),
+            valore:        round2(toNumber(row.valore_disponibile)),
+            ultimo_movimento: lastMove[row.articolo_id] ?? null,
         }))
         .filter(g => !g.ultimo_movimento || new Date(g.ultimo_movimento) < sixtyDaysAgo)
         .sort((a, b) => b.valore - a.valore)
@@ -220,7 +233,7 @@ export const getWarehouseKPIs = asyncHandler(async (req, res) => {
     res.json({
         capitaleImmobilizzato: round2(capitaleImmobilizzato),
         totalArticoli,
-        totalMovimenti: movimenti.length,
+        totalMovimenti,
         deadStock,
     });
 });
@@ -288,13 +301,13 @@ export const getOpsKPIs = asyncHandler(async (req, res) => {
         // Solo le verified CON timestamp admin → per calcolo time-to-approval
         prisma.reportEntry.findMany({
             where: {
-                stato_validazione: ValidationStatus.VERIFIED,
+                stato_validazione: ValidationStatus.APPROVED,
                 modified_by_admin_at: { not: null },
             },
             select: { created_at: true, modified_by_admin_at: true },
         }),
         // TUTTE le verified → per conteggio corretto pending
-        prisma.reportEntry.count({ where: { stato_validazione: ValidationStatus.VERIFIED } }),
+        prisma.reportEntry.count({ where: { stato_validazione: ValidationStatus.APPROVED } }),
         prisma.reportEntry.count({ where: { stato_validazione: ValidationStatus.REJECTED } }),
         prisma.reportEntry.count(),
     ]);

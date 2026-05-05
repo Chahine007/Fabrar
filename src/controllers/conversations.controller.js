@@ -1,6 +1,7 @@
 import { getDb } from "../db/index.js";
 import { getActiveSockets } from "../sockets/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { parsePagination } from "../utils/pagination.js";
 
 function formatMessageTime(dateStr) {
     if (!dateStr) return "";
@@ -238,6 +239,10 @@ export const getConversationMessages = asyncHandler(async (req, res) => {
     const prisma = getDb();
     const currentUserId = getCurrentEmployeeId(req, res);
     if (currentUserId == null) return;
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 200, maxLimit: 500 });
+    const cursor = typeof req.query.cursor === "string" && req.query.cursor.trim()
+        ? req.query.cursor.trim()
+        : null;
 
     const participant = await prisma.conversationParticipant.findUnique({
         where: {
@@ -266,6 +271,8 @@ export const getConversationMessages = asyncHandler(async (req, res) => {
         return tx.message.findMany({
             where: { conversation_id: id },
             orderBy: { created_at: "asc" },
+            take: limit,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : { skip: offset }),
             include: {
                 sender: {
                     select: {

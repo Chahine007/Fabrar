@@ -424,9 +424,7 @@ const Header = ({ onMenuClick, onLogout }: { onMenuClick: () => void, onLogout: 
   const canViewHrAlerts = user?.role === 'ADMIN' || user?.role === 'HR';
   const unreadMessages = useTotalUnread();
   const { data: alerts } = useHrAlerts(canViewHrAlerts);
-  const alertCount = alerts && 'warnings' in (alerts as any)
-    ? ((alerts as any).warnings?.length ?? 0)
-    : (Array.isArray(alerts) ? (alerts as any[]).length : 0);
+  const alertCount = (alerts?.warnings?.length ?? 0) + (alerts?.anomalies?.length ?? 0);
 
   const username = user?.nome && user?.cognome 
     ? `${user.nome} ${user.cognome}` 

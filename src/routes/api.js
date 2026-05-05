@@ -15,7 +15,6 @@ import tasksRoutes from "./tasks.routes.js";
 import timesheetsRoutes from "./timesheets.routes.js";
 import userRoutes from "./user.routes.js";
 import billingRoutes from "./billing.routes.js";
-import { errorHandler } from "../middleware/errorHandler.js";
 
 const router = express.Router();
 
@@ -40,8 +39,5 @@ router.use("/api/suppliers", suppliersRoutes);
 router.use("/api/material-requests", materialRequestsRoutes);
 router.use("/api/user", userRoutes);
 router.use("/api/billing", billingRoutes);
-
-// Handler Globale per errori (deve essere SEMPRE alla fine di tutte le rotte)
-router.use(errorHandler);
 
 export default router;

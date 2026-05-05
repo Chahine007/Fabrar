@@ -5,7 +5,14 @@ import { Router } from "express";
 import multer from "multer";
 import { verifyTokenAndRole, DASHBOARD_ROLES } from "../middleware/auth.js";
 import { validate } from "../middleware/validation.js";
-import { createCantiereSchema, updateCantiereSchema, updateCantiereSettingsSchema } from "../schemas/cantiere.schema.js";
+import {
+    createCantiereSchema,
+    toggleCantiereSchema,
+    updateCantiereSchema,
+    updateCantiereSettingsSchema,
+    updateGpsSchema,
+} from "../schemas/cantiere.schema.js";
+import { createWbsNodeSchema, deleteWbsNodeSchema, updateWbsNodeSchema } from "../schemas/wbs.schema.js";
 import {
     listCantieri,
     createCantiere,
@@ -75,10 +82,10 @@ router.use(["/api/cantieri", "/api/admin/cantieri"], verifyTokenAndRole(DASHBOAR
 router.get(["/api/cantieri", "/api/admin/cantieri"], listCantieri);
 router.post("/api/admin/cantieri", validate(createCantiereSchema), createCantiere);
 router.patch("/api/admin/cantieri/:id", validate(updateCantiereSchema), updateCantiere);
-router.patch("/api/admin/cantieri/:id/toggle", toggleCantiere);
+router.patch("/api/admin/cantieri/:id/toggle", validate(toggleCantiereSchema), toggleCantiere);
 router.get("/api/cantieri/:id/financial-timeline", getFinancialTimeline);
 router.get("/api/cantieri/:id/details", getDetails);
-router.patch("/api/cantieri/:id/gps", updateGps);
+router.patch("/api/cantieri/:id/gps", validate(updateGpsSchema), updateGps);
 
 // ─── Documents routes ─────────────────────────────────────────────────────────
 
@@ -99,8 +106,8 @@ router.patch("/api/cantieri/:id/settings", validate(updateCantiereSettingsSchema
 
 router.use("/api/cantieri/:id/wbs", verifyTokenAndRole(DASHBOARD_ROLES));
 router.get("/api/cantieri/:id/wbs", getWbsTree);
-router.post("/api/cantieri/:id/wbs", createWbsNode);
-router.patch("/api/cantieri/:id/wbs/:nodeId", updateWbsNode);
-router.delete("/api/cantieri/:id/wbs/:nodeId", deleteWbsNode);
+router.post("/api/cantieri/:id/wbs", validate(createWbsNodeSchema), createWbsNode);
+router.patch("/api/cantieri/:id/wbs/:nodeId", validate(updateWbsNodeSchema), updateWbsNode);
+router.delete("/api/cantieri/:id/wbs/:nodeId", validate(deleteWbsNodeSchema), deleteWbsNode);
 
 export default router;

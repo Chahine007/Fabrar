@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '../../lib/api';
+import { apiFetch, getApiErrorMessage } from '../../lib/api';
 import { supplierKeys, magazzinoKeys } from './queryKeys';
 
 export interface Supplier {
@@ -27,7 +27,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await apiFetch(path, init);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as any).error ?? `Errore ${res.status}`);
+    throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
   }
   return res.json() as Promise<T>;
 }

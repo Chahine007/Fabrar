@@ -1,4 +1,4 @@
-import { ValidationStatus } from '../constants.js';
+import { DEFAULTS, ValidationStatus } from '../constants.js';
 import { getDb } from './client.js';
 import { Prisma, decimalOrNull, decimalToNumber, roundMoney } from './shared.js';
 
@@ -117,25 +117,29 @@ export async function getAllCantieri() {
 
 export async function createCantiere({ nome, indirizzo, lat, lng, budget, valore_contratto, budget_spese }) {
   const prisma = getDb();
-  const cantiere = await prisma.cantiere.create({
-    data: {
-      nome,
-      indirizzo: indirizzo || null,
-      lat: lat || null,
-      lng: lng || null,
-      budget: decimalOrNull(budget),
-      valore_contratto: decimalOrNull(valore_contratto),
-      budget_spese: decimalOrNull(budget_spese),
-      attivo: 1,
-    },
-  });
+  const cantiere = await prisma.$transaction(async (tx) => {
+    const created = await tx.cantiere.create({
+      data: {
+        nome,
+        indirizzo: indirizzo || null,
+        lat: lat || null,
+        lng: lng || null,
+        budget: decimalOrNull(budget),
+        valore_contratto: decimalOrNull(valore_contratto),
+        budget_spese: decimalOrNull(budget_spese),
+        attivo: 1,
+      },
+    });
 
-  await prisma.wbsNode.create({
-    data: {
-      cantiere_id: cantiere.id,
-      nome: "Fase Radice",
-      budget_preventivato: decimalOrNull(budget ?? 0),
-    },
+    await tx.wbsNode.create({
+      data: {
+        cantiere_id: created.id,
+        nome: DEFAULTS.WBS_ROOT_NAME,
+        budget_preventivato: decimalOrNull(budget ?? 0),
+      },
+    });
+
+    return created;
   });
 
   return cantiere.id;

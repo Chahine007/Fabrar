@@ -6,6 +6,8 @@ import { getDb } from "../db/index.js";
 import { findUserByUsername, updateUserLastLogin } from "../db/index.js";
 import bcrypt from "bcrypt";
 import { normalizeRole } from "../middleware/auth.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { SECURITY } from "../constants.js";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -15,7 +17,7 @@ function normalizedAppRole(role, fallback = "WORKER") {
 
 // ─── Legacy login (username + password) ──────────────────────────────────────
 
-export async function login(req, res) {
+export const login = asyncHandler(async (req, res) => {
   try {
     const { username, password } = req.body || {};
     if (!username || !password || typeof username !== "string" || typeof password !== "string") {
@@ -59,7 +61,7 @@ export async function login(req, res) {
         username: user.username,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "12h" }
+      { expiresIn: SECURITY.JWT_EXPIRES_IN }
     );
 
     return res.json({ message: "Login effettuato", token });
@@ -67,11 +69,11 @@ export async function login(req, res) {
     logger.error({ err, event: "login_error" }, "login_error");
     return res.status(500).json({ error: "Errore durante il login." });
   }
-}
+});
 
 // ─── Sprint 12: Genera codice invito (solo Admin) ────────────────────────────
 
-export async function generateInviteCode(req, res) {
+export const generateInviteCode = asyncHandler(async (req, res) => {
   try {
     const employeeId = Number(req.params.employeeId);
     if (!Number.isFinite(employeeId) || employeeId <= 0) {
@@ -93,7 +95,7 @@ export async function generateInviteCode(req, res) {
     });
 
     logger.info(
-      { event: "invite_code_generated", employeeId, code },
+      { event: "invite_code_generated", employeeId },
       "Codice invito generato"
     );
 
@@ -102,11 +104,11 @@ export async function generateInviteCode(req, res) {
     logger.error({ err, event: "invite_code_error" }, "invite_code_error");
     return res.status(500).json({ error: "Errore nella generazione del codice invito." });
   }
-}
+});
 
 // ─── Sprint 12: Google Login / Register con codice invito ────────────────────
 
-export async function googleLoginOrRegister(req, res) {
+export const googleLoginOrRegister = asyncHandler(async (req, res) => {
   try {
     const { idToken, inviteCode } = req.body || {};
 
@@ -191,7 +193,7 @@ export async function googleLoginOrRegister(req, res) {
           username: result.user.username,
         },
         process.env.JWT_SECRET,
-        { expiresIn: "12h" }
+        { expiresIn: SECURITY.JWT_EXPIRES_IN }
       );
 
       logger.info(
@@ -266,7 +268,7 @@ export async function googleLoginOrRegister(req, res) {
         username: user.username,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "12h" }
+      { expiresIn: SECURITY.JWT_EXPIRES_IN }
     );
 
     logger.info(
@@ -294,4 +296,4 @@ export async function googleLoginOrRegister(req, res) {
     logger.error({ err, event: "google_auth_error" }, "google_auth_error");
     return res.status(500).json({ error: "Errore durante l'autenticazione Google." });
   }
-}
+});

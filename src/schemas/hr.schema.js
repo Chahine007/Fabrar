@@ -14,6 +14,8 @@ export const getAuditSchema = z.object({
         cantiere_id: z.coerce.number().optional().nullable(),
         from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
         to:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+        offset: z.coerce.number().int().min(0).optional(),
     }).partial(),
 });
 

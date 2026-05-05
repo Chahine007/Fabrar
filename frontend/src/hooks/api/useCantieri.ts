@@ -94,6 +94,7 @@ export function useCantieri() {
   return useQuery({
     queryKey: cantierKeys.list(),
     queryFn: () => fetchJson<Cantiere[]>('/api/cantieri'),
+    staleTime: 120_000,
   });
 }
 
@@ -104,6 +105,7 @@ export function useCantiereDetail(id: number | null) {
     queryKey: cantierKeys.detail(id!),
     queryFn: () => fetchJson<CantiereDetail>(`/api/cantieri/${id}/details`),
     enabled: id !== null,
+    staleTime: 60_000,
   });
 }
 
@@ -114,6 +116,7 @@ export function useFinancialTimeline(id: number | null) {
     queryKey: cantierKeys.timeline(id!),
     queryFn: () => fetchJson<FinancialTimeline>(`/api/cantieri/${id}/financial-timeline`),
     enabled: id !== null,
+    staleTime: 120_000,
   });
 }
 

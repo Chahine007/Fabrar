@@ -12,6 +12,7 @@ const dbMocks = {
   getEmployeesWithoutReport: vi.fn(),
   ensureDailyReportHeader: vi.fn(),
   createReportEntry: vi.fn(),
+  upsertReportEntry: vi.fn(),
   listReportEntriesByEmployeeAndDate: vi.fn(),
   updateReportHeader: vi.fn(),
 };
@@ -58,21 +59,23 @@ describe("bot flow", () => {
     dbMocks.listReportEntriesByEmployeeAndDate.mockResolvedValue([]);
   });
 
-  it("utente non registrato + /start -> crea utente e invia benvenuto", async () => {
+  it("utente non registrato + /start -> richiede il codice di collegamento Telegram", async () => {
     dbMocks.findEmployeeByTelegramId.mockResolvedValue(null);
-    dbMocks.createEmployee.mockResolvedValue({
-      id: 1,
-      stato_registrazione: "in_attesa_nome",
-      gdpr_accettato: 0,
-    });
 
     const { handleTelegramUpdate } = await import("../src/services/bot.js");
 
     await handleTelegramUpdate(buildUpdate("/start"));
 
-    expect(dbMocks.createEmployee).toHaveBeenCalledWith(20, 10);
+    expect(dbMocks.createEmployee).not.toHaveBeenCalled();
     expect(telegramMocks.tgSendMessage).toHaveBeenCalledTimes(1);
-    expect(telegramMocks.tgSendMessage).toHaveBeenCalledWith(10, expect.stringContaining("Benvenuto"));
+    expect(telegramMocks.tgSendMessage).toHaveBeenCalledWith(
+      10,
+      expect.stringContaining("Account non riconosciuto")
+    );
+    expect(telegramMocks.tgSendMessage).toHaveBeenCalledWith(
+      10,
+      expect.stringContaining("codice Telegram")
+    );
   });
 
   it("utente registrato con gdpr non accettato + /start -> mostra informativa completa", async () => {
@@ -99,7 +102,7 @@ describe("bot flow", () => {
     );
   });
 
-  it("utente in_attesa_nome -> completa registrazione e riceve l'informativa privacy", async () => {
+  it("utente in_attesa_nome senza gdpr accettato -> riceve solo l'informativa privacy", async () => {
     dbMocks.findEmployeeByTelegramId.mockResolvedValue({
       id: 1,
       stato_registrazione: "in_attesa_nome",
@@ -111,16 +114,20 @@ describe("bot flow", () => {
     await handleTelegramUpdate(buildUpdate("Mario Rossi"));
 
     expect(dbMocks.updateEmployee).toHaveBeenCalledWith(1, {
-      nome: "Mario",
-      cognome: "Rossi",
-      stato_registrazione: "registrato",
+      chat_id: 10,
     });
-    // Il bot invia: (1) informativa GDPR, (2) conferma registrazione
-    expect(telegramMocks.tgSendMessage).toHaveBeenCalledTimes(2);
+    expect(dbMocks.updateEmployee).not.toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        nome: "Mario",
+        cognome: "Rossi",
+        stato_registrazione: "registrato",
+      })
+    );
+    expect(telegramMocks.tgSendMessage).toHaveBeenCalledTimes(1);
     const gdprMsg = telegramMocks.tgSendMessage.mock.calls[0][1];
     expect(gdprMsg).toContain("INFORMATIVA PRIVACY");
-    const confirmMsg = telegramMocks.tgSendMessage.mock.calls[1][1];
-    expect(confirmMsg).toContain("accetto_gdpr");
+    expect(gdprMsg).toContain("/accetto_gdpr");
   });
 
   it("utente registrato senza gdpr non puo usare /edit e riceve solo informativa", async () => {
@@ -193,7 +200,7 @@ describe("bot flow", () => {
     });
     dbMocks.updateEmployee.mockResolvedValue(undefined);
     dbMocks.ensureDailyReportHeader.mockResolvedValue(99);
-    dbMocks.createReportEntry.mockResolvedValue(undefined);
+    dbMocks.upsertReportEntry.mockResolvedValue(undefined);
     dbMocks.listReportEntriesByEmployeeAndDate.mockResolvedValue([
       {
         ore_lavorate: null,
@@ -221,12 +228,14 @@ describe("bot flow", () => {
 
     await handleTelegramUpdate(buildUpdate("Fine pausa alle 12"));
 
-    expect(dbMocks.createReportEntry).toHaveBeenCalledWith(
+    expect(dbMocks.upsertReportEntry).toHaveBeenCalledWith(
       expect.objectContaining({
         report_id: 99,
         ingresso: "08:00",
         pausa_inizio: "11:00",
         pausa_fine: "12:00",
+        stato_validazione: "PENDING",
+        fonte: "TELEGRAM_TESTO",
       })
     );
     const lastMessage = telegramMocks.tgSendMessage.mock.calls.at(-1)[1];

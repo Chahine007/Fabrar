@@ -17,7 +17,8 @@ import {
   useMaterialRequests,
   useUpdateMaterialRequestStatus,
 } from '../hooks/api/useMaterialRequests';
-import { useCantieri } from '../hooks/api/useCantieri';
+import { type Cantiere, useCantieri } from '../hooks/api/useCantieri';
+import { getApiErrorMessage } from '../lib/api';
 import MaterialRequestModal from '../components/materials/MaterialRequestModal';
 import ErrorMessage from '../components/ErrorMessage';
 import { CardListSkeleton, ConfirmDialog, EmptyState, useToast } from '../components/ui';
@@ -99,8 +100,8 @@ export default function MaterialRequestsPage() {
         status === 'APPROVED' ? 'Richiesta approvata' : 'Richiesta rifiutata',
         `Richiesta #${request.id} aggiornata.`
       );
-    } catch (err: any) {
-      toast.error('Aggiornamento non riuscito', err.message ?? 'Errore aggiornamento stato richiesta.');
+    } catch (err: unknown) {
+      toast.error('Aggiornamento non riuscito', getApiErrorMessage(err, 'Errore aggiornamento stato richiesta.'));
     }
   };
 
@@ -114,8 +115,8 @@ export default function MaterialRequestsPage() {
       await fulfillRequest.mutateAsync(requestToFulfill.id);
       toast.success('Richiesta evasa', `Richiesta #${requestToFulfill.id} evasa e giacenze scalate.`);
       setRequestToFulfill(null);
-    } catch (err: any) {
-      toast.error('Evasione non riuscita', err.message ?? 'Errore evasione richiesta.');
+    } catch (err: unknown) {
+      toast.error('Evasione non riuscita', getApiErrorMessage(err, 'Errore evasione richiesta.'));
     }
   };
 
@@ -189,7 +190,7 @@ export default function MaterialRequestsPage() {
                 className="px-3 py-2 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
               >
                 <option value="">Tutti i cantieri</option>
-                {(cantieri as any[]).map((cantiere) => (
+                {(cantieri as Cantiere[]).map((cantiere) => (
                   <option key={cantiere.id} value={cantiere.id}>{cantiere.nome}</option>
                 ))}
               </select>

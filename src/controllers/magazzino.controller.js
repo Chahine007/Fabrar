@@ -1,7 +1,7 @@
-import asyncHandler from "express-async-handler";
 import { getDb } from "../db/index.js";
 import { processDischarge, processCarico } from "../domain/magazzino/warehouseService.js";
-import { DomainError } from "../domain/shared/DomainError.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { parsePagination, positiveCursor } from "../utils/pagination.js";
 
 export const createMovimento = asyncHandler(async (req, res) => {
     const prisma     = getDb();
@@ -78,8 +78,13 @@ export const createUbicazione = asyncHandler(async (req, res) => {
 
 export const getGiacenze = asyncHandler(async (req, res) => {
     const prisma = getDb();
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 250, maxLimit: 500 });
+    const cursor = positiveCursor(req.query.cursor);
     const giacenze = await prisma.giacenza.findMany({
-        include: { articolo: true, ubicazione: true }
+        include: { articolo: true, ubicazione: true },
+        orderBy: { id: 'asc' },
+        take: limit,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : { skip: offset }),
     });
     res.json(giacenze);
 });
@@ -87,6 +92,8 @@ export const getGiacenze = asyncHandler(async (req, res) => {
 export const getMovimentiCantiere = asyncHandler(async (req, res) => {
     const prisma = getDb();
     const { cantiere_id } = req.params;
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 100, maxLimit: 500 });
+    const cursor = positiveCursor(req.query.cursor);
     
     if (!cantiere_id) {
         return res.status(400).json({ error: "cantiere_id mancante." });
@@ -105,7 +112,9 @@ export const getMovimentiCantiere = asyncHandler(async (req, res) => {
                 include: { employee: true }
             }
         },
-        orderBy: { data_movimento: 'desc' }
+        orderBy: [{ data_movimento: 'desc' }, { id: 'desc' }],
+        take: limit,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : { skip: offset }),
     });
 
     res.json(movimenti);

@@ -8,7 +8,7 @@
  * Supporta filtro opzionale per cantiere_id (vista contestuale in ProjectDetail).
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '../../lib/api';
+import { apiFetch, getApiErrorMessage } from '../../lib/api';
 import { telegramKeys, hrKeys } from './queryKeys';
 import type { AuditEntry, AuditStatus } from './useHr';
 
@@ -37,7 +37,7 @@ async function fetchJson<T>(path: string): Promise<T> {
   const res = await apiFetch(path);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as any).error ?? `Errore ${res.status}`);
+    throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
   }
   return res.json() as Promise<T>;
 }

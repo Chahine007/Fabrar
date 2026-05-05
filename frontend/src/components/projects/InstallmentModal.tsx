@@ -8,6 +8,7 @@ import {
   useUpdateInstallment,
 } from '../../hooks/api/useBilling';
 import { Button, Dialog } from '../ui';
+import type { WbsNode } from '../../types/wbs';
 
 interface InstallmentModalProps {
   cantiereId: number;
@@ -42,7 +43,7 @@ function getInitialFormState(installment?: BillingInstallment | null): Installme
   };
 }
 
-function flattenWbs(nodes: any[], depth = 0): Array<{ id: number; label: string }> {
+function flattenWbs(nodes: WbsNode[], depth = 0): Array<{ id: number; label: string }> {
   return nodes.flatMap((node) => [
     {
       id: node.id,

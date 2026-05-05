@@ -16,6 +16,7 @@ export const useArticoli = () => {
       const res = await api.get('/api/magazzino/articoli');
       return res.json() as Promise<WarehouseArticle[]>;
     },
+    staleTime: 120_000,
   });
 };
 
@@ -26,6 +27,7 @@ export const useUbicazioni = () => {
       const res = await api.get('/api/magazzino/ubicazioni');
       return res.json() as Promise<WarehouseLocation[]>;
     },
+    staleTime: 120_000,
   });
 };
 
@@ -36,6 +38,7 @@ export const useGiacenze = () => {
       const res = await api.get('/api/magazzino/giacenze');
       return res.json() as Promise<WarehouseStockRow[]>;
     },
+    staleTime: 30_000,
   });
 };
 
@@ -47,6 +50,7 @@ export const useMovimentiCantiere = (cantiereId: number) => {
       return res.json() as Promise<WarehouseMovementRow[]>;
     },
     enabled: !!cantiereId,
+    staleTime: 30_000,
   });
 };
 
