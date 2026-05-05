@@ -8,6 +8,7 @@ import employeesRoutes from "./employees.routes.js"; // Se esiste
 import dashboardRoutes from "./dashboard.routes.js";
 import conversationsRoutes from "./conversations.routes.js";
 import magazzinoRoutes from "./magazzino.routes.js";
+import tasksRoutes from "./tasks.routes.js";
 import userRoutes from "./user.routes.js";
 import { errorHandler } from "../middleware/errorHandler.js";
 
@@ -20,6 +21,7 @@ if (!process.env.JWT_SECRET) {
 
 // Router aggregator
 router.use(authRoutes);
+router.use(tasksRoutes);
 router.use(cantieriRoutes);
 router.use(expensesRoutes);
 router.use(hrRoutes);

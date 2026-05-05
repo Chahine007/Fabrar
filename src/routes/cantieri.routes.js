@@ -5,7 +5,7 @@ import { Router } from "express";
 import multer from "multer";
 import { verifyTokenAndRole, DASHBOARD_ROLES } from "../middleware/auth.js";
 import { validate } from "../middleware/validation.js";
-import { createCantiereSchema, updateCantiereSchema, updateCantiereSettingsSchema, createTaskSchema } from "../schemas/cantiere.schema.js";
+import { createCantiereSchema, updateCantiereSchema, updateCantiereSettingsSchema } from "../schemas/cantiere.schema.js";
 import {
     listCantieri,
     createCantiere,
@@ -13,8 +13,6 @@ import {
     updateCantiere,
     getFinancialTimeline,
     getDetails,
-    getTasks,
-    createTask,
     getDocuments,
     uploadDocument,
     downloadDocument,
@@ -26,8 +24,6 @@ import {
     createWbsNode,
     updateWbsNode,
     deleteWbsNode,
-    listAllTasks,
-    updateTask,
 } from "../controllers/cantieri.controller.js";
 
 const router = Router();
@@ -83,15 +79,6 @@ router.patch("/api/admin/cantieri/:id/toggle", toggleCantiere);
 router.get("/api/cantieri/:id/financial-timeline", getFinancialTimeline);
 router.get("/api/cantieri/:id/details", getDetails);
 router.patch("/api/cantieri/:id/gps", updateGps);
-
-// ─── Tasks routes ─────────────────────────────────────────────────────────────
-
-router.get("/api/cantieri/:id/tasks", getTasks);
-router.post("/api/cantieri/:id/tasks", validate(createTaskSchema), createTask);
-
-// Cross-project: tutti i task di tutti i cantieri
-router.get("/api/tasks", listAllTasks);
-router.patch("/api/tasks/:taskId", updateTask);
 
 // ─── Documents routes ─────────────────────────────────────────────────────────
 

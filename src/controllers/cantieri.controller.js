@@ -149,37 +149,6 @@ export const getCantiereMaterials = asyncHandler(async (req, res) => {
     res.json(speseMateriali);
 });
 
-export const getTasks = asyncHandler(async (req, res) => {
-    const cantiereId = parseIdParam(req.params.id);
-    if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
-
-    const prisma = getDb();
-    const tasks = await prisma.task.findMany({
-        where: { cantiere_id: cantiereId },
-        orderBy: { id: 'desc' }
-    });
-    res.json(tasks);
-});
-
-export const createTask = asyncHandler(async (req, res) => {
-    const cantiereId = parseIdParam(req.params.id);
-    if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
-
-    const prisma = getDb();
-    const newTask = await prisma.task.create({
-        data: {
-            cantiere_id: cantiereId,
-            title: req.body.title,
-            assignee: 'Non Assegnato',
-            status: 'Da Fare',
-            priority: 'Media',
-            due: '-',
-        }
-    });
-
-    res.status(201).json(newTask);
-});
-
 export const getDocuments = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
@@ -317,42 +286,6 @@ export const updateCantiereSettings = asyncHandler(async (req, res) => {
     res.json(cantiere);
 });
 
-// ─── Tasks cross-project ─────────────────────────────────────────────────────
-
-export const listAllTasks = asyncHandler(async (req, res) => {
-    const { cantiere_id, status, priority } = req.query;
-    const prisma = getDb();
-    const tasks = await prisma.task.findMany({
-        where: {
-            ...(cantiere_id ? { cantiere_id: Number(cantiere_id) } : {}),
-            ...(status      ? { status }                           : {}),
-            ...(priority    ? { priority }                         : {}),
-        },
-        include: { cantiere: { select: { id: true, nome: true } } },
-        orderBy: [{ cantiere_id: 'asc' }, { id: 'desc' }],
-    });
-    res.json(tasks);
-});
-
-export const updateTask = asyncHandler(async (req, res) => {
-    const taskId = parseIdParam(req.params.taskId);
-    if (!taskId) return res.status(400).json({ error: "ID task non valido." });
-
-    const prisma = getDb();
-    const task = await prisma.task.findUnique({ where: { id: taskId } });
-    if (!task) return res.status(404).json({ error: "Task non trovato." });
-
-    const allowed = ['title', 'status', 'priority', 'assignee', 'due'];
-    const data = Object.fromEntries(
-        Object.entries(req.body).filter(([k]) => allowed.includes(k))
-    );
-    if (Object.keys(data).length === 0)
-        return res.status(400).json({ error: "Nessun campo aggiornabile fornito." });
-
-    const updated = await prisma.task.update({ where: { id: taskId }, data });
-    res.json(updated);
-});
-
 // syncCantiereBudget è ora gestito da src/domain/cantiere/cantiereService.js
 
 /**
@@ -417,4 +350,4 @@ export const deleteWbsNode = asyncHandler(async (req, res) => {
     }
 });
 
-// syncCantiereBudget è ora gestito da src/domain/cantiere/cantiereService.js
+// syncCantiereBudget è ora gestito da src/domain/cantiere/cantiereService.js
