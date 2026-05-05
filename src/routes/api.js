@@ -8,6 +8,9 @@ import employeesRoutes from "./employees.routes.js"; // Se esiste
 import dashboardRoutes from "./dashboard.routes.js";
 import conversationsRoutes from "./conversations.routes.js";
 import magazzinoRoutes from "./magazzino.routes.js";
+import warehouseRoutes from "./warehouse.routes.js";
+import suppliersRoutes from "./suppliers.routes.js";
+import materialRequestsRoutes from "./materialRequests.routes.js";
 import tasksRoutes from "./tasks.routes.js";
 import timesheetsRoutes from "./timesheets.routes.js";
 import userRoutes from "./user.routes.js";
@@ -31,6 +34,9 @@ router.use(employeesRoutes);
 router.use(dashboardRoutes);
 router.use(conversationsRoutes);
 router.use("/api/magazzino", magazzinoRoutes);
+router.use("/api/warehouse", warehouseRoutes);
+router.use("/api/suppliers", suppliersRoutes);
+router.use("/api/material-requests", materialRequestsRoutes);
 router.use("/api/user", userRoutes);
 
 // Handler Globale per errori (deve essere SEMPRE alla fine di tutte le rotte)

@@ -137,7 +137,7 @@ const WarehousePage = () => {
   const { data: giacenze, isLoading, error } = useGiacenze();
   const { user } = useAuth();
   
-  const canCaricare = user?.role === 'ADMIN' || user?.role === 'HR' || user?.role === 'PM';
+  const canCaricare = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'].includes(user?.role ?? '');
 
   const kpis = useMemo(() => {
     if (!giacenze) return { totaleMagazzino: 0, articoliSottoscorta: 0 };

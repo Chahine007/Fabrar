@@ -26,16 +26,37 @@ export const createMovimento = asyncHandler(async (req, res) => {
 export const getArticoli = asyncHandler(async (req, res) => {
     const prisma = getDb();
     const articoli = await prisma.articolo.findMany({
-        include: { giacenze: { include: { ubicazione: true } } }
+        include: {
+            fornitore_default: true,
+            giacenze: { include: { ubicazione: true } }
+        }
     });
     res.json(articoli);
 });
 
 export const createArticolo = asyncHandler(async (req, res) => {
     const prisma = getDb();
-    const { codice_sku, descrizione, unita_misura } = req.body;
+    const {
+        codice_sku,
+        descrizione,
+        unita_misura,
+        costo_medio = 0,
+        scorta_minima = 0,
+        categoria = null,
+        fornitore_default_id = null,
+    } = req.body;
+
     const articolo = await prisma.articolo.create({
-        data: { codice_sku, descrizione, unita_misura }
+        data: {
+            codice_sku,
+            descrizione,
+            unita_misura,
+            costo_medio,
+            scorta_minima: Number(scorta_minima) || 0,
+            categoria,
+            fornitore_default_id: fornitore_default_id ? Number(fornitore_default_id) : null,
+        },
+        include: { fornitore_default: true },
     });
     res.status(201).json(articolo);
 });
@@ -77,6 +98,8 @@ export const getMovimentiCantiere = asyncHandler(async (req, res) => {
             articolo: true,
             ubicazione_da: true,
             wbs_node: true,
+            documento: true,
+            fornitore: true,
             esecutore: {
                 include: { employee: true }
             }

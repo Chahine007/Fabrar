@@ -5,7 +5,7 @@ import {
   getUserSettings,
   updateUserSettings,
   changePassword,
-  getMaterialRequests,
+  getMaterialMovements,
   getSupportContact,
 } from "../controllers/user.controller.js";
 import { verifyToken } from "../middleware/auth.js";
@@ -25,8 +25,8 @@ router.patch("/settings", updateUserSettings);
 // PATCH /api/user/password -> Cambio password per account locali
 router.patch("/password", changePassword);
 
-// GET /api/user/material-requests -> Movimenti/richieste materiali dell'utente
-router.get("/material-requests", getMaterialRequests);
+// GET /api/user/material-movements -> Storico movimenti materiali dell'utente
+router.get("/material-movements", getMaterialMovements);
 
 // GET /api/user/support-contact -> Contatto interno per supporto
 router.get("/support-contact", getSupportContact);

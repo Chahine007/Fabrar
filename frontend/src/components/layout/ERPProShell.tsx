@@ -20,6 +20,7 @@ import {
   Bot,
   ClipboardList,
   ChevronDown,
+  Truck,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
@@ -44,6 +45,9 @@ interface NavGroup {
 }
 
 // --- Configuration ---
+
+const ALL_AUTH_ROLES = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN', 'WORKER'];
+const WAREHOUSE_ROLES = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'];
 
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -70,7 +74,9 @@ const NAV_GROUPS: NavGroup[] = [
       },
       { icon: ClipboardList, label: 'Le Mie Ore / Spese', path: '/timesheets', id: 'my-timesheets' },
       { icon: FileStack,      label: 'Documenti',           path: '/documents',   id: 'documents' },
-      { icon: Package,        label: 'Magazzino',           path: '/warehouse',   id: 'warehouse', roles: ['ADMIN'] },
+      { icon: Package,        label: 'Magazzino',           path: '/warehouse',   id: 'warehouse', roles: WAREHOUSE_ROLES },
+      { icon: Truck,          label: 'Fornitori',           path: '/suppliers',   id: 'suppliers', roles: WAREHOUSE_ROLES },
+      { icon: ClipboardList,  label: 'Richieste Materiali', path: '/material-requests', id: 'material-requests', roles: ALL_AUTH_ROLES },
     ]
   },
   {
@@ -152,7 +158,7 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: bo
                 const isItemExpanded = expandedItems[item.id];
                 
                 return (
-                  <RoleGuard key={item.id} allowedRoles={item.roles ?? ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WORKER']}>
+                  <RoleGuard key={item.id} allowedRoles={item.roles ?? ALL_AUTH_ROLES}>
                     <div className="w-full">
                       <div className="flex items-center relative group">
                         <Link
@@ -206,7 +212,7 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: bo
                             {item.subItems.map((subItem) => {
                               const isSubActive = location.pathname === subItem.path;
                               return (
-                                <RoleGuard key={subItem.id} allowedRoles={subItem.roles ?? ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WORKER']}>
+                                <RoleGuard key={subItem.id} allowedRoles={subItem.roles ?? ALL_AUTH_ROLES}>
                                   <Link
                                     to={subItem.path}
                                     onClick={() => setIsMobileOpen(false)}

@@ -52,6 +52,8 @@ interface CreaMovimentoParams {
   cantiere_id?: number;
   wbs_node_id?: number | null;
   costo_acquisto?: number;
+  documento_id?: number | null;
+  fornitore_id?: number | null;
 }
 
 export const useCreaMovimento = () => {

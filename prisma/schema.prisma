@@ -10,14 +10,14 @@ datasource db {
 }
 
 model Employee {
-  id                  Int       @id @default(autoincrement())
-  telegram_id         BigInt?   @unique
+  id                  Int     @id @default(autoincrement())
+  telegram_id         BigInt? @unique
   chat_id             BigInt?
   nome                String?
   cognome             String?
-  attivo              Int       @default(1)
-  stato_registrazione String?   @default("in_attesa_nome")
-  gdpr_accettato      Int       @default(0)
+  attivo              Int     @default(1)
+  stato_registrazione String? @default("in_attesa_nome")
+  gdpr_accettato      Int     @default(0)
   pending_json        String?
   pending_text        String?
   pending_date        String?
@@ -29,100 +29,101 @@ model Employee {
   documenti           String?
 
   // ── Sprint 10: Anagrafica profonda ─────────────────────────────────────────
-  codice_fiscale      String?
-  data_nascita        DateTime?
-  indirizzo           String?
-  citta               String?
-  cap                 String?
-  telefono_personale  String?
-  email_personale     String?
-  data_assunzione     DateTime?
-  dipartimento        String?
-  competenze          Json?     // Array di skill: ["Ponteggiatore", "Saldatore", ...]
+  codice_fiscale     String?
+  data_nascita       DateTime?
+  indirizzo          String?
+  citta              String?
+  cap                String?
+  telefono_personale String?
+  email_personale    String?
+  data_assunzione    DateTime?
+  dipartimento       String?
+  competenze         Json? // Array di skill: ["Ponteggiatore", "Saldatore", ...]
 
   // ── Sprint 12: Frictionless Onboarding ────────────────────────────────────
-  invite_code         String?   @unique   // Codice invito 6-char generato dall'Admin
-  telegram_pairing_code String? @unique   // Codice pairing per collegare il bot Telegram
-  user_id             Int?      @unique   // 1:1 link al record User (web login)
+  invite_code           String? @unique // Codice invito 6-char generato dall'Admin
+  telegram_pairing_code String? @unique // Codice pairing per collegare il bot Telegram
+  user_id               Int?    @unique // 1:1 link al record User (web login)
 
-  user                User?     @relation(fields: [user_id], references: [id])
-  reports             Report[]
-  spese               Spesa[]
-  tariffe             Tariffa[]
-  message_logs        MessageLog[]
-  messages            Message[]
+  user                      User?                     @relation(fields: [user_id], references: [id])
+  reports                   Report[]
+  spese                     Spesa[]
+  richieste_materiali       RichiestaMateriale[]
+  tariffe                   Tariffa[]
+  message_logs              MessageLog[]
+  messages                  Message[]
   conversation_participants ConversationParticipant[]
-  bot_sessions        BotSession[]
-  assigned_tasks      Task[]
+  bot_sessions              BotSession[]
+  assigned_tasks            Task[]
 }
-
 
 model User {
   id            Int       @id @default(autoincrement())
   username      String    @unique
-  password_hash String?   // Opzionale: null per utenti Google-only
+  password_hash String? // Opzionale: null per utenti Google-only
   email         String?   @unique
   google_id     String?   @unique
-  role          String    // ADMIN, HR, EXTERNAL_PM, ecc.
+  role          String // ADMIN, HR, EXTERNAL_PM, ecc.
   is_active     Int       @default(1)
   settings      Json?
   created_at    DateTime  @default(now())
   last_login_at DateTime?
 
-  employee      Employee? // 1:1 inverso — la FK è su Employee.user_id
-  cantieri_pm   Cantiere[] @relation("CantierePM")
-  cantieri_sm   Cantiere[] @relation("CantiereSiteManager")
+  employee            Employee? // 1:1 inverso — la FK è su Employee.user_id
+  cantieri_pm         Cantiere[]           @relation("CantierePM")
+  cantieri_sm         Cantiere[]           @relation("CantiereSiteManager")
   movimenti_magazzino MovimentoMagazzino[]
 
   @@index([role, is_active])
 }
 
 model Cantiere {
-  id                Int       @id @default(autoincrement())
+  id                Int      @id @default(autoincrement())
   nome              String
   indirizzo         String?
   lat               Float?
   lng               Float?
-  budget            Decimal?  @db.Decimal(10, 2)
-  attivo            Int       @default(1)
-  raggio_tolleranza Int       @default(200)
+  budget            Decimal? @db.Decimal(10, 2)
+  attivo            Int      @default(1)
+  raggio_tolleranza Int      @default(200)
 
   // Impostazioni Avanzate (Sprint 5)
-  bot_checkin_gps    Boolean   @default(true)
-  bot_anomaly_action String    @default("LOG")
-  bot_wbs_prompt_thr Int       @default(3)
-  budget_contingency Decimal?  @db.Decimal(10, 2)
-  kpi_warning_thr    Int       @default(80)
-  kpi_critical_thr   Int       @default(95)
+  bot_checkin_gps    Boolean  @default(true)
+  bot_anomaly_action String   @default("LOG")
+  bot_wbs_prompt_thr Int      @default(3)
+  budget_contingency Decimal? @db.Decimal(10, 2)
+  kpi_warning_thr    Int      @default(80)
+  kpi_critical_thr   Int      @default(95)
   client_name        String?
   client_ref_email   String?
   pm_id              Int?
   site_manager_id    Int?
 
-  pm_user            User?     @relation("CantierePM", fields: [pm_id], references: [id])
-  sm_user            User?     @relation("CantiereSiteManager", fields: [site_manager_id], references: [id])
+  pm_user User? @relation("CantierePM", fields: [pm_id], references: [id])
+  sm_user User? @relation("CantiereSiteManager", fields: [site_manager_id], references: [id])
 
-  wbs_nodes         WbsNode[]
-  report_entries    ReportEntry[]
-  spese             Spesa[]
-  reports           Report[]
-  tasks             Task[]
-  documents         Document[]
+  wbs_nodes           WbsNode[]
+  report_entries      ReportEntry[]
+  spese               Spesa[]
+  reports             Report[]
+  tasks               Task[]
+  documents           Document[]
   movimenti_magazzino MovimentoMagazzino[]
+  richieste_materiali RichiestaMateriale[]
 }
 
 // NEW ERP TABLE: WBS Nodes
 model WbsNode {
-  id                  Int       @id @default(autoincrement())
+  id                  Int      @id @default(autoincrement())
   parent_id           Int?
   cantiere_id         Int
   nome                String
-  budget_preventivato Decimal?  @default(0) @db.Decimal(10, 2)
-  is_variant          Boolean   @default(false)
+  budget_preventivato Decimal? @default(0) @db.Decimal(10, 2)
+  is_variant          Boolean  @default(false)
 
-  cantiere            Cantiere  @relation(fields: [cantiere_id], references: [id])
-  parent              WbsNode?  @relation("WbsHierarchy", fields: [parent_id], references: [id])
-  children            WbsNode[] @relation("WbsHierarchy")
+  cantiere Cantiere  @relation(fields: [cantiere_id], references: [id])
+  parent   WbsNode?  @relation("WbsHierarchy", fields: [parent_id], references: [id])
+  children WbsNode[] @relation("WbsHierarchy")
 
   report_entries      ReportEntry[]
   spese               Spesa[]
@@ -130,11 +131,11 @@ model WbsNode {
 }
 
 model Report {
-  id                   Int       @id @default(autoincrement())
-  data_utc             DateTime  @default(now())
-  report_date          DateTime  @db.Date
+  id                   Int              @id @default(autoincrement())
+  data_utc             DateTime         @default(now())
+  report_date          DateTime         @db.Date
   employee_id          Int
-  cantiere_id          Int?      
+  cantiere_id          Int?
   ore_lavorate         Float?
   ingresso             String?
   pausa_inizio         String?
@@ -146,22 +147,22 @@ model Report {
   testo_originale      String?
   stato_validazione    ValidationStatus @default(PENDING)
   fonte                String?
-  input_method         String?   @default("timer")
+  input_method         String?          @default("timer")
   admin_note           String?
   modified_by_admin_at DateTime?
 
-  employee             Employee  @relation(fields: [employee_id], references: [id])
-  cantiere             Cantiere? @relation(fields: [cantiere_id], references: [id])
-  entries              ReportEntry[]
+  employee Employee      @relation(fields: [employee_id], references: [id])
+  cantiere Cantiere?     @relation(fields: [cantiere_id], references: [id])
+  entries  ReportEntry[]
 
   @@unique([employee_id, report_date])
 }
 
 model ReportEntry {
-  id                   Int       @id @default(autoincrement())
+  id                   Int              @id @default(autoincrement())
   report_id            Int
   cantiere_id          Int?
-  wbs_node_id          Int?      // NEW: link to WBS per il Job Costing dettagliato
+  wbs_node_id          Int? // NEW: link to WBS per il Job Costing dettagliato
   task_id              Int?
   ore_lavorate         Float?
   ingresso             String?
@@ -176,69 +177,69 @@ model ReportEntry {
   fonte                String?
   admin_note           String?
   modified_by_admin_at DateTime?
-  created_at           DateTime  @default(now())
+  created_at           DateTime         @default(now())
 
-  report               Report    @relation(fields: [report_id], references: [id], onDelete: Cascade)
-  cantiere             Cantiere? @relation(fields: [cantiere_id], references: [id])
-  wbs_node             WbsNode?  @relation(fields: [wbs_node_id], references: [id])
-  task                 Task?     @relation(fields: [task_id], references: [id])
+  report   Report    @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  cantiere Cantiere? @relation(fields: [cantiere_id], references: [id])
+  wbs_node WbsNode?  @relation(fields: [wbs_node_id], references: [id])
+  task     Task?     @relation(fields: [task_id], references: [id])
 }
 
 model Spesa {
-  id                   Int       @id @default(autoincrement())
-  timestamp_utc        DateTime  @default(now())
+  id                   Int              @id @default(autoincrement())
+  timestamp_utc        DateTime         @default(now())
   employee_id          Int
   cantiere_id          Int
-  wbs_node_id          Int?      // NEW: link to WBS per il Job Costing dettagliato
+  wbs_node_id          Int? // NEW: link to WBS per il Job Costing dettagliato
   task_id              Int?
-  importo              Decimal   @db.Decimal(10, 2)
+  importo              Decimal          @db.Decimal(10, 2)
   fornitore            String?
   descrizione          String?
   pricebook_id         Int?
-  quantita             Decimal?  @db.Decimal(10, 2)
+  quantita             Decimal?         @db.Decimal(10, 2)
   stato_validazione    ValidationStatus @default(PENDING)
-  fonte                String?   @default("TELEGRAM")
-  input_method         String?   @default("telegram_ocr")
+  fonte                String?          @default("TELEGRAM")
+  input_method         String?          @default("telegram_ocr")
   fattura_rif          String?
-  documento_id         Int?      // Link opzionale al Documento (es. fattura)
+  documento_id         Int? // Link opzionale al Documento (es. fattura)
   admin_note           String?
   modified_by_admin_at DateTime?
 
-  employee             Employee  @relation(fields: [employee_id], references: [id])
-  cantiere             Cantiere  @relation(fields: [cantiere_id], references: [id])
-  pricebook            Pricebook? @relation(fields: [pricebook_id], references: [id])
-  wbs_node             WbsNode?  @relation(fields: [wbs_node_id], references: [id])
-  task                 Task?     @relation(fields: [task_id], references: [id])
-  documento            Document? @relation(fields: [documento_id], references: [id])
+  employee  Employee   @relation(fields: [employee_id], references: [id])
+  cantiere  Cantiere   @relation(fields: [cantiere_id], references: [id])
+  pricebook Pricebook? @relation(fields: [pricebook_id], references: [id])
+  wbs_node  WbsNode?   @relation(fields: [wbs_node_id], references: [id])
+  task      Task?      @relation(fields: [task_id], references: [id])
+  documento Document?  @relation(fields: [documento_id], references: [id])
 }
 
 model Tariffa {
-  id            Int       @id @default(autoincrement())
-  employee_id   Int?
-  costo_orario  Decimal   @db.Decimal(10, 2)
-  valido_dal    DateTime  @db.Date
-  
-  employee      Employee? @relation(fields: [employee_id], references: [id])
+  id           Int      @id @default(autoincrement())
+  employee_id  Int?
+  costo_orario Decimal  @db.Decimal(10, 2)
+  valido_dal   DateTime @db.Date
+
+  employee Employee? @relation(fields: [employee_id], references: [id])
 }
 
 model Pricebook {
-  id             Int       @id @default(autoincrement())
+  id             Int     @id @default(autoincrement())
   nome           String
   unita          String?
-  costo_unitario Decimal   @db.Decimal(10, 2)
+  costo_unitario Decimal @db.Decimal(10, 2)
 
-  spese          Spesa[]
+  spese Spesa[]
 }
 
 model MessageLog {
-  id             Int       @id @default(autoincrement())
-  timestamp_utc  DateTime  @default(now())
+  id             Int      @id @default(autoincrement())
+  timestamp_utc  DateTime @default(now())
   employee_id    Int
   message_type   String?
   raw_text       String?
   extracted_json String?
 
-  employee       Employee  @relation(fields: [employee_id], references: [id])
+  employee Employee @relation(fields: [employee_id], references: [id])
 }
 
 model Task {
@@ -253,8 +254,8 @@ model Task {
   created_at  DateTime     @default(now())
   updated_at  DateTime     @updatedAt
 
-  cantiere    Cantiere     @relation(fields: [cantiere_id], references: [id])
-  assignee    Employee?    @relation(fields: [assignee_id], references: [id])
+  cantiere       Cantiere      @relation(fields: [cantiere_id], references: [id])
+  assignee       Employee?     @relation(fields: [assignee_id], references: [id])
   report_entries ReportEntry[]
   spese          Spesa[]
 }
@@ -279,29 +280,30 @@ enum ValidationStatus {
 }
 
 model Document {
-  id               Int      @id @default(autoincrement())
-  cantiere_id      Int
-  name             String   // Nome originale del file (display)
-  file_path        String?  // Percorso relativo su disco: cantieri/{id}/{filename}
-  type             String
-  size             String
-  uploader         String
-  created_at       DateTime @default(now())
-  
-  // NEW: Campi aggiuntivi per gestione fatture/DDT
-  tag              String?   @default("generic") // es. 'invoice', 'ddt', 'contratto'
-  numero_fattura   String?
-  data_emissione   DateTime? @db.Date
-  importo          Decimal?  @db.Decimal(10, 2)
+  id          Int      @id @default(autoincrement())
+  cantiere_id Int
+  name        String // Nome originale del file (display)
+  file_path   String? // Percorso relativo su disco: cantieri/{id}/{filename}
+  type        String
+  size        String
+  uploader    String
+  created_at  DateTime @default(now())
 
-  cantiere         Cantiere @relation(fields: [cantiere_id], references: [id])
-  spese_collegate  Spesa[]
+  // NEW: Campi aggiuntivi per gestione fatture/DDT
+  tag            String?   @default("generic") // es. 'invoice', 'ddt', 'contratto'
+  numero_fattura String?
+  data_emissione DateTime? @db.Date
+  importo        Decimal?  @db.Decimal(10, 2)
+
+  cantiere            Cantiere             @relation(fields: [cantiere_id], references: [id])
+  spese_collegate     Spesa[]
+  movimenti_magazzino MovimentoMagazzino[]
 }
 
 model Conversation {
   id          String   @id @default(uuid())
   name        String
-  type        String   // project, team, direct, system
+  type        String // project, team, direct, system
   isPinned    Boolean  @default(false)
   cantiere_id Int?
   created_at  DateTime @default(now())
@@ -311,26 +313,26 @@ model Conversation {
 }
 
 model Message {
-  id              String       @id @default(uuid())
+  id              String   @id @default(uuid())
   conversation_id String
-  sender_id       Int?         // Corrisponde all'employee_id
-  type            String       @default("text") // text, system_task, ecc.
+  sender_id       Int? // Corrisponde all'employee_id
+  type            String   @default("text") // text, system_task, ecc.
   content         String
-  created_at      DateTime     @default(now())
+  created_at      DateTime @default(now())
 
-  conversation    Conversation @relation(fields: [conversation_id], references: [id])
-  sender          Employee?    @relation(fields: [sender_id], references: [id])
+  conversation Conversation @relation(fields: [conversation_id], references: [id])
+  sender       Employee?    @relation(fields: [sender_id], references: [id])
 }
 
 model ConversationParticipant {
-  id              Int          @id @default(autoincrement())
+  id              Int      @id @default(autoincrement())
   conversation_id String
   employee_id     Int
-  unread_count    Int          @default(0)
-  joined_at       DateTime     @default(now())
+  unread_count    Int      @default(0)
+  joined_at       DateTime @default(now())
 
-  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-  employee        Employee     @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employee_id], references: [id], onDelete: Cascade)
 
   @@unique([conversation_id, employee_id])
 }
@@ -339,36 +341,56 @@ model ConversationParticipant {
 // MAGAZZINO E LOGISTICA
 // ==========================================
 
+model Fornitore {
+  id              Int      @id @default(autoincrement())
+  ragione_sociale String
+  partita_iva     String?
+  email           String?
+  telefono        String?
+  indirizzo       String?
+  note            String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  articoli_default    Articolo[]
+  movimenti_magazzino MovimentoMagazzino[]
+}
+
 model Articolo {
-  id              Int       @id @default(autoincrement())
-  codice_sku      String    @unique
-  descrizione     String
-  unita_misura    String
-  costo_medio     Decimal   @db.Decimal(10, 2) @default(0) // Costo Medio Ponderato
-  
-  giacenze        Giacenza[]
-  movimenti       MovimentoMagazzino[]
+  id                   Int     @id @default(autoincrement())
+  codice_sku           String  @unique
+  descrizione          String
+  unita_misura         String
+  costo_medio          Decimal @default(0) @db.Decimal(10, 2) // Costo Medio Ponderato
+  scorta_minima        Int     @default(0)
+  categoria            String?
+  fornitore_default_id Int?
+
+  giacenze          Giacenza[]
+  movimenti         MovimentoMagazzino[]
+  fornitore_default Fornitore?               @relation(fields: [fornitore_default_id], references: [id])
+  righe_richieste   RigaRichiestaMateriale[]
 }
 
 model Ubicazione {
-  id              Int       @id @default(autoincrement())
-  codice          String    @unique
-  descrizione     String?
+  id          Int     @id @default(autoincrement())
+  codice      String  @unique
+  descrizione String?
 
-  giacenze        Giacenza[]
-  movimenti_da    MovimentoMagazzino[] @relation("MovimentiDa")
-  movimenti_a     MovimentoMagazzino[] @relation("MovimentiA")
+  giacenze     Giacenza[]
+  movimenti_da MovimentoMagazzino[] @relation("MovimentiDa")
+  movimenti_a  MovimentoMagazzino[] @relation("MovimentiA")
 }
 
 model Giacenza {
-  id                   Int       @id @default(autoincrement())
+  id                   Int     @id @default(autoincrement())
   articolo_id          Int
   ubicazione_id        Int
-  quantita_disponibile Decimal   @db.Decimal(10, 2) @default(0)
-  quantita_riservata   Decimal   @db.Decimal(10, 2) @default(0)
+  quantita_disponibile Decimal @default(0) @db.Decimal(10, 2)
+  quantita_riservata   Decimal @default(0) @db.Decimal(10, 2)
 
-  articolo             Articolo   @relation(fields: [articolo_id], references: [id])
-  ubicazione           Ubicazione @relation(fields: [ubicazione_id], references: [id])
+  articolo   Articolo   @relation(fields: [articolo_id], references: [id])
+  ubicazione Ubicazione @relation(fields: [ubicazione_id], references: [id])
 
   @@unique([articolo_id, ubicazione_id])
 }
@@ -380,34 +402,71 @@ enum TipoMovimento {
   RESO
 }
 
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FULFILLED
+}
+
 model MovimentoMagazzino {
-  id               Int       @id @default(autoincrement())
-  tipo_movimento   TipoMovimento
-  articolo_id      Int
-  quantita         Decimal   @db.Decimal(10, 2)
-  
+  id             Int           @id @default(autoincrement())
+  tipo_movimento TipoMovimento
+  articolo_id    Int
+  quantita       Decimal       @db.Decimal(10, 2)
+
   // Riferimenti Magazzino
   ubicazione_da_id Int?
   ubicazione_a_id  Int?
-  
+
   // Riferimenti Job Costing
-  cantiere_id      Int?
-  wbs_node_id      Int?
+  cantiere_id Int?
+  wbs_node_id Int?
 
   // Valori Fiscali
-  costo_unitario   Decimal   @db.Decimal(10, 2)
-  valore_totale    Decimal   @db.Decimal(10, 2)
-  
-  // Audit
-  esecutore_id     Int
-  data_movimento   DateTime  @default(now())
+  costo_unitario Decimal @db.Decimal(10, 2)
+  valore_totale  Decimal @db.Decimal(10, 2)
 
-  articolo         Articolo    @relation(fields: [articolo_id], references: [id])
-  ubicazione_da    Ubicazione? @relation("MovimentiDa", fields: [ubicazione_da_id], references: [id])
-  ubicazione_a     Ubicazione? @relation("MovimentiA", fields: [ubicazione_a_id], references: [id])
-  cantiere         Cantiere?   @relation(fields: [cantiere_id], references: [id])
-  wbs_node         WbsNode?    @relation(fields: [wbs_node_id], references: [id])
-  esecutore        User        @relation(fields: [esecutore_id], references: [id])
+  // Audit
+  esecutore_id   Int
+  data_movimento DateTime @default(now())
+  documento_id   Int?
+  fornitore_id   Int?
+
+  articolo      Articolo    @relation(fields: [articolo_id], references: [id])
+  ubicazione_da Ubicazione? @relation("MovimentiDa", fields: [ubicazione_da_id], references: [id])
+  ubicazione_a  Ubicazione? @relation("MovimentiA", fields: [ubicazione_a_id], references: [id])
+  cantiere      Cantiere?   @relation(fields: [cantiere_id], references: [id])
+  wbs_node      WbsNode?    @relation(fields: [wbs_node_id], references: [id])
+  esecutore     User        @relation(fields: [esecutore_id], references: [id])
+  documento     Document?   @relation(fields: [documento_id], references: [id])
+  fornitore     Fornitore?  @relation(fields: [fornitore_id], references: [id])
+}
+
+model RichiestaMateriale {
+  id             Int           @id @default(autoincrement())
+  cantiere_id    Int
+  richiedente_id Int
+  data_richiesta DateTime      @default(now())
+  status         RequestStatus @default(PENDING)
+  note           String?
+  created_at     DateTime      @default(now())
+  updated_at     DateTime      @updatedAt
+
+  cantiere    Cantiere                 @relation(fields: [cantiere_id], references: [id])
+  richiedente Employee                 @relation(fields: [richiedente_id], references: [id])
+  righe       RigaRichiestaMateriale[]
+}
+
+model RigaRichiestaMateriale {
+  id           Int     @id @default(autoincrement())
+  richiesta_id Int
+  articolo_id  Int
+  quantita     Int
+  note         String?
+
+  richiesta RichiestaMateriale @relation(fields: [richiesta_id], references: [id], onDelete: Cascade)
+  articolo  Articolo           @relation(fields: [articolo_id], references: [id])
 }
 
 // ==========================================
@@ -417,12 +476,12 @@ model MovimentoMagazzino {
 model BotSession {
   id           String   @id @default(uuid())
   employee_id  Int
-  type         String   // 'pending_expense'
+  type         String // 'pending_expense'
   payload_json String
   expires_at   DateTime
   created_at   DateTime @default(now())
 
-  employee     Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
 
   @@index([employee_id, type])
   @@index([expires_at])

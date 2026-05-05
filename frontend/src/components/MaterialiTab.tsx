@@ -197,7 +197,7 @@ const MaterialiTab: React.FC<MaterialiTabProps> = ({ cantiereId }) => {
   const { data: movimenti, isLoading, error } = useMovimentiCantiere(cantiereId);
   const { user } = useAuth();
   
-  const canPrelevare = user?.role === 'ADMIN' || user?.role === 'HR' || user?.role === 'PM';
+  const canPrelevare = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'].includes(user?.role ?? '');
 
   if (isLoading) return <div className="p-8 flex justify-center"><Spinner label="Caricamento storico materiali..." /></div>;
   if (error) return <div className="p-8"><ErrorMessage error={(error as Error).message} /></div>;

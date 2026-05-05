@@ -97,8 +97,8 @@ export function useChangePassword() {
 
 export function useMyMaterialRequests() {
   return useQuery({
-    queryKey: userKeys.materialRequests(),
-    queryFn: () => fetchJson<MaterialRequest[]>('/api/user/material-requests'),
+    queryKey: userKeys.materialMovements(),
+    queryFn: () => fetchJson<MaterialRequest[]>('/api/user/material-movements'),
     staleTime: 30_000,
   });
 }

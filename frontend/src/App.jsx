@@ -18,6 +18,8 @@ import TabulatiOrariPage  from "./pages/TabulatiOrariPage";
 import TelegramAuditPage  from "./pages/TelegramAuditPage";
 import SettingsPage       from "./pages/SettingsPage";
 import WarehousePage      from "./pages/WarehousePage";
+import SuppliersPage      from "./pages/SuppliersPage";
+import MaterialRequestsPage from "./pages/MaterialRequestsPage";
 import ActivitiesPage     from "./pages/ActivitiesPage";
 import PlaceholderPage    from "./pages/PlaceholderPage";
 
@@ -40,7 +42,8 @@ const PublicRoute = ({ children }) => {
   return children;
 };
 
-const ALL_AUTH_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WORKER"];
+const ALL_AUTH_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN", "WORKER"];
+const WAREHOUSE_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN"];
 
 const HomeRedirect = () => {
   const { user } = useAuthContext();
@@ -51,6 +54,7 @@ const HomeRedirect = () => {
     case "HR":
       return <Navigate to="/hr" replace />;
     case "PROJECT_MANAGER":
+    case "WAREHOUSEMAN":
     case "WORKER":
       return <Navigate to="/timesheets" replace />;
     default:
@@ -99,7 +103,9 @@ function AppRoutes() {
         {/* Legacy: /hr/audit → /hr/tabulati */}
         <Route path="/hr/audit"          element={<Navigate to="/hr/tabulati" replace />} />
         <Route path="/documents"         element={<PlaceholderPage title="Documenti" description="Archivio file e gestione documentale." />} />
-        <Route path="/warehouse"         element={<RoleRoute allowedRoles={["ADMIN"]}><WarehousePage /></RoleRoute>} />
+        <Route path="/warehouse"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES}><WarehousePage /></RoleRoute>} />
+        <Route path="/suppliers"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES}><SuppliersPage /></RoleRoute>} />
+        <Route path="/material-requests" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><MaterialRequestsPage /></RoleRoute>} />
         <Route path="/finance"           element={<RoleRoute allowedRoles={["ADMIN"]}><Navigate to="/dashboard?tab=finanza" replace /></RoleRoute>} />
 
         {/* ── BUSINESS ── */}

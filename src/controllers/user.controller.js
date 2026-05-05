@@ -193,17 +193,19 @@ export const changePassword = asyncHandler(async (req, res) => {
   res.json({ message: "Password aggiornata correttamente." });
 });
 
-export const getMaterialRequests = asyncHandler(async (req, res) => {
-  const prisma = getDb();
-  const movimenti = await prisma.movimentoMagazzino.findMany({
-    where: { esecutore_id: req.user.id },
-    include: {
-      articolo: { select: { codice_sku: true, descrizione: true, unita_misura: true } },
-      ubicazione_da: { select: { codice: true, descrizione: true } },
-      ubicazione_a: { select: { codice: true, descrizione: true } },
-      cantiere: { select: { id: true, nome: true } },
-      wbs_node: { select: { id: true, nome: true } },
-    },
+export const getMaterialMovements = asyncHandler(async (req, res) => {
+    const prisma = getDb();
+    const movimenti = await prisma.movimentoMagazzino.findMany({
+      where: { esecutore_id: req.user.id },
+      include: {
+        articolo: { select: { codice_sku: true, descrizione: true, unita_misura: true } },
+        ubicazione_da: { select: { codice: true, descrizione: true } },
+        ubicazione_a: { select: { codice: true, descrizione: true } },
+        cantiere: { select: { id: true, nome: true } },
+        wbs_node: { select: { id: true, nome: true } },
+        documento: { select: { id: true, name: true, tag: true, numero_fattura: true } },
+        fornitore: { select: { id: true, ragione_sociale: true, partita_iva: true } },
+      },
     orderBy: { data_movimento: "desc" },
     take: 50,
   });

@@ -7,7 +7,7 @@ import { ValidationStatus } from '../../constants.js';
 import { domainBus, EVENTS } from '../events/domainBus.js';
 
 export async function processDischarge(prisma, payload, userId, employeeId) {
-    const { articolo_id, quantita, ubicazione_da_id, cantiere_id, wbs_node_id } = payload;
+    const { articolo_id, quantita, ubicazione_da_id, cantiere_id, wbs_node_id, documento_id } = payload;
 
     if (!ubicazione_da_id || !cantiere_id) {
         throw new DomainError('Mancano ubicazione_da_id o cantiere_id.', 'MISSING_FIELDS');
@@ -49,6 +49,7 @@ export async function processDischarge(prisma, payload, userId, employeeId) {
                 costo_unitario: costo,
                 valore_totale:  valoreTotale,
                 esecutore_id:   userId,
+                documento_id:   documento_id ?? null,
             },
         });
 
@@ -81,7 +82,7 @@ export async function processDischarge(prisma, payload, userId, employeeId) {
 }
 
 export async function processCarico(prisma, payload, userId) {
-    const { articolo_id, quantita, ubicazione_a_id, costo_acquisto } = payload;
+    const { articolo_id, quantita, ubicazione_a_id, costo_acquisto, documento_id, fornitore_id } = payload;
 
     if (!ubicazione_a_id || costo_acquisto === undefined) {
         throw new DomainError('Mancano ubicazione_a_id o costo_acquisto.', 'MISSING_FIELDS');
@@ -125,6 +126,8 @@ export async function processCarico(prisma, payload, userId) {
                 costo_unitario: costoAcq,
                 valore_totale:  valoreTotale,
                 esecutore_id:   userId,
+                documento_id:   documento_id ?? null,
+                fornitore_id:   fornitore_id ?? null,
             },
         });
     });
