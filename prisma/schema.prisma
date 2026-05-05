@@ -53,6 +53,7 @@ model Employee {
   messages            Message[]
   conversation_participants ConversationParticipant[]
   bot_sessions        BotSession[]
+  assigned_tasks      Task[]
 }
 
 
@@ -237,16 +238,32 @@ model MessageLog {
 }
 
 model Task {
-  id          Int      @id @default(autoincrement())
+  id          Int          @id @default(autoincrement())
   cantiere_id Int
   title       String
-  assignee    String?  @default("Non Assegnato")
-  status      String   @default("Da Fare")
-  priority    String   @default("Media")
-  due         String?  @default("-")
-  created_at  DateTime @default(now())
+  description String?
+  assignee_id Int?
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  due_date    DateTime?
+  created_at  DateTime     @default(now())
+  updated_at  DateTime     @updatedAt
 
-  cantiere    Cantiere @relation(fields: [cantiere_id], references: [id])
+  cantiere    Cantiere     @relation(fields: [cantiere_id], references: [id])
+  assignee    Employee?    @relation(fields: [assignee_id], references: [id])
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
 }
 
 model Document {

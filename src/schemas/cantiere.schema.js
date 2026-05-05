@@ -29,15 +29,6 @@ export const updateCantiereSchema = z.object({
     }),
 });
 
-export const createTaskSchema = z.object({
-    params: z.object({
-        id: z.coerce.number().positive("ID cantiere non valido."),
-    }),
-    body: z.object({
-        title: z.string().trim().min(1, "Il titolo del task è obbligatorio."),
-    }),
-});
-
 export const updateCantiereSettingsSchema = z.object({
     params: z.object({
         id: z.coerce.number().positive("ID cantiere non valido."),
