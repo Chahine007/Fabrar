@@ -1,166 +1,197 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { User, Mail, Shield, Send, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
+import {
+  CheckCircle2,
+  Mail,
+  RefreshCw,
+  Send,
+  Shield,
+  User,
+  XCircle,
+} from 'lucide-react';
 import { useMe, useGenerateTelegramCode } from '../hooks/api/useAuth';
-import { useAuthContext } from '../context/AuthContext';
+import Spinner from '../components/Spinner';
 
-export default function AccountPage() {
+function FieldRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-[10px] font-bold text-text-secondary uppercase tracking-widest">{label}</span>
+      <div className="min-h-11 rounded-xl border border-border bg-background px-3 py-2.5 text-sm font-medium text-text-primary flex items-center gap-2">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export function AccountSettingsPanel() {
   const { data: meData, isLoading: isMeLoading, refetch } = useMe();
   const generateCodeMutation = useGenerateTelegramCode();
-  const { user: authUser } = useAuthContext();
 
   const handleGenerateCode = async () => {
     try {
       await generateCodeMutation.mutateAsync();
       refetch();
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(error);
     }
   };
 
   if (isMeLoading) {
     return (
-      <div className="p-8 flex justify-center items-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-accent"></div>
+      <div className="min-h-[320px] flex items-center justify-center">
+        <Spinner label="Caricamento account..." />
       </div>
     );
   }
 
   const user = meData?.user;
   const employee = user?.employee;
-  const isTelegramLinked = !!employee?.telegram_id;
+  const fullName = `${employee?.nome ?? ''} ${employee?.cognome ?? ''}`.trim() || user?.username || 'Account';
+  const initials = fullName
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'U';
+  const isTelegramLinked = Boolean(employee?.telegram_id);
 
   return (
-    <div className="p-6 lg:p-10 max-w-5xl mx-auto">
-      <header className="mb-10">
-        <h1 className="text-3xl font-bold text-text-primary mb-2">Il mio Account</h1>
-        <p className="text-text-secondary">Gestisci i tuoi dati personali e le integrazioni esterne.</p>
-      </header>
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex items-center gap-4">
+        <div className="w-16 h-16 rounded-2xl bg-accent text-white flex items-center justify-center text-xl font-bold shadow-lg shadow-accent/20 shrink-0">
+          {initials}
+        </div>
+        <div className="min-w-0">
+          <h3 className="text-2xl font-bold text-text-primary truncate">{fullName}</h3>
+          <p className="text-sm text-text-secondary truncate">{user?.email || user?.username || 'N/D'}</p>
+          <span className="inline-flex mt-2 px-2.5 py-1 bg-accent/10 text-accent text-[10px] font-bold rounded-lg uppercase tracking-wider">
+            {user?.role || employee?.ruolo || 'Utente'}
+          </span>
+        </div>
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Sezione 1: I tuoi dati */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-card border border-border rounded-3xl p-8 shadow-sm"
-        >
-          <div className="flex items-center gap-3 mb-8">
-            <div className="p-2 bg-accent/10 rounded-xl text-accent">
-              <User size={24} />
-            </div>
-            <h2 className="text-xl font-bold text-text-primary">I tuoi dati</h2>
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="rounded-2xl border border-border bg-background/50 p-5"
+      >
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-card border border-border flex items-center justify-center text-accent">
+            <User size={18} />
           </div>
+          <div>
+            <h4 className="font-bold text-text-primary">Dati profilo</h4>
+            <p className="text-xs text-text-secondary">Informazioni associate al tuo utente Fabrar ERP</p>
+          </div>
+        </div>
 
-          <div className="space-y-6">
-            <div>
-              <label className="block text-xs font-bold text-text-secondary uppercase tracking-wider mb-2">Nome Completo</label>
-              <div className="bg-background rounded-xl p-4 text-text-primary font-medium border border-border/50">
-                {employee?.nome} {employee?.cognome}
-              </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <FieldRow label="Nome completo">{fullName}</FieldRow>
+          <FieldRow label="Email">
+            <Mail size={15} className="text-text-secondary shrink-0" />
+            <span className="truncate">{user?.email || 'N/D'}</span>
+          </FieldRow>
+          <FieldRow label="Ruolo applicativo">
+            <Shield size={15} className="text-text-secondary shrink-0" />
+            <span>{user?.role || 'N/D'}</span>
+          </FieldRow>
+          <FieldRow label="ID dipendente">{employee?.id ?? 'N/D'}</FieldRow>
+        </div>
+      </motion.section>
+
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05 }}
+        className="rounded-2xl border border-border bg-background/50 p-5"
+      >
+        <div className="flex items-center justify-between gap-4 mb-5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#0088cc]/10 flex items-center justify-center text-[#0088cc]">
+              <Send size={18} />
             </div>
-
             <div>
-              <label className="block text-xs font-bold text-text-secondary uppercase tracking-wider mb-2">Email</label>
-              <div className="bg-background rounded-xl p-4 text-text-primary font-medium border border-border/50 flex items-center gap-2">
-                <Mail size={16} className="text-text-secondary" />
-                {user?.email || 'N/D'}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-text-secondary uppercase tracking-wider mb-2">Ruolo</label>
-              <div className="bg-background rounded-xl p-4 text-text-primary font-medium border border-border/50 flex items-center gap-2">
-                <Shield size={16} className="text-text-secondary" />
-                <span className="px-2 py-0.5 bg-accent/10 text-accent rounded-lg text-xs font-bold">
-                  {user?.role}
-                </span>
-              </div>
+              <h4 className="font-bold text-text-primary">Telegram</h4>
+              <p className="text-xs text-text-secondary">Collegamento per report, spese e posizioni GPS</p>
             </div>
           </div>
-        </motion.div>
+          {isTelegramLinked ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-success-bg text-success-text border border-success-border text-[10px] font-bold uppercase tracking-wider">
+              <CheckCircle2 size={13} />
+              Collegato
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-danger-bg text-danger-text border border-danger-border text-[10px] font-bold uppercase tracking-wider">
+              <XCircle size={13} />
+              Non collegato
+            </span>
+          )}
+        </div>
 
-        {/* Sezione 2: Integrazione Telegram */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="bg-card border border-border rounded-3xl p-8 shadow-sm flex flex-col"
-        >
-          <div className="flex items-center gap-3 mb-8">
-            <div className="p-2 bg-[#0088cc]/10 rounded-xl text-[#0088cc]">
-              <Send size={24} />
-            </div>
-            <h2 className="text-xl font-bold text-text-primary">Integrazione Telegram</h2>
+        {isTelegramLinked ? (
+          <div className="rounded-xl border border-border bg-card p-4 text-sm text-text-secondary">
+            <p>Account Telegram collegato correttamente.</p>
+            <p className="mt-2 text-xs">
+              ID Telegram:{' '}
+              <code className="rounded-md bg-background px-1.5 py-0.5 font-mono text-text-primary">
+                {employee?.telegram_id}
+              </code>
+            </p>
           </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-border bg-card p-4 text-sm text-text-secondary">
+              Collega Telegram per inviare report giornalieri, scontrini e check-in direttamente dal bot.
+            </div>
 
-          <div className="flex-1">
-            <div className="mb-8">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-sm font-medium text-text-secondary">Stato:</span>
-                {isTelegramLinked ? (
-                  <div className="flex items-center gap-1.5 px-3 py-1 bg-green-500/10 text-green-500 rounded-full text-xs font-bold">
-                    <CheckCircle2 size={14} />
-                    Collegato
+            {!employee?.telegram_pairing_code ? (
+              <button
+                onClick={handleGenerateCode}
+                disabled={generateCodeMutation.isPending}
+                className="w-full min-h-11 rounded-xl bg-accent px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-accent/20 hover:bg-accent/90 disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {generateCodeMutation.isPending ? <RefreshCw size={18} className="animate-spin" /> : <Send size={18} />}
+                Genera codice Telegram
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-[#0088cc]/30 bg-[#0088cc]/5 p-5 text-center">
+                  <p className="text-[10px] font-bold text-[#0088cc] uppercase tracking-widest mb-2">
+                    Scrivi questo codice al bot
+                  </p>
+                  <div className="text-3xl font-mono font-black text-text-primary tracking-widest">
+                    {employee.telegram_pairing_code}
                   </div>
-                ) : (
-                  <div className="flex items-center gap-1.5 px-3 py-1 bg-red-500/10 text-red-500 rounded-full text-xs font-bold">
-                    <XCircle size={14} />
-                    Non collegato
-                  </div>
-                )}
-              </div>
-
-              {isTelegramLinked ? (
-                <div className="p-4 bg-background border border-border/50 rounded-2xl text-sm text-text-secondary">
-                  Il tuo account è correttamente collegato al bot Telegram. Puoi inviare report, spese e posizioni GPS direttamente dalla chat.
-                  <p className="mt-2 text-xs">ID Telegram: <code className="bg-slate-800 p-1 rounded text-white">{employee?.telegram_id}</code></p>
+                  <p className="mt-3 text-xs text-text-secondary">
+                    Apri Telegram, cerca @FabrarBot e invia il codice.
+                  </p>
                 </div>
-              ) : (
-                <div className="p-4 bg-background border border-border/50 rounded-2xl text-sm text-text-secondary">
-                  Collega il tuo account al bot Telegram per semplificare l'invio dei report giornalieri e delle spese.
-                </div>
-              )}
-            </div>
-
-            {!isTelegramLinked && (
-              <div className="space-y-6">
-                {!employee?.telegram_pairing_code ? (
-                  <button
-                    onClick={handleGenerateCode}
-                    disabled={generateCodeMutation.isPending}
-                    className="w-full bg-accent hover:bg-accent-hover text-white font-bold py-4 rounded-2xl transition-all shadow-lg shadow-accent/20 flex items-center justify-center gap-2"
-                  >
-                    {generateCodeMutation.isPending ? (
-                      <RefreshCw size={20} className="animate-spin" />
-                    ) : (
-                      <Send size={20} />
-                    )}
-                    Genera Codice Telegram
-                  </button>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="bg-[#0088cc]/5 border border-[#0088cc]/30 rounded-2xl p-6 text-center">
-                      <p className="text-xs font-bold text-[#0088cc] uppercase tracking-widest mb-3">Scrivi questo codice al Bot</p>
-                      <div className="text-4xl font-mono font-black text-text-primary tracking-widest mb-3">
-                        {employee.telegram_pairing_code}
-                      </div>
-                      <p className="text-sm text-text-secondary">
-                        Cerca <strong>@FabrarBot</strong> su Telegram e incolla il codice qui sopra.
-                      </p>
-                    </div>
-                    <button
-                      onClick={handleGenerateCode}
-                      className="w-full text-sm font-medium text-accent hover:underline text-center"
-                    >
-                      Genera un nuovo codice
-                    </button>
-                  </div>
-                )}
+                <button
+                  onClick={handleGenerateCode}
+                  disabled={generateCodeMutation.isPending}
+                  className="text-sm font-semibold text-accent hover:underline disabled:opacity-60"
+                >
+                  Genera un nuovo codice
+                </button>
               </div>
             )}
           </div>
-        </motion.div>
-      </div>
+        )}
+      </motion.section>
+    </div>
+  );
+}
+
+export default function AccountPage() {
+  return (
+    <div className="p-6 lg:p-10 max-w-3xl mx-auto">
+      <AccountSettingsPanel />
     </div>
   );
 }

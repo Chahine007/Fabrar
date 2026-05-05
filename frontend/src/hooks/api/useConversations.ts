@@ -368,7 +368,22 @@ export function useCreateConversation() {
 
       return response.json() as Promise<Conversation>;
     },
-    onSuccess: () => {
+    onSuccess: (conversation) => {
+      const normalizedConversation = normalizeConversation(conversation);
+
+      queryClient.setQueryData<Conversation[]>(
+        conversationKeys.list(),
+        (existingConversations = []) => {
+          if (existingConversations.some((item) => item.id === normalizedConversation.id)) {
+            return existingConversations.map((item) =>
+              item.id === normalizedConversation.id ? normalizedConversation : item
+            );
+          }
+
+          return [normalizedConversation, ...existingConversations];
+        }
+      );
+
       queryClient.invalidateQueries({ queryKey: conversationKeys.list() });
     },
   });

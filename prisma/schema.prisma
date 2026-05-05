@@ -64,6 +64,7 @@ model User {
   google_id     String?   @unique
   role          String    // ADMIN, HR, EXTERNAL_PM, ecc.
   is_active     Int       @default(1)
+  settings      Json?
   created_at    DateTime  @default(now())
   last_login_at DateTime?
 

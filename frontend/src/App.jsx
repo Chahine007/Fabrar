@@ -19,7 +19,6 @@ import TelegramAuditPage  from "./pages/TelegramAuditPage";
 import SettingsPage       from "./pages/SettingsPage";
 import WarehousePage      from "./pages/WarehousePage";
 import ActivitiesPage     from "./pages/ActivitiesPage";
-import AccountPage        from "./pages/AccountPage";
 import PlaceholderPage    from "./pages/PlaceholderPage";
 
 // Public Guard Component (redirects to home if already logged in)
@@ -55,7 +54,7 @@ const HomeRedirect = () => {
     case "WORKER":
       return <Navigate to="/timesheets" replace />;
     default:
-      return <Navigate to="/account" replace />;
+      return <Navigate to="/settings/account" replace />;
   }
 };
 
@@ -108,9 +107,10 @@ function AppRoutes() {
         <Route path="/invoices" element={<PlaceholderPage title="Fatture" description="Fatturazione attiva e passiva." />} />
         <Route path="/reports"  element={<PlaceholderPage title="Report" description="Esportazione dati e reportistica." />} />
 
-        <Route path="/account"  element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><AccountPage /></RoleRoute>} />
+        <Route path="/account"  element={<Navigate to="/settings/account" replace />} />
 
-        <Route path="/settings" element={<SettingsPage onClose={() => window.history.back()} />} />
+        <Route path="/settings" element={<Navigate to="/settings/account" replace />} />
+        <Route path="/settings/:section" element={<SettingsPage onClose={() => window.history.back()} />} />
 
         {/* Legacy redirects */}
         <Route path="/cantieri" element={<Navigate to="/projects" replace />} />

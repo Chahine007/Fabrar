@@ -33,6 +33,10 @@ export interface MeResponse {
     email: string;
     role: string;
     is_active: number;
+    created_at: string;
+    last_login_at: string | null;
+    has_password: boolean;
+    google_connected: boolean;
     employee: {
       id: number;
       nome: string | null;

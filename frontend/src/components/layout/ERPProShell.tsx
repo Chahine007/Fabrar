@@ -245,29 +245,7 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: bo
           !isExpanded ? "flex-col" : "justify-between"
         )}>
           <Link
-            to="/account"
-            onClick={() => setIsMobileOpen(false)}
-            className={cn(
-              "flex items-center gap-3 rounded-xl hover:bg-sidebar-hover/50 transition-all cursor-pointer group relative flex-1 min-w-0",
-              !isExpanded ? "justify-center p-2" : "p-2"
-            )}
-          >
-            <div className={cn(
-              "bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 group-hover:text-accent transition-all",
-              "w-9 h-9"
-            )}>
-              <UserCircle size={18} />
-            </div>
-            {isExpanded && (
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-white truncate uppercase tracking-wider">Account</p>
-              </div>
-            )}
-          </Link>
-
-          {/* Settings Button */}
-          <Link
-            to="/settings"
+            to="/settings/account"
             onClick={() => setIsMobileOpen(false)}
             className={cn(
               "flex items-center gap-3 rounded-xl hover:bg-sidebar-hover/50 transition-all cursor-pointer group relative flex-1 min-w-0",
@@ -448,7 +426,7 @@ const Header = ({ onMenuClick, onLogout }: { onMenuClick: () => void, onLogout: 
                   </div>
                   
                   <button 
-                    onClick={() => { setIsDropdownOpen(false); navigate('/account'); }}
+                    onClick={() => { setIsDropdownOpen(false); navigate('/settings/account'); }}
                     className="w-full text-left px-4 py-2.5 text-sm font-medium text-text-primary hover:bg-background transition-colors flex items-center gap-2"
                   >
                     <UserCircle size={16} className="text-accent" />

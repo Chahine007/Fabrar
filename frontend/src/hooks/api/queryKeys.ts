@@ -63,3 +63,10 @@ export const taskKeys = {
   list:   (filters?: object)     => [...taskKeys.all(), 'list', filters ?? {}] as const,
   detail: (id: number)           => [...taskKeys.all(), 'detail', id] as const,
 };
+
+export const userKeys = {
+  all:              () => ['user'] as const,
+  settings:         () => [...userKeys.all(), 'settings'] as const,
+  materialRequests: () => [...userKeys.all(), 'material-requests'] as const,
+  supportContact:   () => [...userKeys.all(), 'support-contact'] as const,
+};
