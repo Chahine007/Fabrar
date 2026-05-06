@@ -211,6 +211,13 @@ function isDetailedHeader(rawHeaders) {
         || rawHeaders.includes("imponibile_val");
 }
 
+function hasExplicitMaterialCode(row) {
+    return Boolean(
+        row.codice_sku
+        || row.codice_articolo
+    );
+}
+
 function findTableHeader(table, fallbackCantiereId) {
     const maxHeaderScan = Math.min(table.length, 30);
 
@@ -286,7 +293,7 @@ export function parseExpenseRowsFromTable(table, fallbackCantiereId = null) {
         return row;
     }).filter((row) => {
         const amount = parseImportedMoney(row.importo);
-        return row.cantiere_id && Number.isFinite(amount) && amount > 0;
+        return Number.isFinite(amount) && amount > 0 && (row.cantiere_id || hasExplicitMaterialCode(row));
     });
 
     if (header.isDetailed && parsedRows.length === 0) {

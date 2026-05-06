@@ -74,6 +74,25 @@ function hasMaterialImportFields(item) {
     return MATERIAL_IMPORT_KEYS.some((key) => item?.[key] != null && item[key] !== "");
 }
 
+function hasExplicitMaterialCode(item) {
+    return Boolean(
+        normalizeOptionalText(item?.codice_sku)
+        || normalizeOptionalText(item?.sku)
+        || normalizeOptionalText(item?.codice_articolo)
+        || normalizeOptionalText(item?.cod_articolo)
+    );
+}
+
+function buildReconcileRow(reason, normalizedLine, item) {
+    return {
+        reason,
+        codice_sku: normalizedLine.codice_sku || null,
+        descrizione: normalizedLine.descrizione,
+        quantita: normalizedLine.quantita?.toString() ?? null,
+        fattura_rif: normalizeOptionalText(item?.fattura_rif),
+    };
+}
+
 async function ensureDocumentBelongsToCantiere(prisma, documentId, cantiereId) {
     if (documentId == null) return true;
 
@@ -174,6 +193,8 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
         articoliCreati: 0,
         movimentiCaricoCreati: 0,
         righeDaRiconciliare: [],
+        righeMateriali: 0,
+        righeSpese: 0,
         warnings: [],
     };
 
@@ -184,18 +205,61 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
             const importo = parseImportedMoney(item.importo);
             if (!Number.isFinite(importo) || importo <= 0) throw new Error("Importi devono essere > 0.");
 
+            const hasMaterialFields = hasMaterialImportFields(item);
+            const isMaterialImport = hasExplicitMaterialCode(item);
             const cantiereId = parseIdParam(item.cantiere_id);
-            if (!cantiereId) throw new Error("Ogni spesa deve essere associata a un cantiere.");
-            if (!(await canAccessCantiere(tx, req.user, cantiereId, {
-                globalRoles: ["ADMIN", "HR"],
-                ownerRoles: ["PROJECT_MANAGER"],
-            }))) {
-                throw new Error(`Accesso negato al cantiere ${cantiereId}.`);
+            if (!cantiereId && !isMaterialImport) throw new Error("Ogni spesa deve essere associata a un cantiere.");
+
+            if (cantiereId) {
+                if (!(await canAccessCantiere(tx, req.user, cantiereId, {
+                    globalRoles: ["ADMIN", "HR"],
+                    ownerRoles: ["PROJECT_MANAGER"],
+                }))) {
+                    throw new Error(`Accesso negato al cantiere ${cantiereId}.`);
+                }
+
+                const cantiere = await tx.cantiere.findFirst({ where: { id: cantiereId, attivo: 1 }, select: { id: true } });
+                if (!cantiere) throw new Error(`Cantiere non valido o inattivo: ${cantiereId}.`);
             }
 
-            const cantiere = await tx.cantiere.findFirst({ where: { id: cantiereId, attivo: 1 }, select: { id: true } });
-            if (!cantiere) throw new Error(`Cantiere non valido o inattivo: ${cantiereId}.`);
+            if (isMaterialImport) {
+                importStats.righeMateriali += 1;
+                const normalizedLine = normalizeAutomaticLoadLine(item);
+                const hasLoadableShape = normalizedLine.codice_sku && normalizedLine.quantita && normalizedLine.costo_unitario;
 
+                if (!hasLoadableShape) {
+                    importStats.righeDaRiconciliare.push(buildReconcileRow(
+                        !normalizedLine.codice_sku ? "SKU_MISSING" : "QTY_OR_COST_MISSING",
+                        normalizedLine,
+                        item
+                    ));
+                    continue;
+                }
+
+                if (!defaultLocation) {
+                    importStats.warnings.push("Ubicazione DEFAULT/PRINCIPALE mancante: righe materiali Genya non caricate a magazzino.");
+                    importStats.righeDaRiconciliare.push(buildReconcileRow("DEFAULT_LOCATION_MISSING", normalizedLine, item));
+                    continue;
+                }
+
+                const loadResult = await upsertArticleAndCreateLoadMovement(tx, item, {
+                    ubicazioneId: defaultLocation.id,
+                    userId: req.user?.id,
+                });
+
+                if (loadResult.status === "loaded") {
+                    importStats.movimentiCaricoCreati += 1;
+                    if (loadResult.articleCreated) importStats.articoliCreati += 1;
+                } else {
+                    importStats.righeDaRiconciliare.push(buildReconcileRow(loadResult.reason, normalizedLine, item));
+                }
+                continue;
+            }
+
+            if (hasMaterialFields) {
+                importStats.warnings.push("Righe Genya con dati materiali ma senza SKU/codice articolo: importate come spese, non come carichi magazzino.");
+            }
+            importStats.righeSpese += 1;
             if (!rootWbsCache.has(cantiereId)) {
                 const rootWbs = await tx.wbsNode.findFirst({ where: { cantiere_id: cantiereId, parent_id: null }, select: { id: true } });
                 rootWbsCache.set(cantiereId, rootWbs?.id ?? null);
@@ -217,51 +281,17 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
                 },
             });
             importStats.speseCreate += 1;
-
-            if (!hasMaterialImportFields(item)) {
-                continue;
-            }
-
-            const normalizedLine = normalizeAutomaticLoadLine(item);
-            const hasLoadableShape = normalizedLine.codice_sku && normalizedLine.quantita && normalizedLine.costo_unitario;
-            if (!hasLoadableShape) {
-                importStats.righeDaRiconciliare.push({
-                    reason: !normalizedLine.codice_sku ? "SKU_MISSING" : "QTY_OR_COST_MISSING",
-                    codice_sku: normalizedLine.codice_sku || null,
-                    descrizione: normalizedLine.descrizione,
-                    quantita: normalizedLine.quantita?.toString() ?? null,
-                });
-                continue;
-            }
-
-            if (!defaultLocation) {
-                importStats.warnings.push("Ubicazione DEFAULT/PRINCIPALE mancante: carichi magazzino Genya non creati.");
-                continue;
-            }
-
-            const loadResult = await upsertArticleAndCreateLoadMovement(tx, item, {
-                ubicazioneId: defaultLocation.id,
-                userId: req.user?.id,
-            });
-
-            if (loadResult.status === "loaded") {
-                importStats.movimentiCaricoCreati += 1;
-                if (loadResult.articleCreated) importStats.articoliCreati += 1;
-            } else {
-                importStats.righeDaRiconciliare.push({
-                    reason: loadResult.reason,
-                    codice_sku: normalizedLine.codice_sku || null,
-                    descrizione: normalizedLine.descrizione,
-                    quantita: normalizedLine.quantita?.toString() ?? null,
-                });
-            }
         }
     });
+    const righeSalvate = importStats.speseCreate + importStats.movimentiCaricoCreati;
     res.json({
         ok: true,
-        salvate: spese_bulk.length,
-        inserted: spese_bulk.length,
+        righeProcessate: spese_bulk.length,
+        salvate: righeSalvate,
+        inserted: righeSalvate,
         speseCreate: importStats.speseCreate,
+        righeSpese: importStats.righeSpese,
+        righeMateriali: importStats.righeMateriali,
         articoliCreati: importStats.articoliCreati,
         movimentiCaricoCreati: importStats.movimentiCaricoCreati,
         righeDaRiconciliare: importStats.righeDaRiconciliare.length,
