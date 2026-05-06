@@ -1,21 +1,11 @@
-import { Bot, MessageSquare, RefreshCw } from 'lucide-react';
-import { cn } from '../../../lib/utils';
+import { Bot, RefreshCw } from 'lucide-react';
 import { useTelegramFeed } from '../../../hooks/api/useTelegramAudit';
 import Spinner from '../../Spinner';
 import ErrorMessage from '../../ErrorMessage';
+import MethodBadge from '../../ui/MethodBadge';
 
 export default function TelegramFeedTab({ cantiereId }: { cantiereId: number }) {
   const { feed, isLoading, error, refetch } = useTelegramFeed({ cantiereId });
-
-  const typeBadge = (type: string, method: string) => {
-    const normalizedMethod = (method ?? '').toLowerCase();
-    if (normalizedMethod.includes('gps')) return { label: '📍 GPS', cls: 'bg-info-bg text-info-text border-info-border' };
-    if (normalizedMethod.includes('audio')) return { label: '🎙️ Vocale', cls: 'bg-warning-bg text-warning-text border-warning-border' };
-    if (normalizedMethod.includes('ocr')) return { label: '🖼️ Foto', cls: 'bg-indigo-900/30 text-indigo-400 border-indigo-700/40' };
-    if (type === 'ore') return { label: '🕐 Ore', cls: 'bg-success-bg text-success-text border-success-border' };
-    if (type === 'spese') return { label: '💶 Spesa', cls: 'bg-danger-bg text-danger-text border-danger-border' };
-    return { label: '💬 Log', cls: 'bg-background text-text-secondary border-border' };
-  };
 
   const statusBadge = (status: string) => {
     if (status === 'verified') {
@@ -69,13 +59,10 @@ export default function TelegramFeedTab({ cantiereId }: { cantiereId: number }) 
               </thead>
               <tbody>
                 {feed.map((entry) => {
-                  const badge = typeBadge(entry.type, entry.input_method);
                   return (
                     <tr key={`${entry.type}-${entry.id}`} className="border-b border-border/50 hover:bg-background/60 transition-colors">
                       <td className="px-5 py-3.5">
-                        <span className={cn('px-2.5 py-1 rounded-lg text-xs font-bold border', badge.cls)}>
-                          {badge.label}
-                        </span>
+                        <MethodBadge method={entry.input_method} type={entry.type} />
                       </td>
                       <td className="px-5 py-3.5 font-medium text-text-primary">
                         {`${entry.nome ?? ''} ${entry.cognome ?? ''}`.trim() || '—'}

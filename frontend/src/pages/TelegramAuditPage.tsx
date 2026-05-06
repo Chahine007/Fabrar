@@ -11,7 +11,7 @@ import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
 import {
   Bot, Clock, Banknote, MapPin, RefreshCw, Download,
-  CheckCircle2, XCircle, Search, Filter, Mic, Camera, MessageCircle,
+  CheckCircle2, XCircle, Search, MessageCircle,
   ChevronDown, ChevronUp, Eye, Loader2,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -21,6 +21,7 @@ import type { AuditEntry, AuditStatus, AuditType } from '../hooks/api/useHr';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import { useToast } from '../components/ui';
+import MethodBadge from '../components/ui/MethodBadge';
 
 // ─── Types & helpers ──────────────────────────────────────────────────────────
 
@@ -53,21 +54,6 @@ function auditKey(entry: Pick<AuditEntry, 'type' | 'id'>) {
 
 function toAuditMutationItem(entry: Pick<AuditEntry, 'id' | 'type'>, newStatus: 'APPROVED' | 'REJECTED') {
   return { id: entry.id, type: entry.type as AuditType, newStatus };
-}
-
-function getMethodBadge(method: string): { label: string; icon: React.ElementType; cls: string } {
-  const m = (method ?? '').toLowerCase();
-  if (m.includes('genya') || m.includes('genia') || m.includes('import'))
-    return { label: 'Import Genya', icon: Download, cls: 'bg-info-bg text-info-text border-info-border' };
-  if (m.includes('audio') || m.includes('voice'))
-    return { label: 'Vocale',  icon: Mic,     cls: 'bg-warning-bg text-warning-text border-warning-border' };
-  if (m.includes('ocr') || m.includes('foto') || m.includes('photo'))
-    return { label: 'Foto OCR', icon: Camera,  cls: 'bg-indigo-900/30 text-indigo-400 border-indigo-700/40' };
-  if (m.includes('gps'))
-    return { label: 'GPS',     icon: MapPin,   cls: 'bg-info-bg text-info-text border-info-border' };
-  if (m.includes('testo') || m.includes('text'))
-    return { label: 'Testo',   icon: MessageCircle, cls: 'bg-success-bg text-success-text border-success-border' };
-  return { label: method || 'N/D', icon: Bot, cls: 'bg-background text-text-secondary border-border' };
 }
 
 // ─── KPI Strip ────────────────────────────────────────────────────────────────
@@ -314,8 +300,6 @@ const AuditTable = ({
                   </td>
                 </tr>
               ) : filtered.map(entry => {
-                const methodBadge = getMethodBadge(entry.input_method);
-                const MethodIcon = methodBadge.icon;
                 return (
                   <tr
                     key={`${entry.type}-${entry.id}`}
@@ -352,9 +336,7 @@ const AuditTable = ({
                       {formatAuditValue(entry)}
                     </td>
                     <td className="px-5 py-3.5">
-                      <span className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border w-fit', methodBadge.cls)}>
-                        <MethodIcon size={11} /> {methodBadge.label}
-                      </span>
+                      <MethodBadge method={entry.input_method} />
                     </td>
                     <td className="px-5 py-3.5">
                       <StatusBadge status={entry.status} />

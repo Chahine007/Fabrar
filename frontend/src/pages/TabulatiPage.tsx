@@ -2,8 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ClipboardList, Clock, Banknote, MapPin, RefreshCw, Download,
-  CheckCircle2, XCircle, Search, Mic, Camera, MessageCircle,
-  ChevronDown, ChevronUp, Eye, Loader2, Pencil, X, Bot,
+  CheckCircle2, XCircle, Search, MessageCircle,
+  ChevronDown, ChevronUp, Eye, Loader2, Pencil, X,
   Plus, Trash2,
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
@@ -20,6 +20,7 @@ import ExpenseModal from '../components/timesheets/ExpenseModal';
 import { useDeleteMyTimeEntry } from '../hooks/api/useMyTimesheets';
 import { useDeleteMyExpense } from '../hooks/api/useMyExpenses';
 import { CardListSkeleton, ConfirmDialog, EmptyState, TableSkeleton, useToast } from '../components/ui';
+import MethodBadge from '../components/ui/MethodBadge';
 
 type TypeFilter   = 'tutti' | 'ore' | 'spese';
 type StatusFilter = 'tutti' | 'pending' | 'approved' | 'rejected';
@@ -58,16 +59,6 @@ function auditKey(entry: Pick<AuditEntry, 'type' | 'id'>) {
 
 function toAuditMutationItem(entry: Pick<AuditEntry, 'id' | 'type'>, newStatus: AuditMutationStatus) {
   return { id: entry.id, type: entry.type as AuditType, newStatus };
-}
-
-function methodBadge(method: string) {
-  const m = (method ?? '').toLowerCase();
-  if (m.includes('genya') || m.includes('genia') || m.includes('import')) return { label: 'Import Genya', icon: Download, cls: 'bg-info-bg text-info-text border-info-border' };
-  if (m.includes('audio') || m.includes('voice')) return { label: 'Vocale',   icon: Mic,           cls: 'bg-warning-bg text-warning-text border-warning-border' };
-  if (m.includes('ocr')  || m.includes('foto'))   return { label: 'Foto OCR', icon: Camera,        cls: 'bg-indigo-900/30 text-indigo-400 border-indigo-700/40' };
-  if (m.includes('gps'))                           return { label: 'GPS',      icon: MapPin,        cls: 'bg-info-bg text-info-text border-info-border' };
-  if (m.includes('testo')|| m.includes('text'))   return { label: 'Testo',    icon: MessageCircle, cls: 'bg-success-bg text-success-text border-success-border' };
-  return { label: method || 'Manuale', icon: Bot, cls: 'bg-background text-text-secondary border-border' };
 }
 
 const StatusBadge = ({ status }: { status: AuditStatus }) => {
@@ -398,8 +389,6 @@ export default function TabulatiPage() {
                       />
                     </div>
                   ) : feed.map(entry => {
-                    const mb = methodBadge(entry.input_method);
-                    const MIcon = mb.icon;
                     const isApproved = isApprovedAuditStatus(entry.status);
                     const isOwnRecord = user?.employee_id != null && entry.employee_id === user.employee_id;
                     const canUsePersonalActions = isOwnRecord && !canManageAudit;
@@ -423,9 +412,7 @@ export default function TabulatiPage() {
                           <span className="col-span-2">Task: <strong className="text-text-primary">{entry.task_title || '—'}</strong></span>
                           <span className="col-span-2">
                             Metodo:{' '}
-                            <span className={cn('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-bold border', mb.cls)}>
-                              <MIcon size={11}/> {mb.label}
-                            </span>
+                            <MethodBadge method={entry.input_method} />
                           </span>
                           {entry.note && <span className="col-span-2">Note: <strong className="text-text-primary">{entry.note}</strong></span>}
                         </div>
@@ -500,8 +487,6 @@ export default function TabulatiPage() {
                     {feed.length === 0 ? (
                       <tr><td colSpan={10} className="text-center py-16 text-text-secondary text-sm">Nessun record trovato.</td></tr>
                     ) : feed.map(entry => {
-                      const mb = methodBadge(entry.input_method);
-                      const MIcon = mb.icon;
                       const isApproved = isApprovedAuditStatus(entry.status);
                       const isOwnRecord = user?.employee_id != null && entry.employee_id === user.employee_id;
                       const canUsePersonalActions = isOwnRecord && !canManageAudit;
@@ -527,9 +512,7 @@ export default function TabulatiPage() {
                             {formatAuditValue(entry)}
                           </td>
                           <td className="px-5 py-3.5">
-                            <span className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border w-fit', mb.cls)}>
-                              <MIcon size={11}/> {mb.label}
-                            </span>
+                            <MethodBadge method={entry.input_method} />
                           </td>
                           <td className="px-5 py-3.5"><StatusBadge status={entry.status}/></td>
                           <td className="px-5 py-3.5">
