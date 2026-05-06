@@ -67,17 +67,82 @@ export async function insertMessageLog(employeeId, messageType, rawText, extract
   });
 }
 
-export async function getAuditLogs() {
+function buildMessageLogPreview(rawText, maxLength = 160) {
+  const text = String(rawText ?? '').trim();
+  if (!text) return 'Nessun contenuto testuale';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trimEnd()}…`;
+}
+
+export async function getAuditLogs(filters = {}) {
+  const employeeId = filters.employee_id ? Number(filters.employee_id) : null;
+  const messageType = typeof filters.message_type === 'string' && filters.message_type.trim()
+    ? filters.message_type.trim()
+    : null;
+  const search = typeof filters.search === 'string' && filters.search.trim()
+    ? filters.search.trim()
+    : null;
+  const fromDate = filters.from ? parseDateOnly(filters.from) : null;
+  const toDateExclusive = filters.to ? parseDateOnly(filters.to) : null;
+  const hasExtractedJson = typeof filters.has_extracted_json === 'boolean'
+    ? filters.has_extracted_json
+    : undefined;
+
+  if (toDateExclusive) {
+    toDateExclusive.setUTCDate(toDateExclusive.getUTCDate() + 1);
+  }
+
+  const where = {
+    ...(employeeId ? { employee_id: employeeId } : {}),
+    ...(messageType ? { message_type: { equals: messageType, mode: 'insensitive' } } : {}),
+    ...((fromDate || toDateExclusive) ? {
+      timestamp_utc: {
+        ...(fromDate ? { gte: fromDate } : {}),
+        ...(toDateExclusive ? { lt: toDateExclusive } : {}),
+      },
+    } : {}),
+    ...(search ? { raw_text: { contains: search, mode: 'insensitive' } } : {}),
+    ...(hasExtractedJson === true ? {
+      NOT: [
+        { extracted_json: null },
+        { extracted_json: '' },
+      ],
+    } : {}),
+    ...(hasExtractedJson === false ? {
+      OR: [
+        { extracted_json: null },
+        { extracted_json: '' },
+      ],
+    } : {}),
+  };
+
   const logs = await getDb().messageLog.findMany({
-    take: 200,
+    where,
+    take: 500,
     orderBy: { timestamp_utc: 'desc' },
-    include: { employee: true },
+    include: {
+      employee: {
+        select: {
+          id: true,
+          nome: true,
+          cognome: true,
+        },
+      },
+    },
   });
 
   return logs.map((log) => ({
-    ...log,
-    nome: log.employee?.nome,
-    cognome: log.employee?.cognome,
+    id: log.id,
+    timestamp_utc: log.timestamp_utc,
+    employee_id: log.employee_id,
+    employee_name: [log.employee?.nome, log.employee?.cognome].filter(Boolean).join(' ').trim() || null,
+    employee_label: [log.employee?.nome, log.employee?.cognome].filter(Boolean).join(' ').trim() || `Dipendente sconosciuto #${log.employee_id}`,
+    message_type: log.message_type,
+    raw_text: log.raw_text,
+    extracted_json: log.extracted_json,
+    has_extracted_json: Boolean(log.extracted_json && String(log.extracted_json).trim()),
+    day_key: formatDateOnly(log.timestamp_utc),
+    raw_preview: buildMessageLogPreview(log.raw_text),
   }));
 }
 

@@ -5,6 +5,7 @@ import { authorizeRoles } from "../middleware/auth.js";
 import {
     getKpiSchema,
     getAuditSchema,
+    getAuditLogsSchema,
     auditBulkSchema,
     userCostSchema,
     updateReportEntrySchema,
@@ -69,7 +70,7 @@ router.post("/api/hr/users/:id/cost",    authorizeRoles("ADMIN", "HR"), validate
 
 // ─── Reports & Logs ──────────────────────────────────────────────────────────
 router.get("/api/reports",               listReportsCtrl);
-router.get("/api/logs",                  authorizeRoles(...DASHBOARD_ROLES), getAuditLogsCtrl);
+router.get("/api/logs",                  authorizeRoles(...DASHBOARD_ROLES), validate(getAuditLogsSchema), getAuditLogsCtrl);
 router.get("/api/admin/pending-summary", authorizeRoles(...DASHBOARD_ROLES), getPendingSummaryCtrl);
 
 export default router;

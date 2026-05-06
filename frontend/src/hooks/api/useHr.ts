@@ -215,6 +215,32 @@ export interface SpesaOcrResponse {
   righeDaRiconciliareDettaglio?: Array<{ reason: string; line: unknown }>;
 }
 
+export interface GenericInvoiceOcrCandidate {
+  spesa: AuditEntry & Record<string, unknown>;
+  score: number;
+  strength: 'strong' | 'weak' | 'none';
+  reasons: string[];
+}
+
+export interface GenericInvoiceOcrUpload {
+  token: string;
+  originalName?: string | null;
+  mimeType?: string | null;
+  size?: number | null;
+}
+
+export interface GenericInvoiceOcrResponse {
+  upload: GenericInvoiceOcrUpload;
+  ocrPayload: InvoiceOcrPayload;
+  suggestedLines: InvoiceOcrLine[];
+  candidates: GenericInvoiceOcrCandidate[];
+  matchStatus?: {
+    best?: GenericInvoiceOcrCandidate | null;
+    canConfirmExisting?: boolean;
+    canCreateNew?: boolean;
+  };
+}
+
 export interface AuditBulkItem {
   id: number;
   type: AuditType;
@@ -522,6 +548,71 @@ export function useAnalyzeSpesaOcr() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: hrKeys.all() });
+    },
+  });
+}
+
+export function useAnalyzeGenericInvoiceOcr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ file, cantiereId }: { file: File; cantiereId?: number | null }) => {
+      const form = new FormData();
+      form.append('file', file);
+      if (cantiereId) form.append('cantiere_id', String(cantiereId));
+      const res = await apiFetch('/api/admin/spese/ocr/analyze', {
+        method: 'POST',
+        body: form,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
+      }
+      return res.json() as Promise<GenericInvoiceOcrResponse>;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: hrKeys.all() });
+    },
+  });
+}
+
+export function useConfirmGenericInvoiceOcr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      upload,
+      ocrPayload,
+      lines,
+      spesaId,
+      cantiereId,
+      ubicazioneId,
+    }: {
+      upload: GenericInvoiceOcrUpload;
+      ocrPayload: InvoiceOcrPayload;
+      lines: InvoiceOcrLine[];
+      spesaId?: number | null;
+      cantiereId?: number | null;
+      ubicazioneId?: number | null;
+    }) => {
+      const res = await apiFetch('/api/admin/spese/ocr/confirm', {
+        method: 'POST',
+        body: JSON.stringify({
+          upload,
+          ocrPayload,
+          lines,
+          spesa_id: spesaId ?? null,
+          cantiere_id: cantiereId ?? null,
+          ubicazione_id: ubicazioneId ?? null,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
+      }
+      return res.json() as Promise<SpesaOcrResponse>;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: hrKeys.all() });
+      qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
     },
   });
 }

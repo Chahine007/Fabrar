@@ -19,6 +19,28 @@ export const getAuditSchema = z.object({
     }).partial(),
 });
 
+const booleanQuery = z.preprocess((value) => {
+    if (value === undefined || value === null || value === "") return undefined;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === "true" || normalized === "1") return true;
+        if (normalized === "false" || normalized === "0") return false;
+    }
+    return value;
+}, z.boolean().optional());
+
+export const getAuditLogsSchema = z.object({
+    query: z.object({
+        employee_id: z.coerce.number().positive().optional().nullable(),
+        message_type: z.string().max(50).optional().nullable(),
+        has_extracted_json: booleanQuery,
+        from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+        to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+        search: z.string().max(300).optional().nullable(),
+    }).partial(),
+});
+
 export const auditBulkSchema = z.object({
     body: z.object({
         items: z.array(z.object({

@@ -7,7 +7,7 @@ import {
   upsertArticleAndCreateLoadMovement,
 } from "../magazzino/warehouseService.js";
 import { extractInvoiceOcrFromFile } from "../../services/openai.js";
-import { saveFile } from "../../services/storage.service.js";
+import { resolveStoredPath, saveFile } from "../../services/storage.service.js";
 
 const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const GENYA_SOURCE = "IMPORT_GENYA";
@@ -406,7 +406,30 @@ async function createOcrDocument(prisma, { spesa, file, user, ocrPayload }) {
   });
 }
 
-async function ensureSpesaAccess(prisma, user, spesaId) {
+async function createOcrDocumentFromStoredUpload(prisma, { cantiereId, upload, user, ocrPayload }) {
+  if (!upload?.token) throw httpError("File OCR temporaneo non disponibile.", 400);
+  resolveStoredPath(upload.token);
+
+  return prisma.document.create({
+    data: {
+      cantiere_id: Number(cantiereId),
+      name: upload.originalName || path.basename(upload.token),
+      file_path: upload.token,
+      type: detectDocumentType(ocrPayload, { mimetype: upload.mimeType }),
+      size: formatFileSize(upload.size),
+      mime_type: upload.mimeType ?? null,
+      dimensione: upload.size ?? null,
+      employee_id: user?.employee_id ?? null,
+      uploader: user?.employee_id ? `employee:${user.employee_id}` : `user:${user?.id ?? "system"}`,
+      tag: "invoice_ocr",
+      numero_fattura: ocrPayload.numero_documento,
+      data_emissione: parseDateOnly(ocrPayload.data_documento),
+      importo: decimalOrNull(ocrPayload.totale_documento),
+    },
+  });
+}
+
+async function ensureSpesaAccess(prisma, user, spesaId, options = {}) {
   const spesa = await prisma.spesa.findUnique({
     where: { id: Number(spesaId) },
     include: {
@@ -423,7 +446,7 @@ async function ensureSpesaAccess(prisma, user, spesaId) {
   });
   if (!allowed) throw httpError("Accesso negato alla spesa del cantiere.", 403);
 
-  if (spesa.fonte !== GENYA_SOURCE && spesa.input_method !== "import_genya") {
+  if (!options.allowNonGenya && spesa.fonte !== GENYA_SOURCE && spesa.input_method !== "import_genya") {
     throw httpError("OCR logistico disponibile solo per spese importate da Genya.", 400);
   }
 
@@ -465,6 +488,39 @@ export async function analyzeSpesaOcr(prisma, { spesaId, file, user }) {
     matchStatus: {
       ...match,
       canConfirm: match.strength !== "none" && suggestedLines.some((line) => line.codice_sku),
+    },
+  };
+}
+
+export async function analyzeGenericInvoiceOcr(prisma, { file, user, cantiereId = null }) {
+  const ocrPayload = await extractInvoiceFromUploadedFile(file);
+  const suggestedLines = await enrichLinePreviews(prisma, ocrPayload.righe_materiali);
+  const saved = await saveFile(file, { folder: path.join("ocr-pending") });
+  const matches = await findOcrExpenseMatches(prisma, ocrPayload, { cantiereId });
+  const visibleMatches = [];
+
+  for (const match of matches) {
+    const allowed = await canAccessCantiere(prisma, user, match.spesa.cantiere_id, {
+      globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
+      ownerRoles: ["PROJECT_MANAGER"],
+    });
+    if (allowed) visibleMatches.push(match);
+  }
+
+  return {
+    upload: {
+      token: saved.relativePath,
+      originalName: file.originalname || saved.filename,
+      mimeType: file.mimetype,
+      size: file.size ?? null,
+    },
+    ocrPayload,
+    suggestedLines,
+    candidates: visibleMatches,
+    matchStatus: {
+      best: visibleMatches[0] ?? null,
+      canConfirmExisting: Boolean(visibleMatches[0]?.spesa?.id),
+      canCreateNew: Boolean(ocrPayload.totale_documento),
     },
   };
 }
@@ -527,8 +583,8 @@ function normalizeConfirmLines(lines, fallbackPayload) {
   return source.map(normalizeLine);
 }
 
-export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, lines = [], ubicazioneId = null, user }) {
-  const spesaForAccess = await ensureSpesaAccess(prisma, user, spesaId);
+export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, lines = [], ubicazioneId = null, user, allowNonGenya = false }) {
+  const spesaForAccess = await ensureSpesaAccess(prisma, user, spesaId, { allowNonGenya });
   if (spesaForAccess.logistica_status === LogisticaStatus.LOADED_TO_WAREHOUSE) {
     throw httpError("Questa spesa è già stata caricata a magazzino.", 409);
   }
@@ -635,6 +691,170 @@ export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, line
         line: result.line,
       })),
     };
+  });
+}
+
+export async function confirmGenericInvoiceOcr(prisma, {
+  upload,
+  ocrPayload,
+  lines = [],
+  spesaId = null,
+  cantiereId = null,
+  ubicazioneId = null,
+  user,
+}) {
+  const normalizedPayload = normalizeInvoiceOcrPayload(ocrPayload);
+  const confirmedLines = normalizeConfirmLines(lines, normalizedPayload);
+  const hasLoadableLines = confirmedLines.some((line) => line.codice_sku);
+  const payloadForSave = {
+    ...normalizedPayload,
+    righe_materiali: confirmedLines,
+  };
+  const targetSpesaId = spesaId ? Number(spesaId) : null;
+
+  if (targetSpesaId) {
+    const existingSpesa = await ensureSpesaAccess(prisma, user, targetSpesaId);
+    if (existingSpesa.logistica_status === LogisticaStatus.LOADED_TO_WAREHOUSE) {
+      throw httpError("Questa spesa è già stata caricata a magazzino.", 409);
+    }
+    const { document, updatedSpesa, supplierResult } = await prisma.$transaction(async (tx) => {
+      const document = await createOcrDocumentFromStoredUpload(tx, {
+        cantiereId: existingSpesa.cantiere_id,
+        upload,
+        user,
+        ocrPayload: payloadForSave,
+      });
+      const supplierResult = hasLoadableLines ? null : await upsertSupplierFromOcr(tx, payloadForSave);
+      const updatedSpesa = await tx.spesa.update({
+        where: { id: existingSpesa.id },
+        data: {
+          documento_id: document.id,
+          ocr_payload: payloadForSave,
+          logistica_status: hasLoadableLines
+            ? LogisticaStatus.OCR_REVIEW
+            : LogisticaStatus.RECONCILIATION_REQUIRED,
+        },
+        include: {
+          cantiere: { select: { id: true, nome: true } },
+          documento: { select: { id: true, name: true } },
+        },
+      });
+
+      return { document, updatedSpesa, supplierResult };
+    });
+
+    if (!hasLoadableLines) {
+      return {
+        spesa: updatedSpesa,
+        document,
+        ocrPayload: payloadForSave,
+        suggestedLines: confirmedLines,
+        fornitore: supplierResult?.fornitore ?? null,
+        fornitoreAction: supplierResult?.action ?? null,
+        movimentiCaricoCreati: 0,
+        articoliCreati: 0,
+        righeDaRiconciliare: confirmedLines.length,
+        righeDaRiconciliareDettaglio: confirmedLines.map((line) => ({
+          reason: line.codice_articolo ? "SKU non normalizzabile" : "Codice articolo mancante",
+          line,
+        })),
+      };
+    }
+
+    return confirmSpesaOcr(prisma, {
+      spesaId: existingSpesa.id,
+      documentId: document.id,
+      lines: confirmedLines,
+      ubicazioneId,
+      user,
+    });
+  }
+
+  const parsedCantiereId = Number(cantiereId);
+  if (!Number.isInteger(parsedCantiereId) || parsedCantiereId <= 0) {
+    throw httpError("Se nessuna spesa Genya viene agganciata, seleziona un cantiere per creare la nuova spesa.", 400);
+  }
+  if (!user?.employee_id) {
+    throw httpError("Utente senza employee_id collegato: impossibile creare la spesa OCR.", 400);
+  }
+
+  const allowed = await canAccessCantiere(prisma, user, parsedCantiereId, {
+    globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
+    ownerRoles: ["PROJECT_MANAGER"],
+  });
+  if (!allowed) throw httpError("Accesso negato al cantiere selezionato.", 403);
+
+  const importo = parseMoney(normalizedPayload.totale_documento);
+  if (!importo || importo <= 0) {
+    throw httpError("Totale documento mancante: impossibile creare una nuova spesa OCR.", 400);
+  }
+
+  const { spesa, document, supplierResult } = await prisma.$transaction(async (tx) => {
+    const rootWbs = await tx.wbsNode.findFirst({
+      where: { cantiere_id: parsedCantiereId, parent_id: null },
+      select: { id: true },
+    });
+    const document = await createOcrDocumentFromStoredUpload(tx, {
+      cantiereId: parsedCantiereId,
+      upload,
+      user,
+      ocrPayload: payloadForSave,
+    });
+    const supplierResult = hasLoadableLines ? null : await upsertSupplierFromOcr(tx, payloadForSave);
+
+    const spesa = await tx.spesa.create({
+      data: {
+        timestamp_utc: parseDateOnly(payloadForSave.data_documento) ?? new Date(),
+        employee_id: Number(user.employee_id),
+        cantiere_id: parsedCantiereId,
+        wbs_node_id: rootWbs?.id ?? null,
+        importo,
+        fornitore: supplierNameFromPayload(payloadForSave),
+        descrizione: normalizeOptionalText(`OCR fattura ${payloadForSave.numero_documento ?? ""}`),
+        fonte: "OCR_WEB",
+        input_method: "invoice_ocr",
+        fattura_rif: payloadForSave.numero_documento,
+        stato_validazione: "PENDING",
+        logistica_status: hasLoadableLines
+          ? LogisticaStatus.OCR_REVIEW
+          : LogisticaStatus.RECONCILIATION_REQUIRED,
+        documento_id: document.id,
+        ocr_payload: payloadForSave,
+      },
+      include: {
+        cantiere: { select: { id: true, nome: true } },
+        documento: { select: { id: true, name: true } },
+      },
+    });
+
+    return { spesa, document, supplierResult };
+  });
+
+  if (!hasLoadableLines) {
+    return {
+      spesa,
+      document,
+      ocrPayload: payloadForSave,
+      suggestedLines: confirmedLines,
+      fornitore: supplierResult?.fornitore ?? null,
+      fornitoreAction: supplierResult?.action ?? null,
+      movimentiCaricoCreati: 0,
+      articoliCreati: 0,
+      righeDaRiconciliare: confirmedLines.length,
+      righeDaRiconciliareDettaglio: confirmedLines.map((line) => ({
+        reason: line.codice_articolo ? "SKU non normalizzabile" : "Codice articolo mancante",
+        line,
+      })),
+    };
+  }
+
+  return confirmSpesaOcr(prisma, {
+    spesaId: spesa.id,
+    documentId: spesa.documento_id,
+    lines: confirmedLines,
+    ubicazioneId,
+    user,
+    allowNonGenya: true,
   });
 }
 

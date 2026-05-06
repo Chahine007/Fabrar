@@ -21,7 +21,7 @@ import type { AuditEntry } from '../hooks/api/useHr';
 import { useCantieri, useGenyaImport } from '../hooks/api/useCantieri';
 import TimeEntryModal from '../components/timesheets/TimeEntryModal';
 import ExpenseModal from '../components/timesheets/ExpenseModal';
-import OcrInvoiceModal from '../components/data-entry/OcrInvoiceModal';
+import OcrInvoiceModal, { GeneralInvoiceOcrModal } from '../components/data-entry/OcrInvoiceModal';
 import { Button, Card, EmptyState, PageHeader, TableSkeleton, useToast } from '../components/ui';
 
 const OFFICE_IMPORT_ROLES = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'];
@@ -88,6 +88,7 @@ export default function DataEntryPage() {
   const [selectedCantiereId, setSelectedCantiereId] = useState('');
   const [timeModalOpen, setTimeModalOpen] = useState(false);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
+  const [generalOcrOpen, setGeneralOcrOpen] = useState(false);
   const [ocrEntry, setOcrEntry] = useState<AuditEntry | null>(null);
   const [timerStart, setTimerStart] = useState<number | null>(null);
   const [timerNow, setTimerNow] = useState(Date.now());
@@ -307,9 +308,14 @@ export default function DataEntryPage() {
                   <div>
                     <h2 className="text-base font-bold text-text-primary">Analisi fatture OCR</h2>
                     <p className="mt-1 text-sm text-text-secondary">
-                      Seleziona una spesa Genya in attesa e carica la fattura/DDT dettagliata per generare i carichi.
+                      Analizza una fattura scollegata: il sistema propone un match Genya o crea una nuova spesa.
                     </p>
                   </div>
+                </div>
+                <div className="mt-4">
+                  <Button variant="primary" icon={<FileSearch size={16} />} onClick={() => setGeneralOcrOpen(true)}>
+                    Analizza fattura
+                  </Button>
                 </div>
               </div>
 
@@ -353,6 +359,7 @@ export default function DataEntryPage() {
       <AnimatePresence>
         {timeModalOpen && <TimeEntryModal onClose={() => setTimeModalOpen(false)} />}
         {expenseModalOpen && <ExpenseModal onClose={() => setExpenseModalOpen(false)} />}
+        {generalOcrOpen && <GeneralInvoiceOcrModal onClose={() => setGeneralOcrOpen(false)} />}
         {ocrEntry && <OcrInvoiceModal entry={ocrEntry} onClose={() => setOcrEntry(null)} />}
       </AnimatePresence>
     </div>

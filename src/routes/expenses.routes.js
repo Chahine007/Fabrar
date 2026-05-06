@@ -19,7 +19,9 @@ import {
     updateMyExpense,
 } from "../controllers/expenses.controller.js";
 import {
+    analyzeGenericInvoiceOcrController,
     analyzeSpesaOcrController,
+    confirmGenericInvoiceOcrController,
     confirmSpesaOcrController,
     matchSpesaOcrController,
 } from "../controllers/speseOcr.controller.js";
@@ -49,6 +51,8 @@ router.use("/api/my-expenses", verifyToken);
 router.get("/api/pricebook", getPricebook);
 router.post("/api/admin/spese/manual", verifyTokenAndRole(OFFICE_EXPENSE_ROLES), validate(manualExpenseSchema), createManualExpense);
 router.post("/api/admin/spese/bulk", verifyTokenAndRole(GENYA_IMPORT_ROLES), uploadGenyaFile, bulkImportExpenses);
+router.post("/api/admin/spese/ocr/analyze", verifyTokenAndRole(GENYA_IMPORT_ROLES), uploadDocumentFile, analyzeGenericInvoiceOcrController);
+router.post("/api/admin/spese/ocr/confirm", verifyTokenAndRole(GENYA_IMPORT_ROLES), confirmGenericInvoiceOcrController);
 router.post("/api/admin/spese/:spesaId/ocr", verifyTokenAndRole(GENYA_IMPORT_ROLES), uploadDocumentFile, analyzeSpesaOcrController);
 router.post("/api/admin/spese/:spesaId/ocr/confirm", verifyTokenAndRole(GENYA_IMPORT_ROLES), confirmSpesaOcrController);
 router.post("/api/admin/spese/ocr/match", verifyTokenAndRole(GENYA_IMPORT_ROLES), matchSpesaOcrController);

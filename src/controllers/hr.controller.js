@@ -651,7 +651,7 @@ export const listReportsCtrl = asyncHandler(async (req, res) => {
 });
 
 export const getAuditLogsCtrl = asyncHandler(async (req, res) => {
-    const rows = await dbGetAuditLogs();
+    const rows = await dbGetAuditLogs(req.query);
     res.json(rows);
 });
 
