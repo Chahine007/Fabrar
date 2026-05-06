@@ -13,12 +13,13 @@ import {
 import { useForm } from 'react-hook-form';
 import {
   useArticoli,
+  useCreateArticolo,
   useCreaMovimento,
   useGiacenze,
   useUbicazioni,
 } from '../hooks/api/useMagazzino';
+import { useSuppliers } from '../hooks/api/useSuppliers';
 import { useAuth } from '../hooks/useAuth';
-import type { WarehouseArticle, WarehouseLocation, WarehouseStockRow } from '../types/warehouse';
 import ErrorMessage from '../components/ErrorMessage';
 import {
   Button,
@@ -38,6 +39,27 @@ interface CaricoFormData {
   quantita: number;
   costo_acquisto: number;
 }
+
+interface ArticoloFormData {
+  codice_sku: string;
+  descrizione: string;
+  unita_misura: string;
+  costo_medio?: string;
+  scorta_minima?: string;
+  categoria?: string;
+  fornitore_default_id?: string;
+}
+
+const optionalNumber = (value?: string) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const optionalText = (value?: string) => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+};
 
 function CaricoModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const { register, handleSubmit, reset, formState: { errors } } = useForm<CaricoFormData>();
@@ -138,14 +160,153 @@ function CaricoModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   );
 }
 
+function ArticoloModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<ArticoloFormData>({
+    defaultValues: {
+      unita_misura: 'pz',
+      scorta_minima: '0',
+    },
+  });
+  const { data: suppliers = [] } = useSuppliers();
+  const createArticolo = useCreateArticolo();
+  const toast = useToast();
+  const [error, setError] = useState<string | null>(null);
+
+  const onSubmit = async (data: ArticoloFormData) => {
+    setError(null);
+
+    try {
+      await createArticolo.mutateAsync({
+        codice_sku: data.codice_sku.trim(),
+        descrizione: data.descrizione.trim(),
+        unita_misura: data.unita_misura.trim(),
+        costo_medio: optionalNumber(data.costo_medio) ?? 0,
+        scorta_minima: optionalNumber(data.scorta_minima) ?? 0,
+        categoria: optionalText(data.categoria),
+        fornitore_default_id: optionalNumber(data.fornitore_default_id) ?? null,
+      });
+      reset({ unita_misura: 'pz', scorta_minima: '0' });
+      toast.success('Articolo creato', "L'articolo è ora disponibile nei carichi merci.");
+      onClose();
+    } catch (error: unknown) {
+      setError(error instanceof Error ? error.message : 'Errore creazione articolo.');
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      closeDisabled={createArticolo.isPending}
+      title="Nuovo Articolo"
+      description="Crea una nuova anagrafica materiale da usare nei carichi e nelle giacenze."
+      icon={<Package size={18} />}
+      size="md"
+      footer={(
+        <>
+          <Button type="button" variant="secondary" onClick={onClose} disabled={createArticolo.isPending}>
+            Annulla
+          </Button>
+          <Button type="submit" form="warehouse-article-form" disabled={createArticolo.isPending} className="gap-2">
+            {createArticolo.isPending ? <Loader2 size={16} className="animate-spin" /> : null}
+            Salva Articolo
+          </Button>
+        </>
+      )}
+    >
+      <form id="warehouse-article-form" onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+        {error && <FormError>{error}</FormError>}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Codice SKU" error={errors.codice_sku ? 'Codice SKU obbligatorio.' : undefined}>
+            <Input
+              {...register('codice_sku', { required: true })}
+              placeholder="Es. MAT-001"
+              autoComplete="off"
+            />
+          </Field>
+
+          <Field label="Unita di misura" error={errors.unita_misura ? 'Unita di misura obbligatoria.' : undefined}>
+            <Input
+              {...register('unita_misura', { required: true })}
+              placeholder="pz, kg, m, lt..."
+              autoComplete="off"
+            />
+          </Field>
+        </div>
+
+        <Field label="Descrizione" error={errors.descrizione ? 'Descrizione obbligatoria.' : undefined}>
+          <Input
+            {...register('descrizione', { required: true })}
+            placeholder="Nome materiale o articolo"
+            autoComplete="off"
+          />
+        </Field>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Costo medio (€)">
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              {...register('costo_medio')}
+              placeholder="Es. 12.50"
+            />
+          </Field>
+
+          <Field label="Scorta minima">
+            <Input
+              type="number"
+              step="1"
+              min="0"
+              {...register('scorta_minima')}
+              placeholder="Es. 10"
+            />
+          </Field>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Categoria">
+            <Input
+              {...register('categoria')}
+              placeholder="Es. Elettrico, Edile, DPI"
+              autoComplete="off"
+            />
+          </Field>
+
+          <Field label="Fornitore default">
+            <Select {...register('fornitore_default_id')}>
+              <option value="">Nessun fornitore</option>
+              {suppliers.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>
+                  {supplier.ragione_sociale}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 export default function WarehousePage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isArticleModalOpen, setIsArticleModalOpen] = useState(false);
   const [search, setSearch] = useState('');
 
   const { data: giacenze = [], isLoading, error } = useGiacenze();
   const { user } = useAuth();
 
   const canCaricare = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'].includes(user?.role ?? '');
+  const canCreateArticolo = ['ADMIN', 'PROJECT_MANAGER', 'WAREHOUSEMAN'].includes(user?.role ?? '');
 
   const kpis = useMemo(() => {
     let totaleMagazzino = 0;
@@ -179,14 +340,27 @@ export default function WarehousePage() {
           <h1 className="text-3xl font-extrabold text-text-primary tracking-tight">Magazzino e Logistica</h1>
           <p className="text-text-secondary mt-1 text-sm md:text-base">Gestione centralizzata inventario e giacenze</p>
         </div>
-        {canCaricare && (
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="bg-accent hover:bg-accent/90 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-accent/20 transition-all flex items-center justify-center gap-2 group active:scale-95"
-          >
-            <Plus size={20} className="group-hover:scale-110 transition-transform" />
-            Nuovo Carico Merci
-          </button>
+        {(canCreateArticolo || canCaricare) && (
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+            {canCreateArticolo && (
+              <button
+                onClick={() => setIsArticleModalOpen(true)}
+                className="border border-border bg-card hover:bg-background text-text-primary px-6 py-3 rounded-xl font-bold shadow-sm transition-all flex items-center justify-center gap-2 group active:scale-95"
+              >
+                <Package size={20} className="text-accent group-hover:scale-110 transition-transform" />
+                Nuovo Articolo
+              </button>
+            )}
+            {canCaricare && (
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="bg-accent hover:bg-accent/90 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-accent/20 transition-all flex items-center justify-center gap-2 group active:scale-95"
+              >
+                <Plus size={20} className="group-hover:scale-110 transition-transform" />
+                Nuovo Carico Merci
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -355,6 +529,9 @@ export default function WarehousePage() {
 
       <AnimatePresence>
         {isModalOpen && <CaricoModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />}
+        {isArticleModalOpen && (
+          <ArticoloModal isOpen={isArticleModalOpen} onClose={() => setIsArticleModalOpen(false)} />
+        )}
       </AnimatePresence>
     </div>
   );

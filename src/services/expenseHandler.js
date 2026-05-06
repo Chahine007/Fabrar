@@ -13,9 +13,13 @@ import { tgGetFile, tgDownloadFile, tgEditMessageText } from './telegram.js';
 import { extractSpesaFromImage, getOpenAIUserFacingMessage } from './openai.js';
 import {
     createPendingExpense,
+    createPendingWarehouseLoad,
     getPendingExpense,
+    getPendingWarehouseLoad,
     deletePendingExpense,
+    deletePendingWarehouseLoad,
 } from '../domain/bot/botSessionService.js';
+import { normalizeAutomaticLoadLine } from '../domain/magazzino/warehouseService.js';
 
 async function writeStreamToFile(stream, filePath) {
     await new Promise((resolve, reject) => {
@@ -29,6 +33,35 @@ async function writeStreamToFile(stream, filePath) {
 async function safeUnlink(filePath) {
     if (!filePath) return;
     try { await fs.promises.unlink(filePath); } catch { /* ignore */ }
+}
+
+function getLoadableMaterialRows(rows = []) {
+    return rows
+        .map((row) => normalizeAutomaticLoadLine(row))
+        .filter((row) => row.codice_sku && row.quantita && row.costo_unitario);
+}
+
+function getReconcileMaterialRows(rows = []) {
+    return rows
+        .map((row) => normalizeAutomaticLoadLine(row))
+        .filter((row) => !row.codice_sku || !row.quantita || !row.costo_unitario);
+}
+
+function formatMaterialPreview(rows) {
+    return rows
+        .slice(0, 6)
+        .map((row) => `• ${row.codice_sku} - ${row.descrizione} x ${row.quantita.toString()} ${row.unita_misura}`)
+        .join('\n');
+}
+
+function formatReconcilePreview(rows) {
+    return rows
+        .slice(0, 4)
+        .map((row) => {
+            const reason = !row.codice_sku ? 'SKU mancante' : 'quantita/costo mancanti';
+            return `• ${row.descrizione || 'Riga senza descrizione'} (${reason})`;
+        })
+        .join('\n');
 }
 
 export async function handleExpensePhoto(message, employee, sendStatus, statusMsgId) {
@@ -62,6 +95,39 @@ export async function handleExpensePhoto(message, employee, sendStatus, statusMs
         await sendStatus(getOpenAIUserFacingMessage(err, {
             default: '⚠️ Non sono riuscito a leggere l\'importo. Assicurati che l\'immagine sia chiara o inserisci la spesa manualmente.',
         }));
+        return;
+    }
+
+    const loadableRows = getLoadableMaterialRows(spesa.righe_materiali);
+    if (loadableRows.length > 0) {
+        const reconcileRows = getReconcileMaterialRows(spesa.righe_materiali);
+        const sessionId = await createPendingWarehouseLoad(employee.id, {
+            document_type: spesa.document_type,
+            importo: spesa.importo,
+            fornitore: spesa.fornitore,
+            descrizione: spesa.descrizione,
+            righe_materiali: spesa.righe_materiali,
+        });
+
+        const moreRows = loadableRows.length > 6 ? `\n...altre ${loadableRows.length - 6} righe` : '';
+        const txt = [
+            '📦 *Documento materiali rilevato*',
+            `Tipo: ${spesa.document_type || 'UNKNOWN'}`,
+            spesa.fornitore ? `Fornitore: ${spesa.fornitore}` : null,
+            spesa.importo ? `Totale: ${spesa.importo}€` : null,
+            '',
+            formatMaterialPreview(loadableRows) + moreRows,
+            reconcileRows.length ? `\nDa riconciliare manualmente:\n${formatReconcilePreview(reconcileRows)}` : null,
+            '',
+            "Vuoi registrare il carico a magazzino sull'ubicazione DEFAULT/PRINCIPALE?",
+        ].filter(Boolean).join('\n');
+
+        await tgEditMessageText(chatId, statusMsgId, txt, {
+            inline_keyboard: [
+                [{ text: '✅ Registra carico magazzino', callback_data: `carico:${sessionId}:ok` }],
+                [{ text: '❌ Non caricare, registra come spesa', callback_data: `carico:${sessionId}:no` }],
+            ],
+        });
         return;
     }
 
@@ -104,5 +170,11 @@ export async function handleExpensePhoto(message, employee, sendStatus, statusMs
 export async function consumePendingExpense(sessionId) {
     const data = await getPendingExpense(sessionId);
     if (data) await deletePendingExpense(sessionId);
+    return data;
+}
+
+export async function consumePendingWarehouseLoad(sessionId) {
+    const data = await getPendingWarehouseLoad(sessionId);
+    if (data) await deletePendingWarehouseLoad(sessionId);
     return data;
 }

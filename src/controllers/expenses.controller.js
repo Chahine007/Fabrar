@@ -16,6 +16,11 @@ import {
     parseImportedMoney,
     parseImportedTimestamp,
 } from "../services/genyaImportParser.js";
+import {
+    getDefaultWarehouseLocation,
+    normalizeAutomaticLoadLine,
+    upsertArticleAndCreateLoadMovement,
+} from "../domain/magazzino/warehouseService.js";
 
 export {
     parseCantiereIdFromReferer,
@@ -29,6 +34,23 @@ export {
 
 const WEB_SOURCE = "WEB";
 const MUTABLE_STATUSES = new Set([ValidationStatus.PENDING, ValidationStatus.REJECTED]);
+const MATERIAL_IMPORT_KEYS = [
+    "codice_sku",
+    "sku",
+    "codice_articolo",
+    "cod_articolo",
+    "descrizione_articolo",
+    "descrizione_materiale",
+    "quantita",
+    "qta",
+    "qty",
+    "unita_misura",
+    "costo_unitario",
+    "prezzo_unitario",
+    "importo_riga",
+    "valore_riga",
+    "prezzo_totale",
+];
 
 function getAuthenticatedEmployeeId(req) {
     const employeeId = Number(req.user?.employee_id);
@@ -46,6 +68,10 @@ function buildExpenseInclude() {
         wbs_node: { select: { id: true, nome: true, cantiere_id: true } },
         documento: { select: { id: true, name: true, file_path: true, type: true, cantiere_id: true } },
     };
+}
+
+function hasMaterialImportFields(item) {
+    return MATERIAL_IMPORT_KEYS.some((key) => item?.[key] != null && item[key] !== "");
 }
 
 async function ensureDocumentBelongsToCantiere(prisma, documentId, cantiereId) {
@@ -143,9 +169,17 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
 
     const prisma = getDb();
     const employeeId = Number(uploaderEmployeeId);
+    const importStats = {
+        speseCreate: 0,
+        articoliCreati: 0,
+        movimentiCaricoCreati: 0,
+        righeDaRiconciliare: [],
+        warnings: [],
+    };
 
     await prisma.$transaction(async (tx) => {
         const rootWbsCache = new Map();
+        const defaultLocation = await getDefaultWarehouseLocation(tx);
         for (const item of spese_bulk) {
             const importo = parseImportedMoney(item.importo);
             if (!Number.isFinite(importo) || importo <= 0) throw new Error("Importi devono essere > 0.");
@@ -182,9 +216,58 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
                     stato_validazione: ValidationStatus.PENDING,
                 },
             });
+            importStats.speseCreate += 1;
+
+            if (!hasMaterialImportFields(item)) {
+                continue;
+            }
+
+            const normalizedLine = normalizeAutomaticLoadLine(item);
+            const hasLoadableShape = normalizedLine.codice_sku && normalizedLine.quantita && normalizedLine.costo_unitario;
+            if (!hasLoadableShape) {
+                importStats.righeDaRiconciliare.push({
+                    reason: !normalizedLine.codice_sku ? "SKU_MISSING" : "QTY_OR_COST_MISSING",
+                    codice_sku: normalizedLine.codice_sku || null,
+                    descrizione: normalizedLine.descrizione,
+                    quantita: normalizedLine.quantita?.toString() ?? null,
+                });
+                continue;
+            }
+
+            if (!defaultLocation) {
+                importStats.warnings.push("Ubicazione DEFAULT/PRINCIPALE mancante: carichi magazzino Genya non creati.");
+                continue;
+            }
+
+            const loadResult = await upsertArticleAndCreateLoadMovement(tx, item, {
+                ubicazioneId: defaultLocation.id,
+                userId: req.user?.id,
+            });
+
+            if (loadResult.status === "loaded") {
+                importStats.movimentiCaricoCreati += 1;
+                if (loadResult.articleCreated) importStats.articoliCreati += 1;
+            } else {
+                importStats.righeDaRiconciliare.push({
+                    reason: loadResult.reason,
+                    codice_sku: normalizedLine.codice_sku || null,
+                    descrizione: normalizedLine.descrizione,
+                    quantita: normalizedLine.quantita?.toString() ?? null,
+                });
+            }
         }
     });
-    res.json({ ok: true, salvate: spese_bulk.length, inserted: spese_bulk.length });
+    res.json({
+        ok: true,
+        salvate: spese_bulk.length,
+        inserted: spese_bulk.length,
+        speseCreate: importStats.speseCreate,
+        articoliCreati: importStats.articoliCreati,
+        movimentiCaricoCreati: importStats.movimentiCaricoCreati,
+        righeDaRiconciliare: importStats.righeDaRiconciliare.length,
+        righeDaRiconciliareDettaglio: importStats.righeDaRiconciliare,
+        warnings: [...new Set(importStats.warnings)],
+    });
 });
 
 export const createMyExpense = asyncHandler(async (req, res) => {

@@ -27,7 +27,13 @@ import { calculateDistance } from "../utils/geo.js";
 import { handleGdprAccept, sendGdprNotice } from "./registration.js";
 import { handleReport, saveManualReportRows, buildConfirmMessage, calcOreFromOrari, buildWbsKeyboard } from "./reportHandler.js";
 
-import { handleExpensePhoto, consumePendingExpense } from "./expenseHandler.js";
+import { handleExpensePhoto, consumePendingExpense, consumePendingWarehouseLoad } from "./expenseHandler.js";
+import { createPendingExpense } from "../domain/bot/botSessionService.js";
+import {
+  getDefaultWarehouseLocation,
+  normalizeAutomaticLoadLine,
+  upsertArticleAndCreateLoadMovement,
+} from "../domain/magazzino/warehouseService.js";
 import { SECURITY, ValidationStatus } from "../constants.js";
 
 const log = logger.child({ module: "bot" });
@@ -197,6 +203,103 @@ export async function handleCallbackQuery(cq) {
     } catch (err) {
       log.error({ err, event: "insert_spesa_failed" }, "insert_spesa_failed");
       await tgAnswerCallbackQuery(cq.id, "Errore durante il salvataggio.");
+    }
+    return;
+  }
+
+  if (data.startsWith("carico:")) {
+    const [, sessionId, action] = data.split(":");
+    if (!sessionId || !action) return;
+
+    const warehouseData = await consumePendingWarehouseLoad(sessionId);
+    if (!warehouseData) {
+      await tgAnswerCallbackQuery(cq.id, "Sessione scaduta o già gestita.");
+      await tgEditMessageText(chatId, messageId, "⌛ Carico magazzino: sessione scaduta.");
+      return;
+    }
+
+    if (action === "no") {
+      if (typeof warehouseData.importo !== "number" || warehouseData.importo <= 0) {
+        await tgAnswerCallbackQuery(cq.id, "Documento non registrato.");
+        await tgEditMessageText(chatId, messageId, "Documento non caricato a magazzino e senza totale valido per una spesa.");
+        return;
+      }
+
+      const session = await createPendingExpense(employee.id, {
+        importo: warehouseData.importo,
+        fornitore: warehouseData.fornitore,
+        descrizione: warehouseData.descrizione,
+      });
+      const cantieri = await getCantieriAttivi();
+      if (!cantieri || cantieri.length === 0) {
+        await tgAnswerCallbackQuery(cq.id, "Nessun cantiere attivo.");
+        await tgEditMessageText(chatId, messageId, "Nessun cantiere attivo: spesa non registrata.");
+        return;
+      }
+
+      await tgEditMessageText(chatId, messageId, "A quale cantiere vuoi assegnare la spesa?", {
+        inline_keyboard: cantieri.map((c) => ([{
+          text: `📍 ${c.nome}`,
+          callback_data: `spesa:${session}:${c.id}`,
+        }])),
+      });
+      await tgAnswerCallbackQuery(cq.id, "Carico annullato.");
+      return;
+    }
+
+    if (action !== "ok") return;
+    if (!employee.user_id) {
+      await tgAnswerCallbackQuery(cq.id, "Utente web non collegato.");
+      await tgEditMessageText(chatId, messageId, "Impossibile registrare il carico: il dipendente non è collegato a un utente web.");
+      return;
+    }
+
+    try {
+      const prisma = getDb();
+      const stats = await prisma.$transaction(async (tx) => {
+        const defaultLocation = await getDefaultWarehouseLocation(tx);
+        if (!defaultLocation) {
+          return { missingDefault: true, loaded: 0, articlesCreated: 0, reconcile: [] };
+        }
+
+        const result = { missingDefault: false, loaded: 0, articlesCreated: 0, reconcile: [] };
+        for (const rawLine of warehouseData.righe_materiali ?? []) {
+          const normalized = normalizeAutomaticLoadLine(rawLine);
+          const load = await upsertArticleAndCreateLoadMovement(tx, rawLine, {
+            ubicazioneId: defaultLocation.id,
+            userId: employee.user_id,
+          });
+
+          if (load.status === "loaded") {
+            result.loaded += 1;
+            if (load.articleCreated) result.articlesCreated += 1;
+          } else {
+            result.reconcile.push({
+              reason: load.reason,
+              codice_sku: normalized.codice_sku || null,
+              descrizione: normalized.descrizione,
+            });
+          }
+        }
+        return result;
+      });
+
+      if (stats.missingDefault) {
+        await tgAnswerCallbackQuery(cq.id, "Ubicazione default mancante.");
+        await tgEditMessageText(chatId, messageId, "Carico non registrato: manca una ubicazione magazzino con codice DEFAULT o PRINCIPALE.");
+        return;
+      }
+
+      await tgEditMessageText(
+        chatId,
+        messageId,
+        `✅ Carico magazzino registrato.\nRighe caricate: ${stats.loaded}\nArticoli creati: ${stats.articlesCreated}\nDa riconciliare: ${stats.reconcile.length}`
+      );
+      await tgAnswerCallbackQuery(cq.id, "Carico registrato.");
+    } catch (err) {
+      log.error({ err, event: "telegram_warehouse_load_failed" }, "telegram_warehouse_load_failed");
+      await tgAnswerCallbackQuery(cq.id, "Errore carico magazzino.");
+      await tgEditMessageText(chatId, messageId, "Errore durante la registrazione del carico magazzino.");
     }
     return;
   }

@@ -201,11 +201,30 @@ export async function extractReport(text, currentState = null) {
 const SPESA_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["importo", "fornitore", "descrizione"],
+  required: ["document_type", "importo", "fornitore", "descrizione", "righe_materiali"],
   properties: {
+    document_type: {
+      type: "string",
+      enum: ["RECEIPT", "DDT", "ACCOMPANYING_INVOICE", "UNKNOWN"],
+    },
     importo: { type: ["number", "null"] },
     fornitore: { type: ["string", "null"] },
     descrizione: { type: ["string", "null"] },
+    righe_materiali: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["codice_sku", "descrizione", "quantita", "unita_misura", "costo_unitario"],
+        properties: {
+          codice_sku: { type: ["string", "null"] },
+          descrizione: { type: ["string", "null"] },
+          quantita: { type: ["number", "null"] },
+          unita_misura: { type: ["string", "null"] },
+          costo_unitario: { type: ["number", "null"] },
+        },
+      },
+    },
   },
 };
 
@@ -218,7 +237,15 @@ export async function extractSpesaFromImage(base64Image) {
           messages: [
             {
               role: "system",
-              content: "Sei un assistente esperto nell'estrazione dati da scontrini e fatture. Estrarre in formato JSON l'importo totale (come numero libero da valute, es. 15.50), il fornitore (nome negozio) e una generica e breve descrizione degli articoli. Se l'immagine è illeggibile, non è uno scontrino o manca l'importo totale, RESTITUISCI importo: null.",
+              content: [
+                "Sei un assistente esperto nell'estrazione dati da scontrini, DDT e fatture accompagnatorie.",
+                "Classifica il documento in document_type: RECEIPT, DDT, ACCOMPANYING_INVOICE oppure UNKNOWN.",
+                "Estrai sempre importo totale, fornitore e una descrizione breve quando presenti.",
+                "Se il documento contiene righe materiali, estrai righe_materiali con codice_sku, descrizione, quantita, unita_misura e costo_unitario.",
+                "Compila codice_sku solo quando il codice articolo e' chiaramente leggibile; non inventare SKU.",
+                "Per scontrini semplici senza codici articolo, righe_materiali deve essere [].",
+                "Se l'immagine e' illeggibile o non contiene importo totale, restituisci importo: null.",
+              ].join(" "),
             },
             {
               role: "user",
@@ -241,8 +268,10 @@ export async function extractSpesaFromImage(base64Image) {
 
     const raw = completion.choices?.[0]?.message?.content || "{}";
     const parsed = JSON.parse(raw);
+    parsed.righe_materiali = Array.isArray(parsed.righe_materiali) ? parsed.righe_materiali : [];
+    const hasMaterialRows = parsed.righe_materiali.length > 0;
     
-    if (parsed.importo === null || typeof parsed.importo !== "number" || parsed.importo <= 0) {
+    if (!hasMaterialRows && (parsed.importo === null || typeof parsed.importo !== "number" || parsed.importo <= 0)) {
       throw new Error("L'immagine non sembra contenere un importo valido o chiaro.");
     }
     

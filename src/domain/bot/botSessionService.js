@@ -29,6 +29,20 @@ export async function createPendingExpense(employeeId, payload) {
     return session.id;
 }
 
+export async function createPendingWarehouseLoad(employeeId, payload) {
+    const prisma = getDb();
+    const expires_at = new Date(Date.now() + SESSION_TTL_MS);
+    const session = await prisma.botSession.create({
+        data: {
+            employee_id: employeeId,
+            type: 'pending_warehouse_load',
+            payload_json: JSON.stringify(payload),
+            expires_at,
+        },
+    });
+    return session.id;
+}
+
 /**
  * Recupera una sessione pending_expense dal DB.
  * Restituisce null se non trovata o scaduta.
@@ -41,10 +55,22 @@ export async function getPendingExpense(sessionId) {
     return { sessionId: session.id, employeeId: session.employee_id, ...JSON.parse(session.payload_json) };
 }
 
+export async function getPendingWarehouseLoad(sessionId) {
+    const prisma = getDb();
+    const session = await prisma.botSession.findUnique({ where: { id: sessionId } });
+    if (!session || session.type !== 'pending_warehouse_load' || session.expires_at < new Date()) return null;
+    return { sessionId: session.id, employeeId: session.employee_id, ...JSON.parse(session.payload_json) };
+}
+
 /**
  * Elimina una sessione dopo la conferma (o timeout esplicito).
  */
 export async function deletePendingExpense(sessionId) {
+    const prisma = getDb();
+    await prisma.botSession.delete({ where: { id: sessionId } }).catch(() => {});
+}
+
+export async function deletePendingWarehouseLoad(sessionId) {
     const prisma = getDb();
     await prisma.botSession.delete({ where: { id: sessionId } }).catch(() => {});
 }

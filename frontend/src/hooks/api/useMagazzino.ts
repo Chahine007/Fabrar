@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../lib/api';
+import { api, getApiErrorMessage } from '../../lib/api';
 import { magazzinoKeys, cantierKeys, taskKeys } from './queryKeys';
 import type {
   WarehouseArticle,
+  WarehouseArticleCreatePayload,
   WarehouseLocation,
   WarehouseMovementCreatePayload,
   WarehouseMovementRow,
@@ -39,6 +40,27 @@ export const useGiacenze = () => {
       return res.json() as Promise<WarehouseStockRow[]>;
     },
     staleTime: 30_000,
+  });
+};
+
+export const useCreateArticolo = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload: WarehouseArticleCreatePayload) => {
+      const res = await api.post('/api/magazzino/articoli', payload);
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(getApiErrorMessage(body, `Errore creazione articolo (${res.status})`));
+      }
+
+      return body as WarehouseArticle;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: magazzinoKeys.articoli() });
+      queryClient.invalidateQueries({ queryKey: magazzinoKeys.giacenze() });
+    },
   });
 };
 

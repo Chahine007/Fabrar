@@ -6,8 +6,79 @@ import { DomainError } from '../shared/DomainError.js';
 import { ValidationStatus } from '../../constants.js';
 import { domainBus, EVENTS } from '../events/domainBus.js';
 
+const DEFAULT_LOCATION_CODES = ["DEFAULT", "PRINCIPALE"];
+
 function emitWarehouseDischarged(eventPayload) {
     domainBus.emit(EVENTS.WAREHOUSE_DISCHARGED, eventPayload);
+}
+
+function normalizeSku(value) {
+    return String(value ?? "").trim().toUpperCase();
+}
+
+function normalizeMaterialText(value) {
+    const text = String(value ?? "").trim();
+    return text || null;
+}
+
+function parsePositiveDecimal(value) {
+    if (value == null || value === "") return null;
+    let normalized = value;
+    if (typeof value === "string") {
+        const cleaned = value.trim().replace(/[^\d,.-]/g, "");
+        const lastComma = cleaned.lastIndexOf(",");
+        const lastDot = cleaned.lastIndexOf(".");
+
+        if (lastComma !== -1 && lastDot !== -1) {
+            const decimalSeparator = lastComma > lastDot ? "," : ".";
+            const thousandSeparator = decimalSeparator === "," ? "." : ",";
+            normalized = cleaned
+                .replace(new RegExp(`\\${thousandSeparator}`, "g"), "")
+                .replace(decimalSeparator, ".");
+        } else if (lastComma !== -1) {
+            normalized = cleaned.replace(",", ".");
+        } else {
+            normalized = cleaned;
+        }
+    }
+    try {
+        const decimal = new Prisma.Decimal(normalized);
+        return decimal.gt(0) ? decimal : null;
+    } catch {
+        return null;
+    }
+}
+
+export function normalizeAutomaticLoadLine(line = {}) {
+    const codiceSku = normalizeSku(line.codice_sku ?? line.sku ?? line.codice_articolo ?? line.cod_articolo);
+    const descrizione = normalizeMaterialText(
+        line.descrizione_articolo ?? line.descrizione_materiale ?? line.descrizione ?? line.articolo ?? line.prodotto ?? line.nome
+    );
+    const quantita = parsePositiveDecimal(line.quantita ?? line.qty ?? line.qta);
+    const importoRiga = parsePositiveDecimal(line.importo_riga ?? line.valore_riga ?? line.importo ?? line.valore_totale ?? line.prezzo_totale);
+    let costoUnitario = parsePositiveDecimal(line.costo_unitario ?? line.prezzo_unitario);
+
+    if (!costoUnitario && importoRiga && quantita) {
+        costoUnitario = importoRiga.div(quantita);
+    }
+
+    return {
+        codice_sku: codiceSku,
+        descrizione: descrizione || codiceSku,
+        unita_misura: normalizeMaterialText(line.unita_misura ?? line.unita ?? line.um) || "pz",
+        quantita,
+        costo_unitario: costoUnitario,
+        raw: line,
+    };
+}
+
+export async function getDefaultWarehouseLocation(tx) {
+    return tx.ubicazione.findFirst({
+        where: {
+            codice: { in: DEFAULT_LOCATION_CODES },
+        },
+        orderBy: { id: "asc" },
+    });
 }
 
 async function validateDischargeTarget(tx, { cantiere_id, wbs_node_id, task_id, documento_id }) {
@@ -211,4 +282,100 @@ export async function processCarico(prisma, payload, userId) {
             },
         });
     });
+}
+
+export async function upsertArticleAndCreateLoadMovement(tx, line, context) {
+    const normalized = normalizeAutomaticLoadLine(line);
+    const ubicazioneId = context.ubicazioneId ?? null;
+    const userId = context.userId ?? null;
+
+    if (!normalized.codice_sku) {
+        return { status: "reconcile", reason: "SKU_MISSING", line: normalized.raw };
+    }
+    if (!normalized.quantita || !normalized.costo_unitario) {
+        return { status: "reconcile", reason: "QTY_OR_COST_MISSING", line: normalized.raw };
+    }
+    if (!ubicazioneId) {
+        return { status: "skipped", reason: "DEFAULT_LOCATION_MISSING", line: normalized.raw };
+    }
+    if (!userId) {
+        return { status: "skipped", reason: "USER_MISSING", line: normalized.raw };
+    }
+
+    const existingArticle = await tx.articolo.findUnique({
+        where: { codice_sku: normalized.codice_sku },
+    });
+
+    const articolo = existingArticle ?? await tx.articolo.create({
+        data: {
+            codice_sku: normalized.codice_sku,
+            descrizione: normalized.descrizione,
+            unita_misura: normalized.unita_misura,
+            costo_medio: normalized.costo_unitario,
+        },
+    });
+
+    const valoreTotale = normalized.costo_unitario.mul(normalized.quantita);
+
+    await tx.giacenza.upsert({
+        where: {
+            articolo_id_ubicazione_id: {
+                articolo_id: articolo.id,
+                ubicazione_id: ubicazioneId,
+            },
+        },
+        update: {
+            quantita_disponibile: { increment: normalized.quantita },
+        },
+        create: {
+            articolo_id: articolo.id,
+            ubicazione_id: ubicazioneId,
+            quantita_disponibile: normalized.quantita,
+            quantita_riservata: 0,
+        },
+    });
+
+    const agg = await tx.giacenza.aggregate({
+        where: { articolo_id: articolo.id },
+        _sum: { quantita_disponibile: true, quantita_riservata: true },
+    });
+    const qTot = (agg._sum.quantita_disponibile ?? new Prisma.Decimal(0))
+        .add(agg._sum.quantita_riservata ?? new Prisma.Decimal(0));
+    const qOld = qTot.minus(normalized.quantita);
+    const cmpOld = articolo.costo_medio;
+    const cmpNew = qTot.greaterThan(0)
+        ? qOld.mul(cmpOld).add(normalized.quantita.mul(normalized.costo_unitario)).div(qTot)
+        : cmpOld;
+
+    await tx.articolo.update({
+        where: { id: articolo.id },
+        data: {
+            costo_medio: cmpNew,
+            ...(existingArticle ? {} : {
+                descrizione: normalized.descrizione,
+                unita_misura: normalized.unita_misura,
+            }),
+        },
+    });
+
+    const movimento = await tx.movimentoMagazzino.create({
+        data: {
+            tipo_movimento: "CARICO",
+            articolo_id: articolo.id,
+            quantita: normalized.quantita,
+            ubicazione_a_id: ubicazioneId,
+            costo_unitario: normalized.costo_unitario,
+            valore_totale: valoreTotale,
+            esecutore_id: userId,
+            documento_id: context.documentoId ?? null,
+            fornitore_id: context.fornitoreId ?? null,
+        },
+    });
+
+    return {
+        status: "loaded",
+        articolo,
+        movimento,
+        articleCreated: !existingArticle,
+    };
 }

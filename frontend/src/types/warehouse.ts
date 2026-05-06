@@ -6,6 +6,13 @@ export interface WarehouseArticle {
   descrizione: string;
   unita_misura: string | null;
   costo_medio?: NumericLike | null;
+  scorta_minima?: NumericLike | null;
+  categoria?: string | null;
+  fornitore_default_id?: number | null;
+  fornitore_default?: {
+    id: number;
+    ragione_sociale: string;
+  } | null;
 }
 
 export interface WarehouseLocation {
@@ -73,6 +80,16 @@ export interface WarehouseMovementCreatePayload {
   costo_acquisto?: number;
   documento_id?: number | null;
   fornitore_id?: number | null;
+}
+
+export interface WarehouseArticleCreatePayload {
+  codice_sku: string;
+  descrizione: string;
+  unita_misura: string;
+  costo_medio?: number | null;
+  scorta_minima?: number | null;
+  categoria?: string | null;
+  fornitore_default_id?: number | null;
 }
 
 export interface AddProjectMaterialPayload {
