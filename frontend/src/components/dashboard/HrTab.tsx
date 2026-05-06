@@ -2,13 +2,13 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { Clock, Euro, Users, Target } from 'lucide-react';
-import { cn } from '../../lib/utils';
 import { useHrKPIs } from '../../hooks/api/useDashboard';
 import Spinner from '../Spinner';
+import { DashboardKpiGrid, type DashboardKpiDefinition, type DashboardKpiSectionProps } from './DashboardKpiGrid';
 
 const fmt = (v: number) => `€${v.toLocaleString('it-IT', { maximumFractionDigits: 0 })}`;
 
-export default function HrTab() {
+export default function HrTab({ kpiControls }: { kpiControls: DashboardKpiSectionProps }) {
   const { data, isLoading, error } = useHrKPIs();
 
   if (isLoading) return <Spinner label="Caricamento KPI HR..." />;
@@ -18,23 +18,16 @@ export default function HrTab() {
     { name: 'Fatturabili (WBS)', value: data.oreConWbs, color: '#6366f1' },
     { name: 'Non Fatturabili',   value: Math.max(0, data.oreTotaliMese - data.oreConWbs), color: '#e2e8f0' },
   ].filter(d => d.value > 0);
+  const kpiDefinitions: DashboardKpiDefinition[] = [
+    { id: 'hr-hourly-cost', label: 'Costo Orario Medio', value: `€${data.costoOrarioMedio.toFixed(2)}/h`, icon: Euro, tone: 'text-accent', bg: 'bg-accent/10' },
+    { id: 'hr-month-hours', label: 'Ore Mese Corrente', value: `${data.oreTotaliMese}h`, icon: Clock, tone: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+    { id: 'hr-month-cost', label: 'Costo HR Mese', value: fmt(data.costoHrMese), icon: Euro, tone: 'text-indigo-500', bg: 'bg-indigo-500/10' },
+    { id: 'hr-rated-employees', label: 'Dipendenti con Tariffa', value: String(data.dipendentiConTariffa), icon: Users, tone: 'text-amber-500', bg: 'bg-amber-500/10' },
+  ];
 
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'Costo Orario Medio',   value: `€${data.costoOrarioMedio.toFixed(2)}/h`, icon: Euro,  color: 'text-accent',      bg: 'bg-accent/10' },
-          { label: 'Ore Mese Corrente',     value: `${data.oreTotaliMese}h`,                icon: Clock, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
-          { label: 'Costo HR Mese',         value: fmt(data.costoHrMese),                   icon: Euro,  color: 'text-indigo-500',  bg: 'bg-indigo-500/10' },
-          { label: 'Dipendenti con Tariffa', value: String(data.dipendentiConTariffa),       icon: Users, color: 'text-amber-500',   bg: 'bg-amber-500/10' },
-        ].map(({ label, value, icon: Icon, color, bg }) => (
-          <motion.div key={label} whileHover={{ y: -2 }} className="bg-card border border-border rounded-2xl p-5 flex items-center gap-4">
-            <div className={cn('p-2.5 rounded-xl', bg, color)}><Icon size={20} /></div>
-            <div><p className="text-xl font-bold text-text-primary">{value}</p><p className="text-xs text-text-secondary font-medium mt-0.5">{label}</p></div>
-          </motion.div>
-        ))}
-      </div>
+      <DashboardKpiGrid definitions={[...kpiDefinitions, ...kpiControls.customKpis]} controls={kpiControls} />
 
       {/* Ore Fatturabili */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

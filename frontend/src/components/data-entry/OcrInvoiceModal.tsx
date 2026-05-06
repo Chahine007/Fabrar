@@ -119,6 +119,7 @@ export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry;
   const fornitore = payload?.fornitore ?? null;
   const cliente = payload?.cliente ?? null;
   const pagamento = payload?.pagamento ?? null;
+  const purchaseInvoice = confirmation?.fatturaAcquisto ?? analysis?.fattura_acquisto_draft ?? null;
 
   const handleAnalyze = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -221,6 +222,11 @@ export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry;
                 <span>{confirmation.movimentiCaricoCreati ?? 0} movimenti di carico</span>
                 <span>{confirmation.righeDaRiconciliare ?? 0} righe da riconciliare</span>
               </div>
+              {confirmation.fatturaAcquisto?.id && (
+                <p className="mt-2 text-xs font-semibold">
+                  Fattura acquisto #{confirmation.fatturaAcquisto.id} salvata con dati IVA, pagamento e righe OCR.
+                </p>
+              )}
             </div>
           )}
 
@@ -278,6 +284,16 @@ export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry;
               <p className="mt-1 text-xs text-text-secondary">{formatOptionalMoney(pagamento?.importo_scadenza)}</p>
             </div>
           </div>
+
+          {purchaseInvoice && (
+            <div className="mt-4 rounded-2xl border border-info-border bg-info-bg p-4 text-sm text-info-text">
+              <p className="font-bold">Fattura acquisto strutturata</p>
+              <p className="mt-1 text-xs">
+                {purchaseInvoice.numero_documento || payload?.numero_documento || 'Documento senza numero'} ·{' '}
+                {purchaseInvoice.righe?.length ?? 0} righe salvabili · dati fornitore, IVA e pagamento disponibili.
+              </p>
+            </div>
+          )}
 
           <div className="mt-5 rounded-2xl border border-border">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -378,6 +394,7 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
   const candidates = analysis?.candidates ?? [];
   const fornitore = payload?.fornitore ?? null;
   const pagamento = payload?.pagamento ?? null;
+  const purchaseInvoice = confirmation?.fatturaAcquisto ?? analysis?.fattura_acquisto_draft ?? null;
   const requiresWarehouse = costCategory === 'INVENTORY_MATERIAL' && loadableLines.length > 0;
   const reviewRequired = costCategory === 'INVENTORY_MATERIAL' && loadableLines.length === 0;
   const nonLogistic = allocationScope === 'OVERHEAD' || (!requiresWarehouse && !reviewRequired);
@@ -511,6 +528,11 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
                 <span>{confirmation.movimentiCaricoCreati ?? 0} movimenti di carico</span>
                 <span>{confirmation.righeDaRiconciliare ?? 0} righe da riconciliare</span>
               </div>
+              {confirmation.fatturaAcquisto?.id && (
+                <p className="mt-2 text-xs font-semibold">
+                  Fattura acquisto #{confirmation.fatturaAcquisto.id} salvata con dati IVA, pagamento e righe OCR.
+                </p>
+              )}
             </div>
           )}
 
@@ -535,6 +557,16 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
                     <p className="mt-1 text-xs text-text-secondary">{pagamento?.modalita_pagamento || 'Pagamento non letto'}</p>
                   </div>
                 </div>
+
+                {purchaseInvoice && (
+                  <div className="rounded-2xl border border-info-border bg-info-bg p-4 text-sm text-info-text">
+                    <p className="font-bold">Fattura acquisto strutturata</p>
+                    <p className="mt-1 text-xs">
+                      {purchaseInvoice.numero_documento || payload?.numero_documento || 'Documento senza numero'} ·{' '}
+                      {purchaseInvoice.righe?.length ?? 0} righe · fornitore, IVA, pagamento e snapshot cliente saranno salvati.
+                    </p>
+                  </div>
+                )}
 
                 <div className="rounded-2xl border border-border bg-background p-4">
                   <p className="text-sm font-bold text-text-primary">Classificazione contabile</p>

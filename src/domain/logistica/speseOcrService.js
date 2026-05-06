@@ -225,6 +225,47 @@ function formatSupplierAddress(fornitore = {}) {
   return [indirizzo, [locality, province].filter(Boolean).join(" ")].filter(Boolean).join(", ") || null;
 }
 
+function normalizeIban(value) {
+  const text = normalizeOptionalText(value);
+  return text ? text.replace(/\s+/g, "").toUpperCase() : null;
+}
+
+function supplierDataFromOcrPayload(ocrPayload = {}) {
+  const fornitore = ocrPayload.fornitore ?? {};
+  const partitaIva = supplierVatFromPayload(ocrPayload);
+  return {
+    ragione_sociale: supplierNameFromPayload(ocrPayload),
+    partita_iva: partitaIva,
+    partita_iva_normalizzata: partitaIva ? normalizeVat(partitaIva) : null,
+    codice_fiscale: normalizeOptionalText(fornitore.codice_fiscale),
+    indirizzo: formatSupplierAddress(fornitore),
+    comune: normalizeOptionalText(fornitore.comune),
+    provincia: normalizeOptionalText(fornitore.provincia),
+    cap: normalizeOptionalText(fornitore.cap),
+    paese: normalizeOptionalText(fornitore.paese) ?? "IT",
+    iban_default: normalizeIban(ocrPayload.pagamento?.iban),
+  };
+}
+
+function applyMissingSupplierFields(existing, incoming) {
+  const data = {};
+  for (const key of [
+    "ragione_sociale",
+    "partita_iva",
+    "partita_iva_normalizzata",
+    "codice_fiscale",
+    "indirizzo",
+    "comune",
+    "provincia",
+    "cap",
+    "paese",
+    "iban_default",
+  ]) {
+    if (!existing?.[key] && incoming?.[key]) data[key] = incoming[key];
+  }
+  return data;
+}
+
 function normalizeLine(line = {}) {
   const quantita = parsePositiveNumber(line.quantita ?? line.qta ?? line.qty);
   const prezzoUnitario = parsePositiveNumber(line.prezzo_unitario ?? line.costo_unitario);
@@ -356,6 +397,273 @@ export function normalizeInvoiceOcrPayload(payload = {}) {
     righe_materiali: normalizedMaterialLines,
     righe_costo: normalizedCostLines,
   };
+}
+
+function buildPurchaseInvoiceDraft(ocrPayload = {}, lines = null) {
+  const payload = normalizeInvoiceOcrPayload(ocrPayload);
+  const materialLines = Array.isArray(lines) ? lines : payload.righe_materiali;
+  const righe = [
+    ...materialLines.map((line) => ({
+      codice_articolo_originale: line.codice_articolo ?? line.codice_articolo_raw ?? null,
+      codice_sku_normalizzato: line.codice_sku ?? normalizeOcrSku(line.codice_articolo),
+      descrizione: line.descrizione ?? null,
+      quantita: line.quantita ?? null,
+      unita_misura: line.unita_misura ?? null,
+      prezzo_unitario: line.prezzo_unitario ?? line.costo_unitario ?? null,
+      iva_percentuale: line.iva_percentuale ?? null,
+      prezzo_totale: line.prezzo_totale ?? line.importo_riga ?? null,
+      cost_category: normalizeCostCategory(line.cost_category, CostCategory.INVENTORY_MATERIAL),
+      allocation_scope: normalizeAllocationScope(line.allocation_scope, line.cost_category),
+      is_stockable: isWarehouseLoadableLine(line),
+      reconciliation_status: isWarehouseLoadableLine(line)
+        ? "READY"
+        : (line.codice_sku ? "NOT_STOCKABLE" : "RECONCILIATION_REQUIRED"),
+      articolo_id: line.articolo_id ?? null,
+      magazzino_status: line.magazzino_status ?? null,
+    })),
+    ...payload.righe_costo.map((line) => {
+      const category = normalizeCostCategory(line.cost_category, CostCategory.OTHER);
+      return {
+        codice_articolo_originale: null,
+        codice_sku_normalizzato: null,
+        descrizione: line.descrizione ?? null,
+        quantita: line.quantita ?? null,
+        unita_misura: line.unita_misura ?? null,
+        prezzo_unitario: line.prezzo_unitario ?? null,
+        iva_percentuale: line.iva_percentuale ?? null,
+        prezzo_totale: line.importo ?? null,
+        cost_category: category,
+        allocation_scope: normalizeAllocationScope(line.allocation_scope, category),
+        is_stockable: false,
+        reconciliation_status: "NOT_STOCKABLE",
+      };
+    }),
+  ];
+
+  return {
+    document_type: payload.document_type,
+    tipo_documento: payload.tipo_documento,
+    numero_documento: payload.numero_documento,
+    data_documento: payload.data_documento,
+    codice_destinatario: payload.codice_destinatario,
+    fornitore: payload.fornitore,
+    cliente: payload.cliente,
+    totali: payload.totali,
+    pagamento: payload.pagamento,
+    cost_category: payload.cost_category,
+    allocation_scope: payload.allocation_scope,
+    logistica_required: payload.logistica_required,
+    righe,
+  };
+}
+
+function purchaseInvoiceInclude() {
+  return {
+    fornitore: {
+      select: {
+        id: true,
+        ragione_sociale: true,
+        partita_iva: true,
+        partita_iva_normalizzata: true,
+        codice_fiscale: true,
+        indirizzo: true,
+        comune: true,
+        provincia: true,
+        cap: true,
+        paese: true,
+        iban_default: true,
+      },
+    },
+    documento: { select: { id: true, name: true, file_path: true, tag: true } },
+    spesa: { select: { id: true, importo: true, fonte: true, input_method: true } },
+    cantiere: { select: { id: true, nome: true } },
+    righe: {
+      orderBy: { id: "asc" },
+      include: {
+        articolo: { select: { id: true, codice_sku: true, descrizione: true } },
+        movimento: { select: { id: true, tipo_movimento: true, quantita: true, valore_totale: true } },
+      },
+    },
+  };
+}
+
+function buildPurchaseInvoiceData({ documentId, spesaId, fornitoreId, cantiereId, ocrPayload }) {
+  const payload = normalizeInvoiceOcrPayload(ocrPayload);
+  return {
+    document_id: documentId ? Number(documentId) : null,
+    spesa_id: spesaId ? Number(spesaId) : null,
+    fornitore_id: fornitoreId ? Number(fornitoreId) : null,
+    cantiere_id: cantiereId ? Number(cantiereId) : null,
+    document_type: payload.document_type ?? null,
+    tipo_documento: payload.tipo_documento ?? null,
+    numero_documento: payload.numero_documento ?? null,
+    data_documento: parseDateOnly(payload.data_documento),
+    codice_destinatario: payload.codice_destinatario ?? null,
+    cliente_partita_iva: payload.cliente?.partita_iva ?? null,
+    cliente_ragione_sociale: payload.cliente?.ragione_sociale ?? null,
+    cliente_codice_fiscale: payload.cliente?.codice_fiscale ?? null,
+    cliente_indirizzo: payload.cliente?.indirizzo ?? null,
+    cliente_comune: payload.cliente?.comune ?? null,
+    cliente_provincia: payload.cliente?.provincia ?? null,
+    cliente_cap: payload.cliente?.cap ?? null,
+    totale_imponibile: decimalOrNull(payload.totale_imponibile),
+    totale_imposta: decimalOrNull(payload.totale_imposta),
+    totale_documento: decimalOrNull(payload.totale_documento),
+    pagamento_modalita: payload.pagamento?.modalita_pagamento ?? null,
+    pagamento_iban: normalizeIban(payload.pagamento?.iban),
+    pagamento_scadenza: parseDateOnly(payload.pagamento?.scadenza),
+    pagamento_importo: decimalOrNull(payload.pagamento?.importo_scadenza),
+    cost_category: payload.cost_category,
+    allocation_scope: payload.allocation_scope,
+    logistica_required: Boolean(payload.logistica_required),
+    ocr_payload: payload,
+  };
+}
+
+function findMovementResultForLine(line, movementResults, usedResultIndexes) {
+  const sku = line.codice_sku ?? normalizeOcrSku(line.codice_articolo);
+  for (let index = 0; index < movementResults.length; index += 1) {
+    if (usedResultIndexes.has(index)) continue;
+    const result = movementResults[index];
+    const resultSku = result?.line?.codice_sku ?? result?.articolo?.codice_sku ?? null;
+    if (sku && resultSku && sku === resultSku) {
+      usedResultIndexes.add(index);
+      return result;
+    }
+  }
+  return null;
+}
+
+function buildPurchaseInvoiceLinesData({ fatturaAcquistoId, ocrPayload, lines, movementResults = [] }) {
+  const payload = normalizeInvoiceOcrPayload(ocrPayload);
+  const sourceLines = normalizeConfirmLines(lines, payload);
+  const usedResultIndexes = new Set();
+  const materialRows = sourceLines.map((line) => {
+    const category = normalizeCostCategory(line.cost_category, CostCategory.INVENTORY_MATERIAL);
+    const movementResult = findMovementResultForLine(line, movementResults, usedResultIndexes);
+    const loaded = movementResult?.status === "loaded";
+    return {
+      fattura_acquisto_id: fatturaAcquistoId,
+      articolo_id: movementResult?.articolo?.id ?? line.articolo_id ?? null,
+      movimento_id: movementResult?.movimento?.id ?? null,
+      codice_articolo_originale: line.codice_articolo_raw ?? line.codice_articolo ?? null,
+      codice_sku_normalizzato: line.codice_sku ?? normalizeOcrSku(line.codice_articolo),
+      descrizione: line.descrizione ?? null,
+      quantita: decimalOrNull(line.quantita),
+      unita_misura: line.unita_misura ?? null,
+      prezzo_unitario: decimalOrNull(line.prezzo_unitario ?? line.costo_unitario),
+      iva_percentuale: decimalOrNull(line.iva_percentuale),
+      prezzo_totale: decimalOrNull(line.prezzo_totale ?? line.importo_riga),
+      cost_category: category,
+      allocation_scope: normalizeAllocationScope(line.allocation_scope, category),
+      is_stockable: isWarehouseLoadableLine(line),
+      reconciliation_status: loaded
+        ? "LOADED"
+        : (isWarehouseLoadableLine(line) ? "READY" : "RECONCILIATION_REQUIRED"),
+      raw_payload: line.raw ?? line,
+    };
+  });
+
+  const costRows = payload.righe_costo.map((line) => {
+    const category = normalizeCostCategory(line.cost_category, CostCategory.OTHER);
+    return {
+      fattura_acquisto_id: fatturaAcquistoId,
+      articolo_id: null,
+      movimento_id: null,
+      codice_articolo_originale: null,
+      codice_sku_normalizzato: null,
+      descrizione: line.descrizione ?? null,
+      quantita: decimalOrNull(line.quantita),
+      unita_misura: line.unita_misura ?? null,
+      prezzo_unitario: decimalOrNull(line.prezzo_unitario),
+      iva_percentuale: decimalOrNull(line.iva_percentuale),
+      prezzo_totale: decimalOrNull(line.importo),
+      cost_category: category,
+      allocation_scope: normalizeAllocationScope(line.allocation_scope, category),
+      is_stockable: false,
+      reconciliation_status: "NOT_STOCKABLE",
+      raw_payload: line.raw ?? line,
+    };
+  });
+
+  return [...materialRows, ...costRows];
+}
+
+async function upsertPurchaseInvoiceFromOcr(tx, {
+  spesaId = null,
+  documentId = null,
+  fornitoreId = null,
+  cantiereId = null,
+  ocrPayload,
+  lines = [],
+  movementResults = [],
+}) {
+  const payload = normalizeInvoiceOcrPayload(ocrPayload);
+  const data = buildPurchaseInvoiceData({
+    documentId,
+    spesaId,
+    fornitoreId,
+    cantiereId,
+    ocrPayload: payload,
+  });
+
+  let existing = null;
+  if (documentId) {
+    existing = await tx.fatturaAcquisto.findUnique({ where: { document_id: Number(documentId) } });
+  }
+  if (!existing && spesaId) {
+    existing = await tx.fatturaAcquisto.findUnique({ where: { spesa_id: Number(spesaId) } });
+  }
+  if (!existing && fornitoreId && payload.numero_documento) {
+    existing = await tx.fatturaAcquisto.findFirst({
+      where: {
+        fornitore_id: Number(fornitoreId),
+        numero_documento: payload.numero_documento,
+        ...(data.data_documento ? { data_documento: data.data_documento } : {}),
+      },
+    });
+  }
+
+  if (existing?.spesa_id && spesaId && Number(existing.spesa_id) !== Number(spesaId)) {
+    throw httpError("Questa fattura acquisto risulta già collegata a un'altra spesa.", 409);
+  }
+  if (existing?.document_id && documentId && Number(existing.document_id) !== Number(documentId)) {
+    throw httpError("Questa fattura acquisto risulta già collegata a un altro documento.", 409);
+  }
+
+  const fatturaAcquisto = existing
+    ? await tx.fatturaAcquisto.update({ where: { id: existing.id }, data })
+    : await tx.fatturaAcquisto.create({ data });
+
+  const existingLoadedLines = await tx.rigaFatturaAcquisto.count({
+    where: {
+      fattura_acquisto_id: fatturaAcquisto.id,
+      movimento_id: { not: null },
+    },
+  });
+  if (existingLoadedLines > 0 && movementResults.some((result) => result?.movimento?.id)) {
+    throw httpError("Questa fattura ha già righe di magazzino collegate.", 409);
+  }
+
+  if (existingLoadedLines === 0) {
+    await tx.rigaFatturaAcquisto.deleteMany({
+      where: { fattura_acquisto_id: fatturaAcquisto.id },
+    });
+    const rows = buildPurchaseInvoiceLinesData({
+      fatturaAcquistoId: fatturaAcquisto.id,
+      ocrPayload: payload,
+      lines,
+      movementResults,
+    });
+    if (rows.length > 0) {
+      await tx.rigaFatturaAcquisto.createMany({ data: rows });
+    }
+  }
+
+  return tx.fatturaAcquisto.findUnique({
+    where: { id: fatturaAcquisto.id },
+    include: purchaseInvoiceInclude(),
+  });
 }
 
 export async function extractInvoiceFromUploadedFile(file) {
@@ -608,6 +916,7 @@ export async function analyzeSpesaOcr(prisma, { spesaId, file, user }) {
     spesa: updatedSpesa,
     document,
     ocrPayload,
+    fattura_acquisto_draft: buildPurchaseInvoiceDraft(ocrPayload, suggestedLines),
     suggestedLines,
     matchStatus: {
       ...match,
@@ -642,6 +951,7 @@ export async function analyzeGenericInvoiceOcr(prisma, { file, user, cantiereId 
       size: file.size ?? null,
     },
     ocrPayload,
+    fattura_acquisto_draft: buildPurchaseInvoiceDraft(ocrPayload, suggestedLines),
     suggestedLines,
     candidates: visibleMatches,
     matchStatus: {
@@ -653,25 +963,25 @@ export async function analyzeGenericInvoiceOcr(prisma, { file, user, cantiereId 
 }
 
 async function upsertSupplierFromOcr(tx, ocrPayload) {
-  const ragioneSociale = supplierNameFromPayload(ocrPayload);
-  if (!ragioneSociale) return null;
+  const incoming = supplierDataFromOcrPayload(ocrPayload);
+  if (!incoming.ragione_sociale) return null;
 
-  const partitaIva = supplierVatFromPayload(ocrPayload);
-  const indirizzo = formatSupplierAddress(ocrPayload.fornitore);
-  if (partitaIva) {
-    const vatCandidates = normalizeVatCandidates(partitaIva);
+  if (incoming.partita_iva) {
+    const vatCandidates = normalizeVatCandidates(incoming.partita_iva);
     const byVat = await tx.fornitore.findFirst({
       where: {
-        OR: vatCandidates.map((candidate) => ({
-          partita_iva: { equals: candidate, mode: "insensitive" },
-        })),
+        OR: [
+          ...vatCandidates.map((candidate) => ({
+            partita_iva: { equals: candidate, mode: "insensitive" },
+          })),
+          ...(incoming.partita_iva_normalizzata
+            ? [{ partita_iva_normalizzata: incoming.partita_iva_normalizzata }]
+            : []),
+        ],
       },
     });
     if (byVat) {
-      const data = {};
-      if (!byVat.ragione_sociale && ragioneSociale) data.ragione_sociale = ragioneSociale;
-      if (!byVat.partita_iva && partitaIva) data.partita_iva = partitaIva;
-      if (!byVat.indirizzo && indirizzo) data.indirizzo = indirizzo;
+      const data = applyMissingSupplierFields(byVat, incoming);
       const fornitore = Object.keys(data).length
         ? await tx.fornitore.update({ where: { id: byVat.id }, data })
         : byVat;
@@ -680,12 +990,10 @@ async function upsertSupplierFromOcr(tx, ocrPayload) {
   }
 
   const byName = await tx.fornitore.findFirst({
-    where: { ragione_sociale: { equals: ragioneSociale, mode: "insensitive" } },
+    where: { ragione_sociale: { equals: incoming.ragione_sociale, mode: "insensitive" } },
   });
   if (byName) {
-    const data = {};
-    if (!byName.partita_iva && partitaIva) data.partita_iva = partitaIva;
-    if (!byName.indirizzo && indirizzo) data.indirizzo = indirizzo;
+    const data = applyMissingSupplierFields(byName, incoming);
     const fornitore = Object.keys(data).length
       ? await tx.fornitore.update({ where: { id: byName.id }, data })
       : byName;
@@ -694,9 +1002,7 @@ async function upsertSupplierFromOcr(tx, ocrPayload) {
 
   const fornitore = await tx.fornitore.create({
     data: {
-      ragione_sociale: ragioneSociale,
-      partita_iva: partitaIva,
-      indirizzo,
+      ...incoming,
       note: "Creato automaticamente da OCR fattura/DDT.",
     },
   });
@@ -758,8 +1064,8 @@ export async function confirmSpesaOcr(prisma, {
     });
     const confirmedLines = normalizeConfirmLines(lines, fallbackPayload);
     const warehouseLines = confirmedLines.filter(isWarehouseLoadableLine);
-    const costCategory = normalizeCostCategory(fallbackPayload.cost_category, CostCategory.UNKNOWN);
-    const allocationScope = normalizeAllocationScope(fallbackPayload.allocation_scope, costCategory);
+    const normalizedCostCategory = normalizeCostCategory(fallbackPayload.cost_category, CostCategory.UNKNOWN);
+    const normalizedAllocationScope = normalizeAllocationScope(fallbackPayload.allocation_scope, normalizedCostCategory);
     const warehouseRequired = shouldRequireWarehouse(fallbackPayload, confirmedLines);
 
     let targetLocation = null;
@@ -787,7 +1093,7 @@ export async function confirmSpesaOcr(prisma, {
         documentId: targetDocumentId ?? null,
         fornitoreId: supplier?.id ?? null,
       });
-      results.push(result);
+      results.push({ ...result, line });
     }
 
     const loaded = results.filter((result) => result.status === "loaded");
@@ -802,8 +1108,8 @@ export async function confirmSpesaOcr(prisma, {
         })),
     ];
     const nextStatus = resolveLogisticaStatus({
-      allocationScope,
-      costCategory,
+      allocationScope: normalizedAllocationScope,
+      costCategory: normalizedCostCategory,
       warehouseRequired,
       loadedCount: loaded.length,
       reconcileCount: reconcile.length,
@@ -814,8 +1120,8 @@ export async function confirmSpesaOcr(prisma, {
       data: {
         documento_id: targetDocumentId ?? spesa.documento_id,
         fornitore_id: supplier?.id ?? spesa.fornitore_id ?? null,
-        cost_category: costCategory,
-        allocation_scope: allocationScope,
+        cost_category: normalizedCostCategory,
+        allocation_scope: normalizedAllocationScope,
         ocr_payload: {
           ...ocrPayload,
           confirmation: {
@@ -837,9 +1143,21 @@ export async function confirmSpesaOcr(prisma, {
       },
     });
 
+    const fatturaAcquisto = await upsertPurchaseInvoiceFromOcr(tx, {
+      spesaId: spesa.id,
+      documentId: targetDocumentId ?? spesa.documento_id ?? null,
+      fornitoreId: supplier?.id ?? spesa.fornitore_id ?? null,
+      cantiereId: spesa.cantiere_id ?? null,
+      ocrPayload,
+      lines: confirmedLines,
+      movementResults: results,
+    });
+
     return {
       spesa: updatedSpesa,
       document_id: targetDocumentId ?? null,
+      fatturaAcquisto,
+      fattura_acquisto_draft: buildPurchaseInvoiceDraft(ocrPayload, confirmedLines),
       ubicazione: targetLocation,
       fornitore: supplier,
       fornitoreAction: supplierResult?.action ?? null,
@@ -889,7 +1207,7 @@ export async function confirmGenericInvoiceOcr(prisma, {
     if (existingSpesa.logistica_status === LogisticaStatus.LOADED_TO_WAREHOUSE) {
       throw httpError("Questa spesa è già stata caricata a magazzino.", 409);
     }
-    const { document, updatedSpesa, supplierResult } = await prisma.$transaction(async (tx) => {
+    const { document, updatedSpesa, supplierResult, fatturaAcquisto } = await prisma.$transaction(async (tx) => {
       const document = await createOcrDocumentFromStoredUpload(tx, {
         cantiereId: existingSpesa.cantiere_id,
         upload,
@@ -920,7 +1238,16 @@ export async function confirmGenericInvoiceOcr(prisma, {
         },
       });
 
-      return { document, updatedSpesa, supplierResult };
+      const fatturaAcquisto = await upsertPurchaseInvoiceFromOcr(tx, {
+        spesaId: existingSpesa.id,
+        documentId: document.id,
+        fornitoreId: supplierResult?.fornitore?.id ?? existingSpesa.fornitore_id ?? null,
+        cantiereId: existingSpesa.cantiere_id ?? null,
+        ocrPayload: payloadForSave,
+        lines: confirmedLines,
+      });
+
+      return { document, updatedSpesa, supplierResult, fatturaAcquisto };
     });
 
     if (!warehouseRequired || warehouseLines.length === 0) {
@@ -928,6 +1255,8 @@ export async function confirmGenericInvoiceOcr(prisma, {
         spesa: updatedSpesa,
         document,
         ocrPayload: payloadForSave,
+        fatturaAcquisto,
+        fattura_acquisto_draft: buildPurchaseInvoiceDraft(payloadForSave, confirmedLines),
         suggestedLines: confirmedLines,
         fornitore: supplierResult?.fornitore ?? null,
         fornitoreAction: supplierResult?.action ?? null,
@@ -978,7 +1307,7 @@ export async function confirmGenericInvoiceOcr(prisma, {
     throw httpError("Totale documento mancante: impossibile creare una nuova spesa OCR.", 400);
   }
 
-  const { spesa, document, supplierResult } = await prisma.$transaction(async (tx) => {
+  const { spesa, document, supplierResult, fatturaAcquisto } = await prisma.$transaction(async (tx) => {
     const rootWbs = hasProjectCantiere
       ? await tx.wbsNode.findFirst({
           where: { cantiere_id: parsedCantiereId, parent_id: null },
@@ -1026,7 +1355,16 @@ export async function confirmGenericInvoiceOcr(prisma, {
       },
     });
 
-    return { spesa, document, supplierResult };
+    const fatturaAcquisto = await upsertPurchaseInvoiceFromOcr(tx, {
+      spesaId: spesa.id,
+      documentId: document.id,
+      fornitoreId: supplierResult?.fornitore?.id ?? null,
+      cantiereId: hasProjectCantiere ? parsedCantiereId : null,
+      ocrPayload: payloadForSave,
+      lines: confirmedLines,
+    });
+
+    return { spesa, document, supplierResult, fatturaAcquisto };
   });
 
   if (!warehouseRequired || warehouseLines.length === 0) {
@@ -1034,6 +1372,8 @@ export async function confirmGenericInvoiceOcr(prisma, {
       spesa,
       document,
       ocrPayload: payloadForSave,
+      fatturaAcquisto,
+      fattura_acquisto_draft: buildPurchaseInvoiceDraft(payloadForSave, confirmedLines),
       suggestedLines: confirmedLines,
       fornitore: supplierResult?.fornitore ?? null,
       fornitoreAction: supplierResult?.action ?? null,

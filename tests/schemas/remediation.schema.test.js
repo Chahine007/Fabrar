@@ -8,6 +8,7 @@ import {
 import { createSupplierSchema, updateSupplierSchema } from '../../src/schemas/suppliers.schema.js';
 import { changePasswordSchema, updateUserSettingsSchema } from '../../src/schemas/user.schema.js';
 import { updateGpsSchema } from '../../src/schemas/cantiere.schema.js';
+import { createMessageSchema } from '../../src/schemas/conversations.schema.js';
 import {
   parseCantiereIdFromReferer,
   parseExpenseRowsFromCsv,
@@ -91,6 +92,20 @@ describe('remediation HTTP schemas', () => {
       params: { id: 1 },
       query: {},
       body: { lat: 95, lng: 9 },
+    }).success).toBe(false);
+  });
+
+  it('accetta solo messaggi conversazione testuali', () => {
+    expect(createMessageSchema.parse({
+      params: { id: '11111111-1111-4111-8111-111111111111' },
+      query: {},
+      body: { content: 'ciao' },
+    }).body.type).toBe('text');
+
+    expect(createMessageSchema.safeParse({
+      params: { id: '11111111-1111-4111-8111-111111111111' },
+      query: {},
+      body: { content: 'kpi', type: 'shared_item' },
     }).success).toBe(false);
   });
 

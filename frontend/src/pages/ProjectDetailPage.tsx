@@ -13,7 +13,6 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import CantiereSettingsTab from '../components/CantiereSettingsTab';
-import ShareModal from '../components/ShareModal';
 import Spinner from '../components/Spinner';
 import OverviewTab from '../components/projects/detail/OverviewTab';
 import DocumentsTab from '../components/projects/detail/DocumentsTab';
@@ -21,7 +20,7 @@ import ProjectOperationsTab from '../components/projects/detail/ProjectOperation
 import ProjectResourcesTab from '../components/projects/detail/ProjectResourcesTab';
 import ProjectFinanceTab from '../components/projects/detail/ProjectFinanceTab';
 import { useCantieri, useCantiereDetail } from '../hooks/api/useCantieri';
-import type { ProjectDetailTabId, ProjectShareItem, ProjectTabDefinition } from '../types/project-detail';
+import type { ProjectDetailTabId, ProjectTabDefinition } from '../types/project-detail';
 
 const TABS: ProjectTabDefinition[] = [
   { id: 'overview', label: 'Panoramica' },
@@ -43,19 +42,12 @@ export default function ProjectDetailPage() {
 
   const [activeTab, setActiveTab] = useState<ProjectDetailTabId>('overview');
   const [projectActionsOpen, setProjectActionsOpen] = useState(false);
-  const [shareModalOpen, setShareModalOpen] = useState(false);
-  const [itemToShare, setItemToShare] = useState<ProjectShareItem | null>(null);
 
   const cantiere = cantieri?.find((item) => item.id === cantiereId) ?? null;
   const headerContractValue = projectDetail?.cantiere?.valore_contratto ?? cantiere?.valore_contratto ?? cantiere?.budget ?? 0;
   const headerRealCost = projectDetail?.kpi?.costoTotale ?? cantiere?.costo_reale ?? 0;
   const headerInvoiced = projectDetail?.kpi?.totaleFatturato ?? 0;
   const headerCollected = projectDetail?.kpi?.totaleIncassato ?? 0;
-
-  const handleShare = (item: ProjectShareItem) => {
-    setItemToShare(item);
-    setShareModalOpen(true);
-  };
 
   if (loadingList && !cantiere) {
     return <Spinner fullScreen label="Caricamento progetto..." />;
@@ -83,7 +75,6 @@ export default function ProjectDetailPage() {
           <ProjectOperationsTab
             cantiereId={cantiereId}
             cantiereName={cantiere?.nome ?? ''}
-            onShare={handleShare}
             initialTab={
               activeTab === 'wbs'
                 ? 'wbs'
@@ -254,14 +245,6 @@ export default function ProjectDetailPage() {
         </div>
       </main>
 
-      {shareModalOpen && (
-        <ShareModal
-          isOpen={shareModalOpen}
-          onClose={() => setShareModalOpen(false)}
-          itemToShare={itemToShare}
-          onShare={() => setShareModalOpen(false)}
-        />
-      )}
     </div>
   );
 }

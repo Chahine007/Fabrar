@@ -1,20 +1,35 @@
-import React, { useState, useMemo } from 'react';
-import { motion, Reorder } from 'motion/react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
   BarChart, Bar, XAxis, YAxis
 } from 'recharts';
 import {
-  ChevronRight, Settings2, GripVertical, X, Briefcase, CheckCircle2,
+  ChevronRight, Settings2, X, Briefcase, CheckCircle2,
   Clock, AlertCircle, Euro, Package, Users, Activity,
+  Plus,
 } from 'lucide-react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import SmartActionMenu from '../components/SmartActionMenu';
-import ShareModal from '../components/ShareModal';
 import { useDashboardRadar } from '../hooks/api/useDashboard';
 import { useCantieri } from '../hooks/api/useCantieri';
 import { useAudit } from '../hooks/api/useHr';
+import { Button, IconButton } from '../components/ui';
+import {
+  DASHBOARD_KPI_CATALOG,
+  DASHBOARD_KPI_PREFS_KEY,
+  DASHBOARD_TAB_LABELS,
+  DashboardKpiAddDialog,
+  DashboardKpiGrid,
+  createDefaultKpiPrefs,
+  customKpiToDefinition,
+  normalizeDashboardKpiPrefs,
+  type CustomDashboardKpi,
+  type DashboardKpiDefinition,
+  type DashboardKpiSectionProps,
+  type DashboardKpiPrefs,
+  type DashboardTabId,
+  type DashboardTabKpiPrefs,
+} from '../components/dashboard/DashboardKpiGrid';
 
 // BI Tab Components
 import FinanceTab from '../components/dashboard/FinanceTab';
@@ -24,18 +39,7 @@ import OperationsTab from '../components/dashboard/OperationsTab';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-const WIDGET_IDS = ['operai', 'cantieri', 'ore', 'pending'] as const;
-type WidgetId = typeof WIDGET_IDS[number];
-
-const WIDGET_CATALOG: Record<WidgetId, { title: string }> = {
-  operai:   { title: 'Operai Attivi' },
-  cantieri: { title: 'Cantieri Totali' },
-  ore:      { title: 'Ore Questa Settimana' },
-  pending:  { title: 'In Attesa Approv.' },
-};
-
-type DashboardTab = 'panoramica' | 'finanza' | 'magazzino' | 'hr' | 'operazioni';
-const TABS: { id: DashboardTab; label: string; icon: typeof Euro }[] = [
+const TABS: { id: DashboardTabId; label: string; icon: typeof Euro }[] = [
   { id: 'panoramica', label: 'Panoramica',  icon: Activity },
   { id: 'finanza',    label: 'Finanza',      icon: Euro },
   { id: 'magazzino',  label: 'Magazzino',    icon: Package },
@@ -65,14 +69,33 @@ function budgetStatusColor(status: string): string {
   return 'bg-border';
 }
 
+function loadDashboardKpiPrefs(): DashboardKpiPrefs {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(DASHBOARD_KPI_PREFS_KEY);
+    return raw ? normalizeDashboardKpiPrefs(JSON.parse(raw)) : {};
+  } catch {
+    return {};
+  }
+}
+
+function getTabPrefs(prefs: DashboardKpiPrefs, tabId: DashboardTabId): DashboardTabKpiPrefs {
+  return prefs[tabId] ?? createDefaultKpiPrefs();
+}
+
+function normalizeOrder(ids: string[]) {
+  return Array.from(new Set(ids.filter(Boolean)));
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [isEditMode, setIsEditMode] = useState(false);
-  const [activeWidgets, setActiveWidgets] = useState<WidgetId[]>(['operai', 'cantieri', 'ore', 'pending']);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [kpiPrefs, setKpiPrefs] = useState<DashboardKpiPrefs>(() => loadDashboardKpiPrefs());
   const requestedTab = searchParams.get('tab');
-  const initialTab = TABS.some((tab) => tab.id === requestedTab) ? requestedTab as DashboardTab : 'panoramica';
-  const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab);
+  const initialTab = TABS.some((tab) => tab.id === requestedTab) ? requestedTab as DashboardTabId : 'panoramica';
+  const [activeTab, setActiveTab] = useState<DashboardTabId>(initialTab);
 
   // ── React Query hooks ──────────────────────────
   const { data: radar,    isLoading: loadingRadar }    = useDashboardRadar();
@@ -97,12 +120,107 @@ export default function Dashboard() {
       }));
   }, [audit]);
 
-  const widgetValues = useMemo<Record<WidgetId, { value: string; trendType?: 'positive' | 'negative' }>>(() => ({
-    operai:   { value: loadingRadar ? '…' : String(radar?.operaiAttivi ?? 0) },
-    cantieri: { value: loadingCantieri ? '…' : String(cantieriList.length) },
-    ore:      { value: loadingRadar ? '…' : `${(radar?.oreSettimana?.corrente ?? 0).toFixed(1)}h` },
-    pending:  { value: loadingRadar ? '…' : String((radar?.pending?.reports ?? 0) + (radar?.pending?.spese ?? 0)), trendType: 'negative' },
-  }), [radar, cantieriList, loadingRadar, loadingCantieri]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(DASHBOARD_KPI_PREFS_KEY, JSON.stringify(kpiPrefs));
+    } catch {
+      // Local storage can be unavailable in locked-down browser contexts.
+    }
+  }, [kpiPrefs]);
+
+  const updateTabPrefs = useCallback((tabId: DashboardTabId, updater: (current: DashboardTabKpiPrefs) => DashboardTabKpiPrefs) => {
+    setKpiPrefs((current) => ({
+      ...current,
+      [tabId]: updater(getTabPrefs(current, tabId)),
+    }));
+  }, []);
+
+  const handleKpiReorder = useCallback((tabId: DashboardTabId, orderedIds: string[]) => {
+    updateTabPrefs(tabId, (current) => ({
+      ...current,
+      order: normalizeOrder([...orderedIds, ...current.order.filter((id) => !orderedIds.includes(id))]),
+    }));
+  }, [updateTabPrefs]);
+
+  const handleRemoveKpi = useCallback((tabId: DashboardTabId, id: string) => {
+    updateTabPrefs(tabId, (current) => {
+      const isCustom = current.custom.some((item) => item.id === id);
+      return {
+        ...current,
+        order: current.order.filter((itemId) => itemId !== id),
+        hidden: isCustom ? current.hidden.filter((itemId) => itemId !== id) : normalizeOrder([...current.hidden, id]),
+        custom: isCustom ? current.custom.filter((item) => item.id !== id) : current.custom,
+      };
+    });
+  }, [updateTabPrefs]);
+
+  const handleRestoreBuiltIn = useCallback((tabId: DashboardTabId, id: string) => {
+    updateTabPrefs(tabId, (current) => ({
+      ...current,
+      hidden: current.hidden.filter((itemId) => itemId !== id),
+      order: normalizeOrder([...current.order, id]),
+    }));
+  }, [updateTabPrefs]);
+
+  const handleCreateCustomKpi = useCallback((tabId: DashboardTabId, payload: { title: string; value: string; description?: string }) => {
+    const id = `custom-${tabId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const custom: CustomDashboardKpi = { id, tabId, ...payload };
+    updateTabPrefs(tabId, (current) => ({
+      ...current,
+      custom: [...current.custom, custom],
+      order: normalizeOrder([...current.order, id]),
+    }));
+  }, [updateTabPrefs]);
+
+  const getKpiControls = useCallback((tabId: DashboardTabId): DashboardKpiSectionProps => {
+    const prefs = getTabPrefs(kpiPrefs, tabId);
+    return {
+      isEditMode,
+      prefs,
+      customKpis: prefs.custom.map(customKpiToDefinition),
+      onReorder: (orderedIds) => handleKpiReorder(tabId, orderedIds),
+      onRemove: (id) => handleRemoveKpi(tabId, id),
+    };
+  }, [handleKpiReorder, handleRemoveKpi, isEditMode, kpiPrefs]);
+
+  const activeTabPrefs = getTabPrefs(kpiPrefs, activeTab);
+  const availableBuiltIns = DASHBOARD_KPI_CATALOG[activeTab].filter((item) => activeTabPrefs.hidden.includes(item.id));
+
+  const overviewKpiDefinitions = useMemo<DashboardKpiDefinition[]>(() => [
+    {
+      id: 'overview-workers',
+      label: 'Operai Attivi',
+      value: loadingRadar ? '…' : String(radar?.operaiAttivi ?? 0),
+      icon: Users,
+      tone: 'text-accent',
+      bg: 'bg-accent/10',
+    },
+    {
+      id: 'overview-projects',
+      label: 'Cantieri Totali',
+      value: loadingCantieri ? '…' : String(cantieriList.length),
+      icon: Briefcase,
+      tone: 'text-indigo-500',
+      bg: 'bg-indigo-500/10',
+    },
+    {
+      id: 'overview-hours',
+      label: 'Ore Questa Settimana',
+      value: loadingRadar ? '…' : `${(radar?.oreSettimana?.corrente ?? 0).toFixed(1)}h`,
+      icon: Clock,
+      tone: 'text-emerald-500',
+      bg: 'bg-emerald-500/10',
+    },
+    {
+      id: 'overview-pending',
+      label: 'In Attesa Approv.',
+      value: loadingRadar ? '…' : String((radar?.pending?.reports ?? 0) + (radar?.pending?.spese ?? 0)),
+      icon: AlertCircle,
+      tone: 'text-rose-500',
+      bg: 'bg-rose-500/10',
+      trendType: 'negative',
+    },
+  ], [cantieriList.length, loadingCantieri, loadingRadar, radar]);
 
   const projectStatusData = useMemo(() => {
     const radarCantieri = radar?.cantieri ?? [];
@@ -116,33 +234,27 @@ export default function Dashboard() {
     ].filter(d => d.value > 0);
   }, [radar]);
 
-  const toggleWidget = (id: WidgetId) => {
-    setActiveWidgets(prev =>
-      prev.includes(id) ? prev.filter(w => w !== id) : [...prev, id]
-    );
-  };
-
-  const [shareModalOpen, setShareModalOpen] = useState(false);
-  const [itemToShare, setItemToShare]       = useState<unknown>(null);
-  const handleShare = (item: unknown) => { setItemToShare(item); setShareModalOpen(true); };
-
   return (
     <div className="p-8 space-y-8">
       {/* Dashboard Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-text-primary">Panoramica</h2>
-        {activeTab === 'panoramica' && (
-          <button 
-            onClick={() => setIsEditMode(!isEditMode)}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition-all",
-              isEditMode ? "bg-accent text-white shadow-lg shadow-accent/20" : "bg-card border border-border text-text-secondary hover:bg-background"
-            )}
+        <h2 className="text-2xl font-bold text-text-primary">{DASHBOARD_TAB_LABELS[activeTab]}</h2>
+        <div className="flex items-center gap-2">
+          <IconButton
+            label="Aggiungi KPI"
+            variant="secondary"
+            onClick={() => setAddDialogOpen(true)}
           >
-            {isEditMode ? <X size={16} /> : <Settings2 size={16} />}
-            {isEditMode ? 'Fine Modifica' : 'Personalizza KPI'}
-          </button>
-        )}
+            <Plus size={17} />
+          </IconButton>
+          <Button
+            onClick={() => setIsEditMode(!isEditMode)}
+            variant={isEditMode ? 'primary' : 'secondary'}
+            icon={isEditMode ? <X size={16} /> : <Settings2 size={16} />}
+          >
+            {isEditMode ? 'Fine Modifica' : 'Modifica KPI'}
+          </Button>
+        </div>
       </div>
 
       {/* BI Tab Navigation */}
@@ -157,109 +269,19 @@ export default function Dashboard() {
       </div>
 
       {/* ═══ BI TAB CONTENT ═══ */}
-      {activeTab === 'finanza'    && <FinanceTab />}
-      {activeTab === 'magazzino'  && <WarehouseTab />}
-      {activeTab === 'hr'         && <HrTab />}
-      {activeTab === 'operazioni' && <OperationsTab />}
+      {activeTab === 'finanza'    && <FinanceTab kpiControls={getKpiControls('finanza')} />}
+      {activeTab === 'magazzino'  && <WarehouseTab kpiControls={getKpiControls('magazzino')} />}
+      {activeTab === 'hr'         && <HrTab kpiControls={getKpiControls('hr')} />}
+      {activeTab === 'operazioni' && <OperationsTab kpiControls={getKpiControls('operazioni')} />}
 
       {/* ═══ PANORAMICA (tab default) ═══ */}
       {activeTab === 'panoramica' && (
         <>
           {/* KPI Widgets Area */}
-          {isEditMode ? (
-            <div className="bg-card border border-border rounded-3xl p-6 space-y-6">
-              <h3 className="font-bold text-text-primary">Libreria Widget KPI</h3>
-              <p className="text-sm text-text-secondary">Seleziona i widget da mostrare nella tua dashboard. Trascina per riordinare.</p>
-              
-              <Reorder.Group
-                axis="y"
-                values={activeWidgets}
-                onReorder={setActiveWidgets}
-                className="space-y-2"
-              >
-                {activeWidgets.map(id => {
-                  const catalog = WIDGET_CATALOG[id];
-                  const vals    = widgetValues[id];
-                  return (
-                    <Reorder.Item
-                      key={id}
-                      value={id}
-                      className="flex items-center justify-between p-4 bg-background border border-border rounded-xl cursor-grab active:cursor-grabbing"
-                    >
-                      <div className="flex items-center gap-4">
-                        <GripVertical size={16} className="text-text-secondary" />
-                        <div>
-                          <p className="font-bold text-text-primary">{catalog.title}</p>
-                          <p className="text-xs text-text-secondary">{vals.value}</p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => toggleWidget(id)}
-                        className="p-2 text-danger-text hover:bg-danger-bg rounded-lg transition-colors"
-                      >
-                        Rimuovi
-                      </button>
-                    </Reorder.Item>
-                  );
-                })}
-              </Reorder.Group>
-
-              <div className="pt-6 border-t border-border">
-                <h4 className="font-bold text-text-primary mb-4 text-sm">Widget Disponibili</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {WIDGET_IDS.filter(w => !activeWidgets.includes(w)).map(id => (
-                    <div key={id} className="p-4 bg-background border border-border rounded-xl flex items-center justify-between">
-                      <div>
-                        <p className="font-bold text-text-primary text-sm">{WIDGET_CATALOG[id].title}</p>
-                      </div>
-                      <button
-                        onClick={() => toggleWidget(id)}
-                        className="p-1.5 bg-accent/10 text-accent hover:bg-accent hover:text-white rounded-lg transition-colors"
-                      >
-                        Aggiungi
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {activeWidgets.map(id => {
-                const catalog = WIDGET_CATALOG[id];
-                const vals    = widgetValues[id];
-                return (
-                  <motion.div
-                    key={id}
-                    layoutId={`widget-${id}`}
-                    whileHover={{ y: -4 }}
-                    className="bg-card p-6 rounded-3xl shadow-sm border border-border flex flex-col justify-between h-full transition-colors duration-300 relative group cursor-pointer"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <p className="text-text-secondary font-medium text-sm">{catalog.title}</p>
-                      <SmartActionMenu
-                        onShare={() => handleShare({ id, ...vals })}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity"
-                      />
-                    </div>
-                    <div className="flex items-end justify-between">
-                      <h3 className="text-2xl font-bold text-text-primary">{vals.value}</h3>
-                      {vals.trendType && (
-                        <span className={cn(
-                          "text-xs font-bold px-2 py-1 rounded-full",
-                          vals.trendType === 'negative'
-                            ? "bg-danger-bg text-danger-text border border-danger-border"
-                            : "bg-success-bg text-success-text border border-success-border"
-                        )}>
-                          {vals.trendType === 'negative' ? '⚠️' : '✅'}
-                        </span>
-                      )}
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
+          <DashboardKpiGrid
+            definitions={[...overviewKpiDefinitions, ...getKpiControls('panoramica').customKpis]}
+            controls={getKpiControls('panoramica')}
+          />
 
           {/* Quick Actions */}
           <div className="flex flex-wrap gap-4">
@@ -333,10 +355,6 @@ export default function Dashboard() {
               <div className="bg-card p-6 rounded-3xl shadow-sm border border-border transition-colors duration-300 relative group">
                 <div className="flex items-center justify-between mb-6">
                   <h4 className="font-bold text-text-primary">Stato Budget Cantieri</h4>
-                  <SmartActionMenu 
-                    onShare={() => handleShare({ title: 'Stato Budget', type: 'chart' })}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                  />
                 </div>
                 <div className="h-64 relative">
                   {loadingRadar ? (
@@ -417,10 +435,6 @@ export default function Dashboard() {
               <div className="bg-card p-6 rounded-3xl shadow-sm border border-border h-full transition-colors duration-300 relative group">
                 <div className="flex items-center justify-between mb-6">
                   <h4 className="font-bold text-text-primary">Attività Recenti</h4>
-                  <SmartActionMenu 
-                    onShare={() => handleShare({ title: 'Attività Recenti', type: 'report' })}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                  />
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full">
@@ -430,14 +444,13 @@ export default function Dashboard() {
                         <th className="pb-4 font-medium">Attività</th>
                         <th className="pb-4 font-medium">Data</th>
                         <th className="pb-4 font-medium">Stato</th>
-                        <th className="pb-4 font-medium"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {loadingAudit ? (
-                        <tr><td colSpan={5} className="py-8 text-center text-sm text-text-secondary">Caricamento...</td></tr>
+                        <tr><td colSpan={4} className="py-8 text-center text-sm text-text-secondary">Caricamento...</td></tr>
                       ) : recentActivity.length === 0 ? (
-                        <tr><td colSpan={5} className="py-8 text-center text-sm text-text-secondary">Nessuna attività recente.</td></tr>
+                        <tr><td colSpan={4} className="py-8 text-center text-sm text-text-secondary">Nessuna attività recente.</td></tr>
                       ) : recentActivity.map((activity) => (
                         <tr key={activity.id} className="group/row hover:bg-background/50 transition-colors">
                           <td className="py-4">
@@ -457,12 +470,6 @@ export default function Dashboard() {
                           <td className="py-4">
                             <StatusBadge status={activity.status} />
                           </td>
-                          <td className="py-4 text-right">
-                            <SmartActionMenu
-                              onShare={() => handleShare(activity)}
-                              className="opacity-0 group-hover/row:opacity-100 transition-opacity inline-block"
-                            />
-                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -476,10 +483,6 @@ export default function Dashboard() {
               <div className="bg-card p-6 rounded-3xl shadow-sm border border-border transition-colors duration-300 relative group">
                 <div className="flex items-center justify-between mb-6">
                   <h4 className="font-bold text-text-primary">Ore Settimana</h4>
-                  <SmartActionMenu 
-                    onShare={() => handleShare({ title: 'Ore Settimana', type: 'report' })}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                  />
                 </div>
                 <div className="h-48">
                   {loadingRadar ? (
@@ -507,14 +510,14 @@ export default function Dashboard() {
         </>
       )}
 
-      {shareModalOpen && (
-        <ShareModal
-          isOpen={shareModalOpen}
-          onClose={() => setShareModalOpen(false)}
-          itemToShare={itemToShare}
-          onShare={() => setShareModalOpen(false)}
-        />
-      )}
+      <DashboardKpiAddDialog
+        open={addDialogOpen}
+        tabLabel={DASHBOARD_TAB_LABELS[activeTab]}
+        availableBuiltIns={availableBuiltIns}
+        onClose={() => setAddDialogOpen(false)}
+        onRestoreBuiltIn={(id) => handleRestoreBuiltIn(activeTab, id)}
+        onCreateCustom={(payload) => handleCreateCustomKpi(activeTab, payload)}
+      />
     </div>
   );
 }

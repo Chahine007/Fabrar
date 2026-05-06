@@ -214,6 +214,70 @@ export interface InvoiceOcrPayload {
   }>;
 }
 
+export interface PurchaseInvoiceLine {
+  id?: number;
+  codice_articolo_originale?: string | null;
+  codice_sku_normalizzato?: string | null;
+  descrizione?: string | null;
+  quantita?: number | string | null;
+  unita_misura?: string | null;
+  prezzo_unitario?: number | string | null;
+  iva_percentuale?: number | string | null;
+  prezzo_totale?: number | string | null;
+  cost_category?: CostCategory | string | null;
+  allocation_scope?: CostAllocationScope | string | null;
+  is_stockable?: boolean | null;
+  reconciliation_status?: string | null;
+  articolo_id?: number | null;
+  movimento_id?: number | null;
+  articolo?: {
+    id: number;
+    codice_sku: string;
+    descrizione?: string | null;
+  } | null;
+  movimento?: {
+    id: number;
+    tipo_movimento: string;
+    quantita?: number | string | null;
+    valore_totale?: number | string | null;
+  } | null;
+}
+
+export interface PurchaseInvoiceDraft {
+  id?: number;
+  document_type?: string | null;
+  tipo_documento?: string | null;
+  numero_documento?: string | null;
+  data_documento?: string | null;
+  codice_destinatario?: string | null;
+  fornitore?: InvoiceOcrPayload['fornitore'] & {
+    id?: number;
+    partita_iva_normalizzata?: string | null;
+    paese?: string | null;
+    iban_default?: string | null;
+  };
+  cliente?: InvoiceOcrPayload['cliente'];
+  totali?: InvoiceOcrPayload['totali'];
+  pagamento?: InvoiceOcrPayload['pagamento'];
+  cost_category?: CostCategory | string | null;
+  allocation_scope?: CostAllocationScope | string | null;
+  logistica_required?: boolean | null;
+  righe?: PurchaseInvoiceLine[];
+}
+
+export interface PurchaseInvoiceSummary {
+  id: number;
+  numero_documento?: string | null;
+  data_documento?: string | null;
+  tipo_documento?: string | null;
+  totale_imponibile?: number | string | null;
+  totale_imposta?: number | string | null;
+  totale_documento?: number | string | null;
+  pagamento_modalita?: string | null;
+  pagamento_scadenza?: string | null;
+  righe_count?: number;
+}
+
 export interface SpesaOcrResponse {
   spesa: AuditEntry & Record<string, unknown>;
   document?: {
@@ -223,6 +287,8 @@ export interface SpesaOcrResponse {
     type?: string | null;
   };
   ocrPayload?: InvoiceOcrPayload;
+  fattura_acquisto_draft?: PurchaseInvoiceDraft;
+  fatturaAcquisto?: PurchaseInvoiceDraft;
   suggestedLines?: InvoiceOcrLine[];
   matchStatus?: {
     score: number;
@@ -236,7 +302,14 @@ export interface SpesaOcrResponse {
     id: number;
     ragione_sociale: string;
     partita_iva?: string | null;
+    partita_iva_normalizzata?: string | null;
+    codice_fiscale?: string | null;
     indirizzo?: string | null;
+    comune?: string | null;
+    provincia?: string | null;
+    cap?: string | null;
+    paese?: string | null;
+    iban_default?: string | null;
   } | null;
   fornitoreAction?: 'created' | 'updated' | 'found' | string | null;
   righeDaRiconciliare?: number;
@@ -260,6 +333,7 @@ export interface GenericInvoiceOcrUpload {
 export interface GenericInvoiceOcrResponse {
   upload: GenericInvoiceOcrUpload;
   ocrPayload: InvoiceOcrPayload;
+  fattura_acquisto_draft?: PurchaseInvoiceDraft;
   suggestedLines: InvoiceOcrLine[];
   candidates: GenericInvoiceOcrCandidate[];
   matchStatus?: {
@@ -302,6 +376,8 @@ export interface AuditEntry {
   ocr_payload?: InvoiceOcrPayload | null;
   ocr_reviewed_at?: string | null;
   movimenti_magazzino_count?: number;
+  fattura_acquisto_id?: number | null;
+  fattura_acquisto?: PurchaseInvoiceSummary | null;
 }
 
 

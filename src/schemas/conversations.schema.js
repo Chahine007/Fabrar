@@ -18,7 +18,7 @@ export const createMessageSchema = z.object({
     }),
     body: z.object({
         content: z.string().trim().min(1, "Il contenuto del messaggio è obbligatorio."),
-        type: z.string().optional().default("text"),
+        type: z.enum(["text"]).optional().default("text"),
     }),
 });
 

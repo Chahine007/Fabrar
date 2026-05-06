@@ -6,9 +6,16 @@ export interface Supplier {
   id: number;
   ragione_sociale: string;
   partita_iva: string | null;
+  partita_iva_normalizzata: string | null;
+  codice_fiscale: string | null;
   email: string | null;
   telefono: string | null;
   indirizzo: string | null;
+  comune: string | null;
+  provincia: string | null;
+  cap: string | null;
+  paese: string | null;
+  iban_default: string | null;
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -17,9 +24,16 @@ export interface Supplier {
 export interface SupplierPayload {
   ragione_sociale: string;
   partita_iva?: string | null;
+  partita_iva_normalizzata?: string | null;
+  codice_fiscale?: string | null;
   email?: string | null;
   telefono?: string | null;
   indirizzo?: string | null;
+  comune?: string | null;
+  provincia?: string | null;
+  cap?: string | null;
+  paese?: string | null;
+  iban_default?: string | null;
   note?: string | null;
 }
 

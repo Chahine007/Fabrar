@@ -34,67 +34,8 @@ function buildAvatar(name, type) {
     return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || "U")}&background=random`;
 }
 
-function parseSharedItemPayload(rawContent) {
-    if (typeof rawContent !== "string" || !rawContent.trim()) {
-        return { text: "", metadata: null };
-    }
-
-    try {
-        const parsed = JSON.parse(rawContent);
-        if (!parsed || typeof parsed !== "object") {
-            return { text: rawContent, metadata: null };
-        }
-
-        const text = typeof parsed.text === "string"
-            ? parsed.text
-            : typeof parsed.content === "string"
-                ? parsed.content
-                : "";
-        const metadata = parsed.metadata && typeof parsed.metadata === "object"
-            ? parsed.metadata
-            : null;
-
-        return { text, metadata };
-    } catch {
-        return { text: rawContent, metadata: null };
-    }
-}
-
-function serializeMessagePayload(type, content, metadata) {
-    if (type !== "shared_item") {
-        return typeof content === "string" ? content : "";
-    }
-
-    return JSON.stringify({
-        text: typeof content === "string" ? content : "",
-        metadata: metadata && typeof metadata === "object" ? metadata : null,
-    });
-}
-
-function getMessageContentAndMetadata(message) {
-    if (message?.type !== "shared_item") {
-        return {
-            content: typeof message?.content === "string" ? message.content : "",
-            metadata: null,
-        };
-    }
-
-    const { text, metadata } = parseSharedItemPayload(message.content);
-    return {
-        content: text,
-        metadata,
-    };
-}
-
 function getMessagePreview(message) {
-    const { content, metadata } = getMessageContentAndMetadata(message);
-    if (message?.type === "shared_item") {
-        const title = typeof metadata?.title === "string" ? metadata.title.trim() : "";
-        if (title) return `Condiviso: ${title}`;
-        if (content) return content;
-        return "Elemento condiviso";
-    }
-
+    const content = typeof message?.content === "string" ? message.content.trim() : "";
     return content || "Nessun messaggio";
 }
 
@@ -105,7 +46,7 @@ function mapMessageResponse(message, currentEmployeeId) {
     const senderAvatar = message.sender
         ? `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=random`
         : "";
-    const { content, metadata } = getMessageContentAndMetadata(message);
+    const content = typeof message.content === "string" ? message.content : "";
 
     return {
         id: message.id,
@@ -116,7 +57,7 @@ function mapMessageResponse(message, currentEmployeeId) {
         type: message.type,
         content,
         created_at: message.created_at,
-        metadata,
+        metadata: null,
         is_me: currentEmployeeId != null && message.sender_id === currentEmployeeId,
     };
 }
@@ -393,12 +334,16 @@ export const getConversationMessages = asyncHandler(async (req, res) => {
 
 export const createMessage = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { content, type, metadata } = req.body;
+    const { content, type } = req.body;
     const prisma = getDb();
     const currentUserId = getCurrentEmployeeId(req, res);
     if (currentUserId == null) return;
     const normalizedType = typeof type === "string" && type.trim() ? type.trim() : "text";
     const normalizedContent = typeof content === "string" ? content.trim() : "";
+
+    if (normalizedType !== "text") {
+        return res.status(400).json({ error: "Tipo messaggio non supportato." });
+    }
 
     const participant = await prisma.conversationParticipant.findUnique({
         where: {
@@ -413,7 +358,7 @@ export const createMessage = asyncHandler(async (req, res) => {
         return res.status(403).json({ error: "Accesso negato: non partecipi a questa conversazione." });
     }
 
-    if (!normalizedContent && normalizedType !== "shared_item") {
+    if (!normalizedContent) {
         return res.status(400).json({ error: "Il contenuto del messaggio è obbligatorio." });
     }
 
@@ -422,8 +367,8 @@ export const createMessage = asyncHandler(async (req, res) => {
             data: {
                 conversation_id: id,
                 sender_id: currentUserId,
-                type: normalizedType,
-                content: serializeMessagePayload(normalizedType, normalizedContent, metadata),
+                type: "text",
+                content: normalizedContent,
             },
             include: {
                 sender: {

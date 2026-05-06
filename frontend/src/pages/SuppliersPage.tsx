@@ -21,9 +21,15 @@ interface SupplierModalProps {
 const emptyPayload: SupplierPayload = {
   ragione_sociale: '',
   partita_iva: '',
+  codice_fiscale: '',
   email: '',
   telefono: '',
   indirizzo: '',
+  comune: '',
+  provincia: '',
+  cap: '',
+  paese: 'IT',
+  iban_default: '',
   note: '',
 };
 
@@ -31,9 +37,15 @@ function normalizePayload(payload: SupplierPayload): SupplierPayload {
   return {
     ragione_sociale: payload.ragione_sociale.trim(),
     partita_iva: payload.partita_iva?.trim() || null,
+    codice_fiscale: payload.codice_fiscale?.trim() || null,
     email: payload.email?.trim() || null,
     telefono: payload.telefono?.trim() || null,
     indirizzo: payload.indirizzo?.trim() || null,
+    comune: payload.comune?.trim() || null,
+    provincia: payload.provincia?.trim().toUpperCase() || null,
+    cap: payload.cap?.trim() || null,
+    paese: payload.paese?.trim().toUpperCase() || 'IT',
+    iban_default: payload.iban_default?.replace(/\s+/g, '').toUpperCase() || null,
     note: payload.note?.trim() || null,
   };
 }
@@ -52,9 +64,15 @@ function SupplierModal({ supplier, onClose }: SupplierModalProps) {
         ? {
             ragione_sociale: supplier.ragione_sociale,
             partita_iva: supplier.partita_iva ?? '',
+            codice_fiscale: supplier.codice_fiscale ?? '',
             email: supplier.email ?? '',
             telefono: supplier.telefono ?? '',
             indirizzo: supplier.indirizzo ?? '',
+            comune: supplier.comune ?? '',
+            provincia: supplier.provincia ?? '',
+            cap: supplier.cap ?? '',
+            paese: supplier.paese ?? 'IT',
+            iban_default: supplier.iban_default ?? '',
             note: supplier.note ?? '',
           }
         : emptyPayload
@@ -94,7 +112,7 @@ function SupplierModal({ supplier, onClose }: SupplierModalProps) {
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
-        className="bg-card w-full max-w-2xl rounded-2xl shadow-xl border border-border overflow-hidden"
+        className="bg-card w-full max-w-3xl rounded-2xl shadow-xl border border-border overflow-hidden max-h-[90vh] flex flex-col"
       >
         <div className="flex items-center justify-between p-5 border-b border-border bg-background">
           <div>
@@ -109,7 +127,7 @@ function SupplierModal({ supplier, onClose }: SupplierModalProps) {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
           {error && (
             <div className="rounded-xl border border-danger-text/20 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger-text">
               {error}
@@ -132,6 +150,15 @@ function SupplierModal({ supplier, onClose }: SupplierModalProps) {
               <input
                 value={form.partita_iva ?? ''}
                 onChange={(event) => updateField('partita_iva', event.target.value)}
+                className="w-full p-3 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-semibold text-text-secondary">Codice fiscale</label>
+              <input
+                value={form.codice_fiscale ?? ''}
+                onChange={(event) => updateField('codice_fiscale', event.target.value)}
                 className="w-full p-3 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
               />
             </div>
@@ -160,6 +187,51 @@ function SupplierModal({ supplier, onClose }: SupplierModalProps) {
               <input
                 value={form.indirizzo ?? ''}
                 onChange={(event) => updateField('indirizzo', event.target.value)}
+                className="w-full p-3 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-semibold text-text-secondary">Comune</label>
+              <input
+                value={form.comune ?? ''}
+                onChange={(event) => updateField('comune', event.target.value)}
+                className="w-full p-3 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-4 md:col-span-2">
+              <div className="space-y-1.5">
+                <label className="text-sm font-semibold text-text-secondary">Provincia</label>
+                <input
+                  value={form.provincia ?? ''}
+                  onChange={(event) => updateField('provincia', event.target.value)}
+                  className="w-full p-3 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-semibold text-text-secondary">CAP</label>
+                <input
+                  value={form.cap ?? ''}
+                  onChange={(event) => updateField('cap', event.target.value)}
+                  className="w-full p-3 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-semibold text-text-secondary">Paese</label>
+                <input
+                  value={form.paese ?? 'IT'}
+                  onChange={(event) => updateField('paese', event.target.value)}
+                  className="w-full p-3 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="md:col-span-2 space-y-1.5">
+              <label className="text-sm font-semibold text-text-secondary">IBAN predefinito</label>
+              <input
+                value={form.iban_default ?? ''}
+                onChange={(event) => updateField('iban_default', event.target.value)}
                 className="w-full p-3 bg-background border border-border rounded-xl text-sm text-text-primary focus:ring-2 focus:ring-accent outline-none"
               />
             </div>
@@ -207,8 +279,12 @@ export default function SuppliersPage() {
       [
         supplier.ragione_sociale,
         supplier.partita_iva,
+        supplier.codice_fiscale,
         supplier.email,
         supplier.telefono,
+        supplier.comune,
+        supplier.provincia,
+        supplier.iban_default,
       ]
         .filter(Boolean)
         .join(' ')
@@ -310,8 +386,11 @@ export default function SuppliersPage() {
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-text-secondary">
                       <span>P.IVA: <strong className="text-text-primary">{supplier.partita_iva || '--'}</strong></span>
+                      <span>CF: <strong className="text-text-primary">{supplier.codice_fiscale || '--'}</strong></span>
                       <span>Tel: <strong className="text-text-primary">{supplier.telefono || '--'}</strong></span>
+                      <span>Sede: <strong className="text-text-primary">{[supplier.cap, supplier.comune, supplier.provincia].filter(Boolean).join(' ') || '--'}</strong></span>
                       <span className="col-span-2">Email: <strong className="text-text-primary">{supplier.email || '--'}</strong></span>
+                      <span className="col-span-2">IBAN: <strong className="text-text-primary">{supplier.iban_default || '--'}</strong></span>
                     </div>
                   </div>
                 ))}
@@ -322,9 +401,9 @@ export default function SuppliersPage() {
               <thead>
                 <tr className="bg-background text-xs uppercase tracking-wider text-text-secondary border-b border-border">
                   <th className="px-6 py-4 font-semibold">Ragione Sociale</th>
-                  <th className="px-6 py-4 font-semibold">P.IVA</th>
-                  <th className="px-6 py-4 font-semibold">Email</th>
-                  <th className="px-6 py-4 font-semibold">Telefono</th>
+                  <th className="px-6 py-4 font-semibold">Fiscale</th>
+                  <th className="px-6 py-4 font-semibold">Contatti</th>
+                  <th className="px-6 py-4 font-semibold">Sede / Pagamento</th>
                   <th className="px-6 py-4 font-semibold text-right">Azioni</th>
                 </tr>
               </thead>
@@ -335,9 +414,18 @@ export default function SuppliersPage() {
                         <p className="font-bold text-text-primary text-sm">{supplier.ragione_sociale}</p>
                         {supplier.indirizzo && <p className="text-xs text-text-secondary mt-1">{supplier.indirizzo}</p>}
                       </td>
-                      <td className="px-6 py-4 text-sm text-text-secondary">{supplier.partita_iva || '--'}</td>
-                      <td className="px-6 py-4 text-sm text-text-secondary">{supplier.email || '--'}</td>
-                      <td className="px-6 py-4 text-sm text-text-secondary">{supplier.telefono || '--'}</td>
+                      <td className="px-6 py-4 text-sm text-text-secondary">
+                        <p>P.IVA: <span className="text-text-primary">{supplier.partita_iva || '--'}</span></p>
+                        <p className="mt-1 text-xs">CF: {supplier.codice_fiscale || '--'}</p>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-text-secondary">
+                        <p>{supplier.email || '--'}</p>
+                        <p className="mt-1 text-xs">{supplier.telefono || '--'}</p>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-text-secondary">
+                        <p>{[supplier.cap, supplier.comune, supplier.provincia].filter(Boolean).join(' ') || '--'}</p>
+                        <p className="mt-1 text-xs">{supplier.iban_default || '--'}</p>
+                      </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center justify-end gap-2">
                           <IconButton

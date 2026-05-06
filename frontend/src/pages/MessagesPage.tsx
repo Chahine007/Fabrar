@@ -15,8 +15,6 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import SmartActionMenu from '../components/SmartActionMenu';
-import ShareModal from '../components/ShareModal';
 import Spinner from '../components/Spinner';
 import { useAuthContext } from '../context/AuthContext';
 import {
@@ -31,9 +29,8 @@ import {
 import { useSearchEmployees } from '../hooks/api/useHr';
 import { useTypingIndicator } from '../hooks/useTypingIndicator';
 import { useToast } from '../components/ui';
-import type { ProjectShareItem } from '../types/project-detail';
 
-const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMessage) => void }> = ({ message, onShare }) => {
+const MessageBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
   const isSystem = message.type.startsWith('system_');
 
   if (isSystem) {
@@ -84,10 +81,6 @@ const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMes
             <button className="p-1 hover:bg-card/50 rounded-lg transition-colors">
               <ChevronRight size={16} />
             </button>
-            <SmartActionMenu
-              onShare={() => onShare(message)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity"
-            />
           </div>
         </div>
       </div>
@@ -108,12 +101,6 @@ const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMes
         {!message.isMe && <p className="text-[10px] font-bold text-text-secondary ml-1 mb-1">{message.senderName}</p>}
 
         <div className="flex items-center gap-2">
-          {message.isMe && (
-            <SmartActionMenu
-              onShare={() => onShare(message)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity"
-            />
-          )}
           <div
             className={cn(
               'p-4 rounded-2xl shadow-sm',
@@ -123,19 +110,7 @@ const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMes
               message.type === 'image' && 'p-1 overflow-hidden'
             )}
           >
-            {message.type === 'text' && <p className="text-sm leading-relaxed">{message.content}</p>}
-            {message.type === 'shared_item' && (
-              <div className="space-y-2">
-                <p className="text-sm leading-relaxed">{message.content}</p>
-                <div className="p-3 bg-background/50 rounded-xl border border-border/50 text-text-primary">
-                  <p className="text-xs text-text-secondary font-bold uppercase tracking-wider mb-1">Elemento Condiviso</p>
-                  <p className="font-medium">{String(message.metadata?.title ?? '')}</p>
-                  {message.metadata?.value && (
-                    <p className="text-lg font-bold text-accent mt-1">{String(message.metadata.value)}</p>
-                  )}
-                </div>
-              </div>
-            )}
+            {message.type !== 'image' && <p className="text-sm leading-relaxed">{message.content}</p>}
             {message.type === 'image' && (
               <img
                 src={message.content}
@@ -145,12 +120,6 @@ const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMes
               />
             )}
           </div>
-          {!message.isMe && (
-            <SmartActionMenu
-              onShare={() => onShare(message)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity"
-            />
-          )}
         </div>
 
         <div className={cn('flex items-center gap-2 mt-1 px-1', message.isMe ? 'justify-end' : 'justify-start')}>
@@ -182,8 +151,6 @@ export default function MessagesPage() {
   } = useConversations();
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [shareModalOpen, setShareModalOpen] = useState(false);
-  const [itemToShare, setItemToShare] = useState<ProjectShareItem | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const createConversation = useCreateConversation();
@@ -195,7 +162,6 @@ export default function MessagesPage() {
     error: messagesError,
   } = useMessages(activeConversationId);
   const sendMessage = useSendMessage(activeConversationId, user);
-  const shareMessage = useSendMessage(null, user);
   const { typingUsers, handleTypingStart, handleTypingStop } = useTypingIndicator(activeConversationId, user);
 
   const visibleConversations = useMemo(() => {
@@ -231,49 +197,6 @@ export default function MessagesPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  const handleShare = (message: ChatMessage) => {
-    setItemToShare({
-      title:
-        typeof message.metadata?.title === 'string'
-          ? message.metadata.title
-          : message.content || 'Messaggio',
-      value:
-        typeof message.metadata?.value === 'string' || typeof message.metadata?.value === 'number'
-          ? message.metadata.value
-          : undefined,
-      description: message.content || null,
-      type: 'message',
-    });
-    setShareModalOpen(true);
-  };
-
-  const handleExecuteShare = async (conversationId: string, message: string, item: ProjectShareItem | null) => {
-    if (!conversationId || !item) return;
-
-    try {
-      const shareText =
-        message.trim() ||
-        `Condivisione: ${item.title || item.name || 'Elemento'}`;
-
-      await shareMessage.mutateAsync({
-        conversationId,
-        content: shareText,
-        type: 'shared_item',
-        metadata: {
-          title: item.title || item.name || 'Elemento condiviso',
-          value: item.value ?? null,
-          description: item.description ?? null,
-        },
-      });
-
-      setItemToShare(null);
-      toast.success('Messaggio condiviso', 'La condivisione è stata inviata nella conversazione selezionata.');
-    } catch (error) {
-      toast.error('Condivisione non riuscita', error instanceof Error ? error.message : 'Errore invio condivisione');
-      throw error;
-    }
-  };
 
   const handleStartDirectConversation = async (targetEmployeeId: number) => {
     try {
@@ -553,7 +476,7 @@ export default function MessagesPage() {
                 )}
 
                 {messages.map((message) => (
-                  <MessageBubble key={message.id} message={message} onShare={handleShare} />
+                  <MessageBubble key={message.id} message={message} />
                 ))}
                 <div ref={messagesEndRef} />
               </div>
@@ -616,15 +539,6 @@ export default function MessagesPage() {
         )}
       </main>
 
-      <ShareModal
-        isOpen={shareModalOpen}
-        onClose={() => {
-          setShareModalOpen(false);
-          setItemToShare(null);
-        }}
-        itemToShare={itemToShare}
-        onShare={handleExecuteShare}
-      />
     </div>
   );
 }

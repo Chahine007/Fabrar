@@ -1,6 +1,5 @@
 import { Bot, CheckSquare, Hash, MessageSquare } from 'lucide-react';
 import WbsTab from '../../WbsTab';
-import type { ProjectShareItem } from '../../../types/project-detail';
 import ActivitiesTab from './ActivitiesTab';
 import MessagesTab from './MessagesTab';
 import ProjectSubTabs from './ProjectSubTabs';
@@ -9,14 +8,12 @@ import TelegramFeedTab from './TelegramFeedTab';
 interface ProjectOperationsTabProps {
   cantiereId: number;
   cantiereName: string;
-  onShare: (item: ProjectShareItem) => void;
   initialTab?: string;
 }
 
 export default function ProjectOperationsTab({
   cantiereId,
   cantiereName,
-  onShare,
   initialTab,
 }: ProjectOperationsTabProps) {
   return (
@@ -28,7 +25,7 @@ export default function ProjectOperationsTab({
           label: 'Attivita',
           description: 'Task, assegnazioni e stato operativo del cantiere.',
           icon: CheckSquare,
-          render: () => <ActivitiesTab cantiereId={cantiereId} onShare={onShare} />,
+          render: () => <ActivitiesTab cantiereId={cantiereId} />,
         },
         {
           id: 'wbs',

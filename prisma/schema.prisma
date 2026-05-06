@@ -115,6 +115,7 @@ model Cantiere {
   richieste_materiali RichiestaMateriale[]
   fatture             Fattura[]
   rate                Rata[]
+  fatture_acquisto    FatturaAcquisto[]
 }
 
 // NEW ERP TABLE: WBS Nodes
@@ -226,13 +227,14 @@ model Spesa {
   admin_note           String?
   modified_by_admin_at DateTime?
 
-  employee             Employee   @relation(fields: [employee_id], references: [id])
-  cantiere             Cantiere?  @relation(fields: [cantiere_id], references: [id])
-  fornitore_anagrafica Fornitore? @relation(fields: [fornitore_id], references: [id])
-  pricebook            Pricebook? @relation(fields: [pricebook_id], references: [id])
-  wbs_node             WbsNode?   @relation(fields: [wbs_node_id], references: [id])
-  task                 Task?      @relation(fields: [task_id], references: [id])
-  documento            Document?  @relation(fields: [documento_id], references: [id])
+  employee             Employee         @relation(fields: [employee_id], references: [id])
+  cantiere             Cantiere?        @relation(fields: [cantiere_id], references: [id])
+  fornitore_anagrafica Fornitore?       @relation(fields: [fornitore_id], references: [id])
+  pricebook            Pricebook?       @relation(fields: [pricebook_id], references: [id])
+  wbs_node             WbsNode?         @relation(fields: [wbs_node_id], references: [id])
+  task                 Task?            @relation(fields: [task_id], references: [id])
+  documento            Document?        @relation(fields: [documento_id], references: [id])
+  fattura_acquisto     FatturaAcquisto?
 
   @@index([employee_id])
   @@index([cantiere_id])
@@ -374,6 +376,7 @@ model Document {
   spese_collegate     Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
   fatture             Fattura[]
+  fattura_acquisto    FatturaAcquisto?
 
   @@index([cantiere_id])
   @@index([employee_id])
@@ -482,19 +485,30 @@ model ConversationParticipant {
 // ==========================================
 
 model Fornitore {
-  id              Int      @id @default(autoincrement())
-  ragione_sociale String
-  partita_iva     String?
-  email           String?
-  telefono        String?
-  indirizzo       String?
-  note            String?
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+  id                       Int      @id @default(autoincrement())
+  ragione_sociale          String
+  partita_iva              String?
+  partita_iva_normalizzata String?
+  codice_fiscale           String?
+  email                    String?
+  telefono                 String?
+  indirizzo                String?
+  comune                   String?
+  provincia                String?
+  cap                      String?
+  paese                    String?  @default("IT")
+  iban_default             String?
+  note                     String?
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
 
   articoli_default    Articolo[]
   movimenti_magazzino MovimentoMagazzino[]
   spese               Spesa[]
+  fatture_acquisto    FatturaAcquisto[]
+
+  @@index([partita_iva_normalizzata])
+  @@index([ragione_sociale])
 }
 
 model Articolo {
@@ -511,6 +525,7 @@ model Articolo {
   movimenti         MovimentoMagazzino[]
   fornitore_default Fornitore?               @relation(fields: [fornitore_default_id], references: [id])
   righe_richieste   RigaRichiestaMateriale[]
+  righe_fatture     RigaFatturaAcquisto[]
 
   @@index([fornitore_default_id])
 }
@@ -578,15 +593,16 @@ model MovimentoMagazzino {
   documento_id   Int?
   fornitore_id   Int?
 
-  articolo      Articolo    @relation(fields: [articolo_id], references: [id])
-  ubicazione_da Ubicazione? @relation("MovimentiDa", fields: [ubicazione_da_id], references: [id])
-  ubicazione_a  Ubicazione? @relation("MovimentiA", fields: [ubicazione_a_id], references: [id])
-  cantiere      Cantiere?   @relation(fields: [cantiere_id], references: [id])
-  wbs_node      WbsNode?    @relation(fields: [wbs_node_id], references: [id])
-  task          Task?       @relation(fields: [task_id], references: [id])
-  esecutore     User        @relation(fields: [esecutore_id], references: [id])
-  documento     Document?   @relation(fields: [documento_id], references: [id])
-  fornitore     Fornitore?  @relation(fields: [fornitore_id], references: [id])
+  articolo      Articolo             @relation(fields: [articolo_id], references: [id])
+  ubicazione_da Ubicazione?          @relation("MovimentiDa", fields: [ubicazione_da_id], references: [id])
+  ubicazione_a  Ubicazione?          @relation("MovimentiA", fields: [ubicazione_a_id], references: [id])
+  cantiere      Cantiere?            @relation(fields: [cantiere_id], references: [id])
+  wbs_node      WbsNode?             @relation(fields: [wbs_node_id], references: [id])
+  task          Task?                @relation(fields: [task_id], references: [id])
+  esecutore     User                 @relation(fields: [esecutore_id], references: [id])
+  documento     Document?            @relation(fields: [documento_id], references: [id])
+  fornitore     Fornitore?           @relation(fields: [fornitore_id], references: [id])
+  riga_fattura  RigaFatturaAcquisto?
 
   @@index([articolo_id])
   @@index([cantiere_id])
@@ -598,6 +614,87 @@ model MovimentoMagazzino {
   @@index([documento_id])
   @@index([fornitore_id])
   @@index([articolo_id, data_movimento])
+}
+
+model FatturaAcquisto {
+  id                  Int       @id @default(autoincrement())
+  document_id         Int?      @unique
+  spesa_id            Int?      @unique
+  fornitore_id        Int?
+  cantiere_id         Int?
+  document_type       String?
+  tipo_documento      String?
+  numero_documento    String?
+  data_documento      DateTime? @db.Date
+  codice_destinatario String?
+
+  // Snapshot del blocco cliente della fattura. In V1 rappresenta Fabdar, non una nuova anagrafica cliente.
+  cliente_partita_iva     String?
+  cliente_ragione_sociale String?
+  cliente_codice_fiscale  String?
+  cliente_indirizzo       String?
+  cliente_comune          String?
+  cliente_provincia       String?
+  cliente_cap             String?
+
+  totale_imponibile Decimal? @db.Decimal(10, 2)
+  totale_imposta    Decimal? @db.Decimal(10, 2)
+  totale_documento  Decimal? @db.Decimal(10, 2)
+
+  pagamento_modalita String?
+  pagamento_iban     String?
+  pagamento_scadenza DateTime? @db.Date
+  pagamento_importo  Decimal?  @db.Decimal(10, 2)
+
+  cost_category      CostCategory        @default(UNKNOWN)
+  allocation_scope   CostAllocationScope @default(REVIEW)
+  logistica_required Boolean             @default(false)
+  ocr_payload        Json?
+  created_at         DateTime            @default(now())
+  updated_at         DateTime            @updatedAt
+
+  documento Document?             @relation(fields: [document_id], references: [id])
+  spesa     Spesa?                @relation(fields: [spesa_id], references: [id])
+  fornitore Fornitore?            @relation(fields: [fornitore_id], references: [id])
+  cantiere  Cantiere?             @relation(fields: [cantiere_id], references: [id])
+  righe     RigaFatturaAcquisto[]
+
+  @@index([fornitore_id, numero_documento, data_documento])
+  @@index([spesa_id])
+  @@index([cantiere_id])
+  @@index([cost_category])
+  @@index([allocation_scope])
+}
+
+model RigaFatturaAcquisto {
+  id                        Int                 @id @default(autoincrement())
+  fattura_acquisto_id       Int
+  articolo_id               Int?
+  movimento_id              Int?                @unique
+  codice_articolo_originale String?
+  codice_sku_normalizzato   String?
+  descrizione               String?
+  quantita                  Decimal?            @db.Decimal(10, 2)
+  unita_misura              String?
+  prezzo_unitario           Decimal?            @db.Decimal(10, 2)
+  iva_percentuale           Decimal?            @db.Decimal(5, 2)
+  prezzo_totale             Decimal?            @db.Decimal(10, 2)
+  cost_category             CostCategory        @default(UNKNOWN)
+  allocation_scope          CostAllocationScope @default(REVIEW)
+  is_stockable              Boolean             @default(false)
+  reconciliation_status     String              @default("OK")
+  raw_payload               Json?
+  created_at                DateTime            @default(now())
+  updated_at                DateTime            @updatedAt
+
+  fattura_acquisto FatturaAcquisto     @relation(fields: [fattura_acquisto_id], references: [id], onDelete: Cascade)
+  articolo         Articolo?           @relation(fields: [articolo_id], references: [id])
+  movimento        MovimentoMagazzino? @relation(fields: [movimento_id], references: [id])
+
+  @@index([fattura_acquisto_id])
+  @@index([articolo_id])
+  @@index([codice_sku_normalizzato])
+  @@index([cost_category])
 }
 
 model RichiestaMateriale {

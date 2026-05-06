@@ -74,7 +74,6 @@ interface SendMessageInput {
   conversationId?: string | null;
   content: string;
   type?: string;
-  metadata?: null | Record<string, unknown>;
 }
 
 interface SendMessageContext {
@@ -135,14 +134,7 @@ export function getConversationUnreadCount(conversation: Conversation): number {
   return 0;
 }
 
-function getConversationPreview(content: string, type: string, metadata?: null | Record<string, unknown>): string {
-  if (type === 'shared_item') {
-    const title = typeof metadata?.title === 'string' ? metadata.title.trim() : '';
-    if (title) return `Condiviso: ${title}`;
-    if (content.trim()) return content.trim();
-    return 'Elemento condiviso';
-  }
-
+function getConversationPreview(content: string): string {
   return content.trim();
 }
 
@@ -198,7 +190,6 @@ function createOptimisticMessage(
   tempId: string,
   content: string,
   type: string,
-  metadata: null | Record<string, unknown>,
   currentUser?: CurrentChatUser | null
 ): ChatMessage {
   const identity = getCurrentUserIdentity(currentUser);
@@ -217,11 +208,7 @@ function createOptimisticMessage(
     timestamp: formatMessageTime(new Date()),
     isMe: true,
     status: 'sent',
-    metadata: {
-      ...(metadata ?? {}),
-      optimistic: true,
-      clientCreatedAt: Date.now(),
-    },
+    metadata: { optimistic: true, clientCreatedAt: Date.now() },
   };
 }
 
@@ -321,7 +308,7 @@ export function useSendMessage(conversationId: string | null, currentUser?: Curr
   const queryClient = useQueryClient();
 
   return useMutation<ApiCreatedMessage, Error, SendMessageInput, SendMessageContext>({
-    mutationFn: async ({ conversationId: targetConversationId, content, type = 'text', metadata = null }) => {
+    mutationFn: async ({ conversationId: targetConversationId, content, type = 'text' }) => {
       const resolvedConversationId = targetConversationId ?? conversationId;
       if (!resolvedConversationId) {
         throw new Error('Conversazione non selezionata');
@@ -329,7 +316,7 @@ export function useSendMessage(conversationId: string | null, currentUser?: Curr
 
       const response = await apiFetch(`/api/conversations/${resolvedConversationId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ content, type, metadata }),
+        body: JSON.stringify({ content, type }),
       });
 
       if (!response.ok) {
@@ -339,7 +326,7 @@ export function useSendMessage(conversationId: string | null, currentUser?: Curr
 
       return response.json() as Promise<ApiCreatedMessage>;
     },
-    onMutate: async ({ conversationId: targetConversationId, content, type = 'text', metadata = null }) => {
+    onMutate: async ({ conversationId: targetConversationId, content, type = 'text' }) => {
       const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const resolvedConversationId = targetConversationId ?? conversationId;
 
@@ -351,8 +338,8 @@ export function useSendMessage(conversationId: string | null, currentUser?: Curr
 
       const previousMessages = queryClient.getQueryData<ChatMessage[]>(conversationKeys.messages(resolvedConversationId));
       const previousConversations = queryClient.getQueryData<Conversation[]>(conversationKeys.list());
-      const optimisticMessage = createOptimisticMessage(tempId, content, type, metadata, currentUser);
-      const preview = getConversationPreview(content, type, metadata);
+      const optimisticMessage = createOptimisticMessage(tempId, content, type, currentUser);
+      const preview = getConversationPreview(content);
       const nowIso = new Date().toISOString();
 
       queryClient.setQueryData<ChatMessage[]>(
@@ -393,7 +380,7 @@ export function useSendMessage(conversationId: string | null, currentUser?: Curr
       if (!context?.conversationId) return;
 
       const mappedMessage = mapApiCreatedMessageToChatMessage(createdMessage, currentUser);
-      const preview = getConversationPreview(mappedMessage.content, mappedMessage.type, mappedMessage.metadata);
+      const preview = getConversationPreview(mappedMessage.content);
 
       queryClient.setQueryData<ChatMessage[]>(
         conversationKeys.messages(context.conversationId),
@@ -477,7 +464,7 @@ export function useChatSockets(currentUser?: CurrentChatUser | null) {
       if (!conversationId || !message) return;
 
       const mappedMessage = mapApiCreatedMessageToChatMessage(message, identity);
-      const preview = getConversationPreview(mappedMessage.content, mappedMessage.type, mappedMessage.metadata);
+      const preview = getConversationPreview(mappedMessage.content);
       const messagesKey = conversationKeys.messages(conversationId);
       const existingMessages = queryClient.getQueryData<ChatMessage[]>(messagesKey);
       const existingConversations = queryClient.getQueryData<Conversation[]>(conversationKeys.list());

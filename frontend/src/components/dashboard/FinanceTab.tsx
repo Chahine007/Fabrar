@@ -14,6 +14,7 @@ import { AlertTriangle, Euro, Percent, TrendingDown, TrendingUp } from 'lucide-r
 import { cn } from '../../lib/utils';
 import { useFinanceKPIs } from '../../hooks/api/useDashboard';
 import Spinner from '../Spinner';
+import { DashboardKpiGrid, type DashboardKpiDefinition, type DashboardKpiSectionProps } from './DashboardKpiGrid';
 
 const currencyFormatter = new Intl.NumberFormat('it-IT', {
   style: 'currency',
@@ -40,7 +41,7 @@ function formatCompactProjectName(value: string) {
   return `${value.slice(0, 20)}…`;
 }
 
-export default function FinanceTab() {
+export default function FinanceTab({ kpiControls }: { kpiControls: DashboardKpiSectionProps }) {
   const { data, isLoading, error } = useFinanceKPIs();
 
   if (isLoading) return <Spinner label="Caricamento dati finanziari..." />;
@@ -53,62 +54,48 @@ export default function FinanceTab() {
   const isMarginPositive = data.margine >= 0;
   const topCantieri = data.topCantieri ?? [];
   const hasRevenue = totalRevenue > 0;
+  const kpiDefinitions: DashboardKpiDefinition[] = [
+    {
+      id: 'finance-revenue',
+      label: 'Ricavi Previsti Totali',
+      value: formatCurrency(totalRevenue),
+      sublabel: hasRevenue ? 'Somma valori contratto cantieri attivi' : 'Nessun contratto valorizzato',
+      icon: Euro,
+      tone: 'text-accent',
+      bg: 'bg-accent/10',
+    },
+    {
+      id: 'finance-costs',
+      label: 'Costi Totali Reali',
+      value: formatCurrency(totalCosts),
+      sublabel: `Manodopera ${formatCurrency(data.costoManodoperaTotale ?? 0)} | Materiali ${formatCurrency(data.costoMaterialiTotale ?? 0)} | Spese ${formatCurrency(data.costoSpeseTotale ?? 0)}`,
+      icon: TrendingDown,
+      tone: 'text-rose-500',
+      bg: 'bg-rose-500/10',
+    },
+    {
+      id: 'finance-margin',
+      label: 'Margine Netto',
+      value: formatCurrency(data.margine),
+      sublabel: isMarginPositive ? 'Ricavi superiori ai costi' : 'Costi superiori ai ricavi',
+      icon: isMarginPositive ? TrendingUp : AlertTriangle,
+      tone: isMarginPositive ? 'text-emerald-500' : 'text-rose-500',
+      bg: isMarginPositive ? 'bg-emerald-500/10' : 'bg-rose-500/10',
+    },
+    {
+      id: 'finance-margin-pct',
+      label: 'Margine Netto %',
+      value: formatPercent(marginPercent),
+      sublabel: marginPercent == null ? 'Contratti mancanti' : isMarginAlert ? 'Sotto soglia di allerta 15%' : 'Margine sopra soglia di controllo',
+      icon: Percent,
+      tone: marginPercent == null ? 'text-text-secondary' : isMarginAlert ? 'text-rose-500' : 'text-emerald-500',
+      bg: marginPercent == null ? 'bg-background' : isMarginAlert ? 'bg-rose-500/10' : 'bg-emerald-500/10',
+    },
+  ];
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          {
-            label: 'Ricavi Previsti Totali',
-            value: formatCurrency(totalRevenue),
-            sublabel: hasRevenue ? 'Somma valori contratto cantieri attivi' : 'Nessun contratto valorizzato',
-            icon: Euro,
-            tone: 'text-accent',
-            bg: 'bg-accent/10',
-          },
-          {
-            label: 'Costi Totali Reali',
-            value: formatCurrency(totalCosts),
-            sublabel: `Manodopera ${formatCurrency(data.costoManodoperaTotale ?? 0)} | Materiali ${formatCurrency(data.costoMaterialiTotale ?? 0)} | Spese ${formatCurrency(data.costoSpeseTotale ?? 0)}`,
-            icon: TrendingDown,
-            tone: 'text-rose-500',
-            bg: 'bg-rose-500/10',
-          },
-          {
-            label: 'Margine Netto',
-            value: formatCurrency(data.margine),
-            sublabel: isMarginPositive ? 'Ricavi superiori ai costi' : 'Costi superiori ai ricavi',
-            icon: isMarginPositive ? TrendingUp : AlertTriangle,
-            tone: isMarginPositive ? 'text-emerald-500' : 'text-rose-500',
-            bg: isMarginPositive ? 'bg-emerald-500/10' : 'bg-rose-500/10',
-          },
-          {
-            label: 'Margine Netto %',
-            value: formatPercent(marginPercent),
-            sublabel: marginPercent == null ? 'Contratti mancanti' : isMarginAlert ? 'Sotto soglia di allerta 15%' : 'Margine sopra soglia di controllo',
-            icon: Percent,
-            tone: marginPercent == null ? 'text-text-secondary' : isMarginAlert ? 'text-rose-500' : 'text-emerald-500',
-            bg: marginPercent == null ? 'bg-background' : isMarginAlert ? 'bg-rose-500/10' : 'bg-emerald-500/10',
-          },
-        ].map(({ label, value, sublabel, icon: Icon, tone, bg }) => (
-          <motion.div
-            key={label}
-            whileHover={{ y: -2 }}
-            className="rounded-2xl border border-border bg-card p-5"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">{label}</p>
-                <p className="text-2xl font-bold text-text-primary">{value}</p>
-                <p className="text-xs text-text-secondary">{sublabel}</p>
-              </div>
-              <div className={cn('rounded-xl p-2.5', bg, tone)}>
-                <Icon size={18} />
-              </div>
-            </div>
-          </motion.div>
-        ))}
-      </div>
+      <DashboardKpiGrid definitions={[...kpiDefinitions, ...kpiControls.customKpis]} controls={kpiControls} />
 
       <div className="rounded-2xl border border-border bg-card p-6">
         <div className="mb-5 flex items-start justify-between gap-4">

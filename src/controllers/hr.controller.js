@@ -116,6 +116,21 @@ function mapAuditSpesaRow(spesa) {
         ocr_payload: spesa.ocr_payload ?? null,
         ocr_reviewed_at: spesa.ocr_reviewed_at ?? null,
         movimenti_magazzino_count: spesa.documento?._count?.movimenti_magazzino ?? 0,
+        fattura_acquisto_id: spesa.fattura_acquisto?.id ?? null,
+        fattura_acquisto: spesa.fattura_acquisto
+            ? {
+                id: spesa.fattura_acquisto.id,
+                numero_documento: spesa.fattura_acquisto.numero_documento,
+                data_documento: spesa.fattura_acquisto.data_documento,
+                tipo_documento: spesa.fattura_acquisto.tipo_documento,
+                totale_imponibile: toNumber(spesa.fattura_acquisto.totale_imponibile),
+                totale_imposta: toNumber(spesa.fattura_acquisto.totale_imposta),
+                totale_documento: toNumber(spesa.fattura_acquisto.totale_documento),
+                pagamento_modalita: spesa.fattura_acquisto.pagamento_modalita,
+                pagamento_scadenza: spesa.fattura_acquisto.pagamento_scadenza,
+                righe_count: spesa.fattura_acquisto._count?.righe ?? 0,
+            }
+            : null,
     };
 }
 
@@ -541,6 +556,20 @@ export const getAudit = asyncHandler(async (req, res) => {
                         id: true,
                         name: true,
                         _count: { select: { movimenti_magazzino: true } },
+                    },
+                },
+                fattura_acquisto: {
+                    select: {
+                        id: true,
+                        numero_documento: true,
+                        data_documento: true,
+                        tipo_documento: true,
+                        totale_imponibile: true,
+                        totale_imposta: true,
+                        totale_documento: true,
+                        pagamento_modalita: true,
+                        pagamento_scadenza: true,
+                        _count: { select: { righe: true } },
                     },
                 },
             },

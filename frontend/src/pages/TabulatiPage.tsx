@@ -197,6 +197,19 @@ const CostBadges = ({ entry }: { entry: AuditEntry }) => {
   );
 };
 
+const PurchaseInvoiceBadge = ({ entry }: { entry: AuditEntry }) => {
+  if (entry.type !== 'spese' || !entry.fattura_acquisto) return null;
+  const invoice = entry.fattura_acquisto;
+  const total = safeNumber(invoice.totale_documento);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1 rounded-full border border-info-border bg-info-bg px-2 py-1 text-[10px] font-bold text-info-text">
+      Fattura #{invoice.numero_documento || invoice.id}
+      {total > 0 && <span>· €{total.toLocaleString('it-IT')}</span>}
+      {invoice.righe_count != null && <span>· {invoice.righe_count} righe</span>}
+    </span>
+  );
+};
+
 const EditModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () => void }) => {
   const update = useUpdateReportEntry();
   const { data: cantieri } = useCantieri();
@@ -943,6 +956,12 @@ export default function TabulatiPage() {
                               <CostBadges entry={entry} />
                             </span>
                           )}
+                          {entry.type === 'spese' && entry.fattura_acquisto && (
+                            <span className="col-span-2">
+                              Documento:{' '}
+                              <PurchaseInvoiceBadge entry={entry} />
+                            </span>
+                          )}
                           {entry.note && <span className="col-span-2">Note: <strong className="text-text-primary">{entry.note}</strong></span>}
                         </div>
 
@@ -1019,6 +1038,7 @@ export default function TabulatiPage() {
                               <MethodBadge method={entry.input_method} />
                               {entry.type === 'spese' && <LogisticaBadge status={entry.logistica_status} />}
                               {entry.type === 'spese' && <CostBadges entry={entry} />}
+                              {entry.type === 'spese' && <PurchaseInvoiceBadge entry={entry} />}
                             </div>
                           </td>
                           <td className="px-5 py-3.5"><StatusBadge status={entry.status}/></td>
