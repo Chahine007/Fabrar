@@ -180,7 +180,12 @@ export default function DocumentsTab({ cantiereId }: { cantiereId: number }) {
           icon={FileTextIcon}
           title="Nessun documento caricato"
           description="Carica DDT, fatture o scontrini per mantenere il fascicolo del cantiere completo."
-          action={{ label: 'Carica file', onClick: () => fileInputRef.current?.click() }}
+          action={(
+            <Button type="button" onClick={() => fileInputRef.current?.click()} className="gap-2">
+              <UploadCloud size={16} />
+              Carica file
+            </Button>
+          )}
         />
       ) : (
         <ResponsiveDataView

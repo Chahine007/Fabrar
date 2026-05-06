@@ -15,11 +15,12 @@ export interface Conversation {
   name: string;
   preview: string;
   timestamp: string;
+  lastActivityAt?: string | null;
   unreadCount?: number;
   type: string;
   avatar: string;
   isPinned: boolean;
-  projectContext?: { status: string; team: string };
+  cantiereId?: number | null;
   participants?: ConversationParticipant[];
 }
 
@@ -51,9 +52,12 @@ interface ApiCreatedMessage {
   id: string | number;
   conversation_id: string;
   sender_id: number | null;
+  sender_name?: string | null;
+  sender_avatar?: string | null;
   type: string;
   content: string;
   created_at: string;
+  metadata?: null | Record<string, unknown>;
 }
 
 interface NewMessagePayload {
@@ -67,14 +71,17 @@ interface ConversationUpdatedPayload {
 }
 
 interface SendMessageInput {
+  conversationId?: string | null;
   content: string;
   type?: string;
+  metadata?: null | Record<string, unknown>;
 }
 
 interface SendMessageContext {
   previousMessages?: ChatMessage[];
   previousConversations?: Conversation[];
   tempId: string;
+  conversationId: string | null;
 }
 
 function getFallbackCurrentUser(): CurrentChatUser {
@@ -115,7 +122,45 @@ export function getConversationUnreadCount(conversation: Conversation): number {
     return conversation.unreadCount;
   }
 
-  return conversation.participants?.[0]?.unread_count ?? 0;
+  const currentEmployeeId = getCurrentUserIdentity().employee_id;
+  if (currentEmployeeId != null) {
+    const currentParticipant = conversation.participants?.find(
+      (participant) => participant.employee_id === currentEmployeeId
+    );
+    if (currentParticipant) {
+      return currentParticipant.unread_count ?? 0;
+    }
+  }
+
+  return 0;
+}
+
+function getConversationPreview(content: string, type: string, metadata?: null | Record<string, unknown>): string {
+  if (type === 'shared_item') {
+    const title = typeof metadata?.title === 'string' ? metadata.title.trim() : '';
+    if (title) return `Condiviso: ${title}`;
+    if (content.trim()) return content.trim();
+    return 'Elemento condiviso';
+  }
+
+  return content.trim();
+}
+
+function getConversationSortTimestamp(conversation: Conversation): number {
+  const rawDate = conversation.lastActivityAt;
+  if (!rawDate) return 0;
+  const parsed = new Date(rawDate);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
+function sortConversations(conversations: Conversation[]): Conversation[] {
+  return [...conversations].sort((left, right) => {
+    if (left.isPinned !== right.isPinned) {
+      return left.isPinned ? -1 : 1;
+    }
+
+    return getConversationSortTimestamp(right) - getConversationSortTimestamp(left);
+  });
 }
 
 function normalizeConversation(conversation: Conversation): Conversation {
@@ -123,6 +168,8 @@ function normalizeConversation(conversation: Conversation): Conversation {
     ...conversation,
     type: String(conversation.type || 'system').toLowerCase(),
     unreadCount: getConversationUnreadCount(conversation),
+    lastActivityAt: conversation.lastActivityAt ?? null,
+    cantiereId: typeof conversation.cantiereId === 'number' ? conversation.cantiereId : null,
   };
 }
 
@@ -130,20 +177,20 @@ function mapApiCreatedMessageToChatMessage(
   message: ApiCreatedMessage,
   currentUser?: CurrentChatUser | null
 ): ChatMessage {
-  const senderName = buildSenderName(message.sender_id, currentUser);
+  const senderName = message.sender_name?.trim() || buildSenderName(message.sender_id, currentUser);
   const isMe = getCurrentUserIdentity(currentUser).employee_id === message.sender_id;
 
   return {
     id: String(message.id),
     senderId: message.sender_id != null ? String(message.sender_id) : 'system',
     senderName,
-    senderAvatar: buildAvatar(senderName, message.sender_id),
+    senderAvatar: message.sender_avatar || buildAvatar(senderName, message.sender_id),
     type: message.type,
     content: message.content,
     timestamp: formatMessageTime(message.created_at),
     isMe,
     status: 'read',
-    metadata: null,
+    metadata: message.metadata ?? null,
   };
 }
 
@@ -151,6 +198,7 @@ function createOptimisticMessage(
   tempId: string,
   content: string,
   type: string,
+  metadata: null | Record<string, unknown>,
   currentUser?: CurrentChatUser | null
 ): ChatMessage {
   const identity = getCurrentUserIdentity(currentUser);
@@ -170,6 +218,7 @@ function createOptimisticMessage(
     isMe: true,
     status: 'sent',
     metadata: {
+      ...(metadata ?? {}),
       optimistic: true,
       clientCreatedAt: Date.now(),
     },
@@ -202,11 +251,11 @@ function mergeIncomingMessage(existingMessages: ChatMessage[], incomingMessage: 
 function updateConversationList(
   conversations: Conversation[] | undefined,
   conversationId: string,
-  updates: Partial<Pick<Conversation, 'preview' | 'timestamp' | 'unreadCount'>>
+  updates: Partial<Pick<Conversation, 'preview' | 'timestamp' | 'unreadCount' | 'lastActivityAt'>>
 ): Conversation[] | undefined {
   if (!conversations) return conversations;
 
-  return conversations.map((conversation) =>
+  return sortConversations(conversations.map((conversation) =>
     conversation.id === conversationId
       ? normalizeConversation({
           ...conversation,
@@ -217,7 +266,7 @@ function updateConversationList(
               : getConversationUnreadCount(conversation),
         })
       : normalizeConversation(conversation)
-  );
+  ));
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
@@ -235,7 +284,7 @@ export function useConversations() {
     queryKey: conversationKeys.list(),
     queryFn: () => fetchJson<Conversation[]>('/api/conversations'),
     staleTime: 10_000,
-    select: (conversations) => conversations.map(normalizeConversation),
+    select: (conversations) => sortConversations(conversations.map(normalizeConversation)),
   });
 }
 
@@ -245,26 +294,42 @@ export function useTotalUnread(): number {
 }
 
 export function useMessages(conversationId: string | null) {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: conversationId ? conversationKeys.messages(conversationId) : ['messages', 'idle'],
     queryFn: () => fetchJson<ChatMessage[]>(`/api/conversations/${conversationId}/messages`),
     enabled: Boolean(conversationId),
     staleTime: 5_000,
   });
+
+  useEffect(() => {
+    if (!conversationId || !query.data) return;
+
+    queryClient.setQueryData<Conversation[]>(
+      conversationKeys.list(),
+      (conversations) =>
+        updateConversationList(conversations, conversationId, {
+          unreadCount: 0,
+        })
+    );
+  }, [conversationId, query.data, queryClient]);
+
+  return query;
 }
 
 export function useSendMessage(conversationId: string | null, currentUser?: CurrentChatUser | null) {
   const queryClient = useQueryClient();
 
   return useMutation<ApiCreatedMessage, Error, SendMessageInput, SendMessageContext>({
-    mutationFn: async ({ content, type = 'text' }) => {
-      if (!conversationId) {
+    mutationFn: async ({ conversationId: targetConversationId, content, type = 'text', metadata = null }) => {
+      const resolvedConversationId = targetConversationId ?? conversationId;
+      if (!resolvedConversationId) {
         throw new Error('Conversazione non selezionata');
       }
 
-      const response = await apiFetch(`/api/conversations/${conversationId}/messages`, {
+      const response = await apiFetch(`/api/conversations/${resolvedConversationId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ content, type }),
+        body: JSON.stringify({ content, type, metadata }),
       });
 
       if (!response.ok) {
@@ -274,30 +339,34 @@ export function useSendMessage(conversationId: string | null, currentUser?: Curr
 
       return response.json() as Promise<ApiCreatedMessage>;
     },
-    onMutate: async ({ content, type = 'text' }) => {
+    onMutate: async ({ conversationId: targetConversationId, content, type = 'text', metadata = null }) => {
       const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const resolvedConversationId = targetConversationId ?? conversationId;
 
-      if (!conversationId) {
-        return { tempId };
+      if (!resolvedConversationId) {
+        return { tempId, conversationId: null };
       }
 
-      await queryClient.cancelQueries({ queryKey: conversationKeys.messages(conversationId) });
+      await queryClient.cancelQueries({ queryKey: conversationKeys.messages(resolvedConversationId) });
 
-      const previousMessages = queryClient.getQueryData<ChatMessage[]>(conversationKeys.messages(conversationId));
+      const previousMessages = queryClient.getQueryData<ChatMessage[]>(conversationKeys.messages(resolvedConversationId));
       const previousConversations = queryClient.getQueryData<Conversation[]>(conversationKeys.list());
-      const optimisticMessage = createOptimisticMessage(tempId, content, type, currentUser);
+      const optimisticMessage = createOptimisticMessage(tempId, content, type, metadata, currentUser);
+      const preview = getConversationPreview(content, type, metadata);
+      const nowIso = new Date().toISOString();
 
       queryClient.setQueryData<ChatMessage[]>(
-        conversationKeys.messages(conversationId),
+        conversationKeys.messages(resolvedConversationId),
         (existingMessages = []) => [...existingMessages, optimisticMessage]
       );
 
       queryClient.setQueryData<Conversation[]>(
         conversationKeys.list(),
         (conversations) =>
-          updateConversationList(conversations, conversationId, {
-            preview: content,
+          updateConversationList(conversations, resolvedConversationId, {
+            preview,
             timestamp: optimisticMessage.timestamp,
+            lastActivityAt: nowIso,
             unreadCount: 0,
           })
       );
@@ -306,13 +375,14 @@ export function useSendMessage(conversationId: string | null, currentUser?: Curr
         previousMessages,
         previousConversations,
         tempId,
+        conversationId: resolvedConversationId,
       };
     },
     onError: (_error, _variables, context) => {
-      if (!conversationId || !context) return;
+      if (!context?.conversationId) return;
 
       if (context.previousMessages) {
-        queryClient.setQueryData(conversationKeys.messages(conversationId), context.previousMessages);
+        queryClient.setQueryData(conversationKeys.messages(context.conversationId), context.previousMessages);
       }
 
       if (context.previousConversations) {
@@ -320,12 +390,13 @@ export function useSendMessage(conversationId: string | null, currentUser?: Curr
       }
     },
     onSuccess: (createdMessage, _variables, context) => {
-      if (!conversationId) return;
+      if (!context?.conversationId) return;
 
       const mappedMessage = mapApiCreatedMessageToChatMessage(createdMessage, currentUser);
+      const preview = getConversationPreview(mappedMessage.content, mappedMessage.type, mappedMessage.metadata);
 
       queryClient.setQueryData<ChatMessage[]>(
-        conversationKeys.messages(conversationId),
+        conversationKeys.messages(context.conversationId),
         (existingMessages = []) => {
           const withoutOptimistic = context?.tempId
             ? existingMessages.filter((message) => message.id !== context.tempId)
@@ -342,9 +413,10 @@ export function useSendMessage(conversationId: string | null, currentUser?: Curr
       queryClient.setQueryData<Conversation[]>(
         conversationKeys.list(),
         (conversations) =>
-          updateConversationList(conversations, conversationId, {
-            preview: mappedMessage.content,
+          updateConversationList(conversations, context.conversationId, {
+            preview,
             timestamp: mappedMessage.timestamp,
+            lastActivityAt: createdMessage.created_at,
             unreadCount: 0,
           })
       );
@@ -376,12 +448,12 @@ export function useCreateConversation() {
         conversationKeys.list(),
         (existingConversations = []) => {
           if (existingConversations.some((item) => item.id === normalizedConversation.id)) {
-            return existingConversations.map((item) =>
+            return sortConversations(existingConversations.map((item) =>
               item.id === normalizedConversation.id ? normalizedConversation : item
-            );
+            ));
           }
 
-          return [normalizedConversation, ...existingConversations];
+          return sortConversations([normalizedConversation, ...existingConversations]);
         }
       );
 
@@ -405,6 +477,7 @@ export function useChatSockets(currentUser?: CurrentChatUser | null) {
       if (!conversationId || !message) return;
 
       const mappedMessage = mapApiCreatedMessageToChatMessage(message, identity);
+      const preview = getConversationPreview(mappedMessage.content, mappedMessage.type, mappedMessage.metadata);
       const messagesKey = conversationKeys.messages(conversationId);
       const existingMessages = queryClient.getQueryData<ChatMessage[]>(messagesKey);
 
@@ -419,8 +492,9 @@ export function useChatSockets(currentUser?: CurrentChatUser | null) {
         conversationKeys.list(),
         (conversations) =>
           updateConversationList(conversations, conversationId, {
-            preview: mappedMessage.content,
+            preview,
             timestamp: mappedMessage.timestamp,
+            lastActivityAt: message.created_at,
           })
       );
     };

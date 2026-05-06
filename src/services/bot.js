@@ -5,7 +5,9 @@ import crypto from "crypto";
 import { DateTime } from "luxon";
 import logger from "../logger.js";
 import {
+  getDb,
   findEmployeeByTelegramId,
+  findReportForDate,
   updateEmployee,
   insertMessageLog,
   cantiereExists,
@@ -118,6 +120,17 @@ function parseEditCommand(text) {
 
 function localReportDate(offsetDays = 0) {
   return DateTime.now().setZone(TIMEZONE).plus({ days: offsetDays }).toFormat("yyyy-LL-dd");
+}
+
+async function deleteReportForDate(employeeId, reportDate) {
+  if (!employeeId || !reportDate) return false;
+
+  const report = await findReportForDate(employeeId, reportDate);
+  if (!report) return false;
+
+  const prisma = await getDb();
+  await prisma.report.delete({ where: { id: report.id } });
+  return true;
 }
 
 async function writeStreamToFile(stream, filePath) {
@@ -253,8 +266,10 @@ export async function handleCallbackQuery(cq) {
     await tgEditMessageText(chatId, messageId, msg);
     await tgAnswerCallbackQuery(cq.id, "Salvato con successo!");
   } else if (data === "cancel") {
+    const reportDate = employee.pending_report_date || localReportDate();
+    await deleteReportForDate(employee.id, reportDate);
     await updateEmployee(employee.id, { pending_json: null, pending_text: null, pending_date: null, pending_report_date: null });
-    await tgEditMessageText(chatId, messageId, "❌ Bozza annullata. Invia un nuovo messaggio per ricominciare.");
+    await tgEditMessageText(chatId, messageId, "❌ Bozza annullata. Report eliminato. Invia un nuovo messaggio per ricominciare.");
     await tgAnswerCallbackQuery(cq.id, "Annullato.");
   }
 }
@@ -341,8 +356,10 @@ export async function handleTelegramUpdate(update) {
   await updateEmployee(employee.id, { chat_id: chatId });
 
   if (isCancel(text)) {
+    const reportDate = employee.pending_report_date || localReportDate();
+    await deleteReportForDate(employee.id, reportDate);
     await updateEmployee(employee.id, { pending_json: null, pending_text: null, pending_date: null, pending_report_date: null });
-    await tgSendMessage(chatId, "ℹ️ Operazione annullata. Sono pronto a ricevere il report di oggi.");
+    await tgSendMessage(chatId, "ℹ️ Operazione annullata. Report eliminato. Sono pronto a ricevere il report di oggi.");
     return;
   }
 

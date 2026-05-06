@@ -34,6 +34,93 @@ function buildAvatar(name, type) {
     return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || "U")}&background=random`;
 }
 
+function parseSharedItemPayload(rawContent) {
+    if (typeof rawContent !== "string" || !rawContent.trim()) {
+        return { text: "", metadata: null };
+    }
+
+    try {
+        const parsed = JSON.parse(rawContent);
+        if (!parsed || typeof parsed !== "object") {
+            return { text: rawContent, metadata: null };
+        }
+
+        const text = typeof parsed.text === "string"
+            ? parsed.text
+            : typeof parsed.content === "string"
+                ? parsed.content
+                : "";
+        const metadata = parsed.metadata && typeof parsed.metadata === "object"
+            ? parsed.metadata
+            : null;
+
+        return { text, metadata };
+    } catch {
+        return { text: rawContent, metadata: null };
+    }
+}
+
+function serializeMessagePayload(type, content, metadata) {
+    if (type !== "shared_item") {
+        return typeof content === "string" ? content : "";
+    }
+
+    return JSON.stringify({
+        text: typeof content === "string" ? content : "",
+        metadata: metadata && typeof metadata === "object" ? metadata : null,
+    });
+}
+
+function getMessageContentAndMetadata(message) {
+    if (message?.type !== "shared_item") {
+        return {
+            content: typeof message?.content === "string" ? message.content : "",
+            metadata: null,
+        };
+    }
+
+    const { text, metadata } = parseSharedItemPayload(message.content);
+    return {
+        content: text,
+        metadata,
+    };
+}
+
+function getMessagePreview(message) {
+    const { content, metadata } = getMessageContentAndMetadata(message);
+    if (message?.type === "shared_item") {
+        const title = typeof metadata?.title === "string" ? metadata.title.trim() : "";
+        if (title) return `Condiviso: ${title}`;
+        if (content) return content;
+        return "Elemento condiviso";
+    }
+
+    return content || "Nessun messaggio";
+}
+
+function mapMessageResponse(message, currentEmployeeId) {
+    const senderName = message.sender
+        ? `${message.sender.nome || ""} ${message.sender.cognome || ""}`.trim() || `Utente ${message.sender_id}`
+        : "Sistema";
+    const senderAvatar = message.sender
+        ? `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=random`
+        : "";
+    const { content, metadata } = getMessageContentAndMetadata(message);
+
+    return {
+        id: message.id,
+        conversation_id: message.conversation_id,
+        sender_id: message.sender_id,
+        sender_name: senderName,
+        sender_avatar: senderAvatar,
+        type: message.type,
+        content,
+        created_at: message.created_at,
+        metadata,
+        is_me: currentEmployeeId != null && message.sender_id === currentEmployeeId,
+    };
+}
+
 function mapConversationSummary(conversation, currentEmployeeId) {
     const conversationType = String(conversation.type || "system").toLowerCase();
     const lastMessage = conversation.messages?.[0] ?? null;
@@ -51,13 +138,14 @@ function mapConversationSummary(conversation, currentEmployeeId) {
     return {
         id: conversation.id,
         name: displayName,
-        preview: lastMessage ? lastMessage.content : "Nessun messaggio",
+        preview: lastMessage ? getMessagePreview(lastMessage) : "Nessun messaggio",
         timestamp: lastMessage ? formatMessageTime(lastMessage.created_at) : "",
+        lastActivityAt: lastMessage?.created_at ?? conversation.created_at,
         unreadCount: currentParticipant?.unread_count || 0,
         type: conversationType,
         avatar: buildAvatar(displayName, conversationType),
         isPinned: !!conversation.isPinned,
-        projectContext: conversation.cantiere_id ? { status: "In Corso", team: "Staff Progetto" } : undefined,
+        cantiereId: conversation.cantiere_id ?? null,
         participants: (conversation.participants || []).map((participant) => ({
             employee_id: participant.employee_id,
             unread_count: participant.unread_count,
@@ -285,24 +373,18 @@ export const getConversationMessages = asyncHandler(async (req, res) => {
     });
 
     const mapped = messages.map((message) => {
-        const senderName = message.sender
-            ? `${message.sender.nome || ""} ${message.sender.cognome || ""}`.trim() || `Utente ${message.sender_id}`
-            : "Sistema";
-        const senderAvatar = message.sender
-            ? `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=random`
-            : "";
-
+        const response = mapMessageResponse(message, currentUserId);
         return {
-            id: message.id,
-            senderId: message.sender_id ? String(message.sender_id) : "system",
-            senderName,
-            senderAvatar,
-            type: message.type,
-            content: message.content,
-            timestamp: formatMessageTime(message.created_at),
-            isMe: currentUserId && message.sender_id === currentUserId,
+            id: response.id,
+            senderId: response.sender_id ? String(response.sender_id) : "system",
+            senderName: response.sender_name,
+            senderAvatar: response.sender_avatar,
+            type: response.type,
+            content: response.content,
+            timestamp: formatMessageTime(response.created_at),
+            isMe: !!response.is_me,
             status: "read",
-            metadata: null,
+            metadata: response.metadata,
         };
     });
 
@@ -311,10 +393,12 @@ export const getConversationMessages = asyncHandler(async (req, res) => {
 
 export const createMessage = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { content, type } = req.body;
+    const { content, type, metadata } = req.body;
     const prisma = getDb();
     const currentUserId = getCurrentEmployeeId(req, res);
     if (currentUserId == null) return;
+    const normalizedType = typeof type === "string" && type.trim() ? type.trim() : "text";
+    const normalizedContent = typeof content === "string" ? content.trim() : "";
 
     const participant = await prisma.conversationParticipant.findUnique({
         where: {
@@ -329,13 +413,25 @@ export const createMessage = asyncHandler(async (req, res) => {
         return res.status(403).json({ error: "Accesso negato: non partecipi a questa conversazione." });
     }
 
+    if (!normalizedContent && normalizedType !== "shared_item") {
+        return res.status(400).json({ error: "Il contenuto del messaggio è obbligatorio." });
+    }
+
     const { newMessage, participants } = await prisma.$transaction(async (tx) => {
         const createdMessage = await tx.message.create({
             data: {
                 conversation_id: id,
                 sender_id: currentUserId,
-                type,
-                content,
+                type: normalizedType,
+                content: serializeMessagePayload(normalizedType, normalizedContent, metadata),
+            },
+            include: {
+                sender: {
+                    select: {
+                        nome: true,
+                        cognome: true,
+                    },
+                },
             },
         });
 
@@ -362,13 +458,14 @@ export const createMessage = asyncHandler(async (req, res) => {
             participants: updatedParticipants,
         };
     });
+    const mappedMessage = mapMessageResponse(newMessage, currentUserId);
 
     const io = req.app.get("io");
     if (io) {
         for (const conversationParticipant of participants) {
             io.to(employeeRoom(conversationParticipant.employee_id)).emit("new_message", {
                 conversationId: id,
-                message: newMessage,
+                message: mappedMessage,
             });
 
             io.to(employeeRoom(conversationParticipant.employee_id)).emit("conversation_updated", {
@@ -378,5 +475,5 @@ export const createMessage = asyncHandler(async (req, res) => {
         }
     }
 
-    res.status(201).json(newMessage);
+    res.status(201).json(mappedMessage);
 });
