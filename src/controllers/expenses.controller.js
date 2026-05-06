@@ -1,7 +1,7 @@
 import { insertSpesa, listPricebook, getDb } from "../db/index.js";
 import { normalizeOptionalText, parseIdParam } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { ValidationStatus } from "../constants.js";
+import { LogisticaStatus, ValidationStatus } from "../constants.js";
 import {
     ensureCantiereActive,
     ensureTaskBelongsToCantiere,
@@ -16,11 +16,6 @@ import {
     parseImportedMoney,
     parseImportedTimestamp,
 } from "../services/genyaImportParser.js";
-import {
-    getDefaultWarehouseLocation,
-    normalizeAutomaticLoadLine,
-    upsertArticleAndCreateLoadMovement,
-} from "../domain/magazzino/warehouseService.js";
 
 export {
     parseCantiereIdFromReferer,
@@ -72,25 +67,6 @@ function buildExpenseInclude() {
 
 function hasMaterialImportFields(item) {
     return MATERIAL_IMPORT_KEYS.some((key) => item?.[key] != null && item[key] !== "");
-}
-
-function hasExplicitMaterialCode(item) {
-    return Boolean(
-        normalizeOptionalText(item?.codice_sku)
-        || normalizeOptionalText(item?.sku)
-        || normalizeOptionalText(item?.codice_articolo)
-        || normalizeOptionalText(item?.cod_articolo)
-    );
-}
-
-function buildReconcileRow(reason, normalizedLine, item) {
-    return {
-        reason,
-        codice_sku: normalizedLine.codice_sku || null,
-        descrizione: normalizedLine.descrizione,
-        quantita: normalizedLine.quantita?.toString() ?? null,
-        fattura_rif: normalizeOptionalText(item?.fattura_rif),
-    };
 }
 
 async function ensureDocumentBelongsToCantiere(prisma, documentId, cantiereId) {
@@ -190,76 +166,36 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
     const employeeId = Number(uploaderEmployeeId);
     const importStats = {
         speseCreate: 0,
-        articoliCreati: 0,
-        movimentiCaricoCreati: 0,
-        righeDaRiconciliare: [],
-        righeMateriali: 0,
+        righeLogisticaPending: 0,
         righeSpese: 0,
         warnings: [],
     };
 
     await prisma.$transaction(async (tx) => {
         const rootWbsCache = new Map();
-        const defaultLocation = await getDefaultWarehouseLocation(tx);
         for (const item of spese_bulk) {
             const importo = parseImportedMoney(item.importo);
             if (!Number.isFinite(importo) || importo <= 0) throw new Error("Importi devono essere > 0.");
 
             const hasMaterialFields = hasMaterialImportFields(item);
-            const isMaterialImport = hasExplicitMaterialCode(item);
             const cantiereId = parseIdParam(item.cantiere_id);
-            if (!cantiereId && !isMaterialImport) throw new Error("Ogni spesa deve essere associata a un cantiere.");
+            if (!cantiereId) throw new Error("Ogni spesa deve essere associata a un cantiere.");
 
-            if (cantiereId) {
-                if (!(await canAccessCantiere(tx, req.user, cantiereId, {
-                    globalRoles: ["ADMIN", "HR"],
-                    ownerRoles: ["PROJECT_MANAGER"],
-                }))) {
-                    throw new Error(`Accesso negato al cantiere ${cantiereId}.`);
-                }
-
-                const cantiere = await tx.cantiere.findFirst({ where: { id: cantiereId, attivo: 1 }, select: { id: true } });
-                if (!cantiere) throw new Error(`Cantiere non valido o inattivo: ${cantiereId}.`);
+            if (!(await canAccessCantiere(tx, req.user, cantiereId, {
+                globalRoles: ["ADMIN", "HR"],
+                ownerRoles: ["PROJECT_MANAGER"],
+            }))) {
+                throw new Error(`Accesso negato al cantiere ${cantiereId}.`);
             }
 
-            if (isMaterialImport) {
-                importStats.righeMateriali += 1;
-                const normalizedLine = normalizeAutomaticLoadLine(item);
-                const hasLoadableShape = normalizedLine.codice_sku && normalizedLine.quantita && normalizedLine.costo_unitario;
-
-                if (!hasLoadableShape) {
-                    importStats.righeDaRiconciliare.push(buildReconcileRow(
-                        !normalizedLine.codice_sku ? "SKU_MISSING" : "QTY_OR_COST_MISSING",
-                        normalizedLine,
-                        item
-                    ));
-                    continue;
-                }
-
-                if (!defaultLocation) {
-                    importStats.warnings.push("Ubicazione DEFAULT/PRINCIPALE mancante: righe materiali Genya non caricate a magazzino.");
-                    importStats.righeDaRiconciliare.push(buildReconcileRow("DEFAULT_LOCATION_MISSING", normalizedLine, item));
-                    continue;
-                }
-
-                const loadResult = await upsertArticleAndCreateLoadMovement(tx, item, {
-                    ubicazioneId: defaultLocation.id,
-                    userId: req.user?.id,
-                });
-
-                if (loadResult.status === "loaded") {
-                    importStats.movimentiCaricoCreati += 1;
-                    if (loadResult.articleCreated) importStats.articoliCreati += 1;
-                } else {
-                    importStats.righeDaRiconciliare.push(buildReconcileRow(loadResult.reason, normalizedLine, item));
-                }
-                continue;
-            }
+            const cantiere = await tx.cantiere.findFirst({ where: { id: cantiereId, attivo: 1 }, select: { id: true } });
+            if (!cantiere) throw new Error(`Cantiere non valido o inattivo: ${cantiereId}.`);
 
             if (hasMaterialFields) {
-                importStats.warnings.push("Righe Genya con dati materiali ma senza SKU/codice articolo: importate come spese, non come carichi magazzino.");
+                importStats.warnings.push("Import Genya trattato come coda logistica: nessun carico magazzino viene creato dal CSV.");
             }
             importStats.righeSpese += 1;
+            importStats.righeLogisticaPending += 1;
             if (!rootWbsCache.has(cantiereId)) {
                 const rootWbs = await tx.wbsNode.findFirst({ where: { cantiere_id: cantiereId, parent_id: null }, select: { id: true } });
                 rootWbsCache.set(cantiereId, rootWbs?.id ?? null);
@@ -278,24 +214,24 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
                     input_method: "import_genya",
                     fattura_rif: normalizeOptionalText(item.fattura_rif),
                     stato_validazione: ValidationStatus.PENDING,
+                    logistica_status: LogisticaStatus.PENDING_OCR,
                 },
             });
             importStats.speseCreate += 1;
         }
     });
-    const righeSalvate = importStats.speseCreate + importStats.movimentiCaricoCreati;
     res.json({
         ok: true,
         righeProcessate: spese_bulk.length,
-        salvate: righeSalvate,
-        inserted: righeSalvate,
+        salvate: importStats.speseCreate,
+        inserted: importStats.speseCreate,
         speseCreate: importStats.speseCreate,
         righeSpese: importStats.righeSpese,
-        righeMateriali: importStats.righeMateriali,
-        articoliCreati: importStats.articoliCreati,
-        movimentiCaricoCreati: importStats.movimentiCaricoCreati,
-        righeDaRiconciliare: importStats.righeDaRiconciliare.length,
-        righeDaRiconciliareDettaglio: importStats.righeDaRiconciliare,
+        righeLogisticaPending: importStats.righeLogisticaPending,
+        articoliCreati: 0,
+        movimentiCaricoCreati: 0,
+        righeDaRiconciliare: 0,
+        righeDaRiconciliareDettaglio: [],
         warnings: [...new Set(importStats.warnings)],
     });
 });

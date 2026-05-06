@@ -107,6 +107,12 @@ function mapAuditSpesaRow(spesa) {
         cantiere_id:   spesa.cantiere_id || null,
         task_id: spesa.task_id ?? null,
         task_title: spesa.task?.title ?? null,
+        documento_id: spesa.documento_id ?? null,
+        documento_nome: spesa.documento?.name ?? null,
+        logistica_status: spesa.logistica_status ?? null,
+        ocr_payload: spesa.ocr_payload ?? null,
+        ocr_reviewed_at: spesa.ocr_reviewed_at ?? null,
+        movimenti_magazzino_count: spesa.documento?._count?.movimenti_magazzino ?? 0,
     };
 }
 
@@ -525,6 +531,13 @@ export const getAudit = asyncHandler(async (req, res) => {
                 employee: { select: { nome: true, cognome: true } },
                 cantiere: { select: { nome: true } },
                 task: { select: { id: true, title: true } },
+                documento: {
+                    select: {
+                        id: true,
+                        name: true,
+                        _count: { select: { movimenti_magazzino: true } },
+                    },
+                },
             },
             orderBy: [{ timestamp_utc: "desc" }, { id: "desc" }],
             take: pageWindow,

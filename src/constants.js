@@ -11,6 +11,14 @@ export const ValidationStatus = Object.freeze({
     REJECTED: 'REJECTED',
 });
 
+export const LogisticaStatus = Object.freeze({
+    NOT_REQUIRED: 'NOT_REQUIRED',
+    PENDING_OCR: 'PENDING_OCR',
+    OCR_REVIEW: 'OCR_REVIEW',
+    LOADED_TO_WAREHOUSE: 'LOADED_TO_WAREHOUSE',
+    RECONCILIATION_REQUIRED: 'RECONCILIATION_REQUIRED',
+});
+
 export const AUDIT_TYPE = Object.freeze({
     ORE:       'ore',
     SPESE:     'spese',

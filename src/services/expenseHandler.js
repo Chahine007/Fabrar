@@ -8,9 +8,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import logger from '../logger.js';
-import { getCantieriAttivi, insertSpesa } from '../db/index.js';
+import { getCantieriAttivi, insertSpesa, getDb } from '../db/index.js';
 import { tgGetFile, tgDownloadFile, tgEditMessageText } from './telegram.js';
-import { extractSpesaFromImage, getOpenAIUserFacingMessage } from './openai.js';
+import { extractInvoiceOcrFromFile, getOpenAIUserFacingMessage } from './openai.js';
 import {
     createPendingExpense,
     createPendingWarehouseLoad,
@@ -20,6 +20,10 @@ import {
     deletePendingWarehouseLoad,
 } from '../domain/bot/botSessionService.js';
 import { normalizeAutomaticLoadLine } from '../domain/magazzino/warehouseService.js';
+import {
+    matchSpesaOcr,
+    normalizeInvoiceOcrPayload,
+} from '../domain/logistica/speseOcrService.js';
 
 async function writeStreamToFile(stream, filePath) {
     await new Promise((resolve, reject) => {
@@ -66,7 +70,14 @@ function formatReconcilePreview(rows) {
 
 export async function handleExpensePhoto(message, employee, sendStatus, statusMsgId) {
     const chatId = message.chat.id;
-    const photo  = message.photo[message.photo.length - 1];
+    const document = message.document ?? null;
+    if (document && document.mime_type !== 'application/pdf' && !String(document.mime_type ?? '').startsWith('image/')) {
+        await sendStatus('⛔ Documento non supportato. Invia una foto o un PDF da gestire via web.');
+        return;
+    }
+    const photo  = message.photo?.[message.photo.length - 1] ?? document;
+    const mimeType = document?.mime_type ?? 'image/jpeg';
+    const filename = document?.file_name ?? 'telegram-documento';
 
     let tmpPath;
     let base64Image;
@@ -86,73 +97,136 @@ export async function handleExpensePhoto(message, employee, sendStatus, statusMs
         await safeUnlink(tmpPath);
     }
 
-    await sendStatus('🧠 Lettura dello scontrino tramite AI in corso...');
-    let spesa;
+    await sendStatus('🧠 Lettura del documento tramite AI in corso...');
+    let ocrPayload;
     try {
-        spesa = await extractSpesaFromImage(base64Image);
+        ocrPayload = normalizeInvoiceOcrPayload(await extractInvoiceOcrFromFile(base64Image, mimeType, filename));
     } catch (err) {
-        logger.error({ err, event: 'extract_spesa_error' }, 'extract_spesa_error');
+        logger.error({ err, event: 'extract_invoice_ocr_error' }, 'extract_invoice_ocr_error');
         await sendStatus(getOpenAIUserFacingMessage(err, {
-            default: '⚠️ Non sono riuscito a leggere l\'importo. Assicurati che l\'immagine sia chiara o inserisci la spesa manualmente.',
+            default: '⚠️ Non sono riuscito a leggere il documento. Assicurati che l\'immagine sia chiara o inserisci la spesa manualmente.',
         }));
         return;
     }
 
-    const loadableRows = getLoadableMaterialRows(spesa.righe_materiali);
+    const loadableRows = getLoadableMaterialRows(ocrPayload.righe_materiali);
     if (loadableRows.length > 0) {
-        const reconcileRows = getReconcileMaterialRows(spesa.righe_materiali);
+        const prisma = getDb();
+        if (!employee.user_id) {
+            await tgEditMessageText(
+                chatId,
+                statusMsgId,
+                'Documento materiali rilevato, ma il dipendente non è collegato a un utente web. Collega l’account prima di registrare carichi da Telegram.'
+            );
+            return;
+        }
+        const linkedUser = await prisma.user.findUnique({
+            where: { id: employee.user_id },
+            select: { role: true },
+        });
+        const { candidates: matches } = await matchSpesaOcr(prisma, {
+            ocrPayload,
+            user: {
+                id: employee.user_id,
+                employee_id: employee.id,
+                role: linkedUser?.role ?? employee.ruolo,
+            },
+        });
+        const bestMatch = matches[0];
+        if (!bestMatch || bestMatch.strength === 'none') {
+            await tgEditMessageText(
+                chatId,
+                statusMsgId,
+                [
+                    '📦 **Documento materiali rilevato**',
+                    `Tipo: ${ocrPayload.document_type || 'UNKNOWN'}`,
+                    ocrPayload.fornitore?.ragione_sociale ? `Fornitore: ${ocrPayload.fornitore.ragione_sociale}` : null,
+                    ocrPayload.totale_documento ? `Totale: ${ocrPayload.totale_documento}€` : null,
+                    '',
+                    formatMaterialPreview(loadableRows),
+                    '',
+                    'Non ho trovato una spesa Genya compatibile in coda logistica.',
+                    'Nessuna spesa o carico è stato creato. Apri Tabulati e usa "Analizza fattura" sulla riga Genya corretta.',
+                ].filter(Boolean).join('\n')
+            );
+            return;
+        }
+
+        const reconcileRows = getReconcileMaterialRows(ocrPayload.righe_materiali);
         const sessionId = await createPendingWarehouseLoad(employee.id, {
-            document_type: spesa.document_type,
-            importo: spesa.importo,
-            fornitore: spesa.fornitore,
-            descrizione: spesa.descrizione,
-            righe_materiali: spesa.righe_materiali,
+            mode: 'genya_ocr_match',
+            spesa_id: bestMatch.spesa.id,
+            document_id: bestMatch.spesa.documento_id ?? null,
+            match: {
+                score: bestMatch.score,
+                strength: bestMatch.strength,
+                reasons: bestMatch.reasons,
+            },
+            ocr_payload: ocrPayload,
+            righe_materiali: ocrPayload.righe_materiali,
         });
 
         const moreRows = loadableRows.length > 6 ? `\n...altre ${loadableRows.length - 6} righe` : '';
         const txt = [
-            '📦 *Documento materiali rilevato*',
-            `Tipo: ${spesa.document_type || 'UNKNOWN'}`,
-            spesa.fornitore ? `Fornitore: ${spesa.fornitore}` : null,
-            spesa.importo ? `Totale: ${spesa.importo}€` : null,
+            '📦 **Documento materiali rilevato**',
+            `Tipo: ${ocrPayload.document_type || 'UNKNOWN'}`,
+            ocrPayload.fornitore?.ragione_sociale ? `Fornitore: ${ocrPayload.fornitore.ragione_sociale}` : null,
+            ocrPayload.totale_documento ? `Totale: ${ocrPayload.totale_documento}€` : null,
+            '',
+            `Match Genya: spesa #${bestMatch.spesa.id} (${bestMatch.strength}, score ${bestMatch.score})`,
+            bestMatch.reasons?.length ? `Motivo: ${bestMatch.reasons.join(', ')}` : null,
             '',
             formatMaterialPreview(loadableRows) + moreRows,
             reconcileRows.length ? `\nDa riconciliare manualmente:\n${formatReconcilePreview(reconcileRows)}` : null,
             '',
-            "Vuoi registrare il carico a magazzino sull'ubicazione DEFAULT/PRINCIPALE?",
+            "Vuoi agganciare questa fattura alla spesa Genya e registrare il carico a magazzino?",
         ].filter(Boolean).join('\n');
 
         await tgEditMessageText(chatId, statusMsgId, txt, {
             inline_keyboard: [
-                [{ text: '✅ Registra carico magazzino', callback_data: `carico:${sessionId}:ok` }],
-                [{ text: '❌ Non caricare, registra come spesa', callback_data: `carico:${sessionId}:no` }],
+                [{ text: '✅ Conferma carico Genya', callback_data: `carico:${sessionId}:ok` }],
+                [{ text: '❌ Annulla', callback_data: `carico:${sessionId}:no` }],
             ],
         });
+        return;
+    }
+
+    const simpleExpense = {
+        importo: ocrPayload.totale_documento,
+        fornitore: ocrPayload.fornitore?.ragione_sociale ?? null,
+        descrizione: [
+            ocrPayload.numero_documento ? `Doc. ${ocrPayload.numero_documento}` : null,
+            ocrPayload.document_type,
+        ].filter(Boolean).join(' - ') || null,
+    };
+
+    if (typeof simpleExpense.importo !== 'number' || simpleExpense.importo <= 0) {
+        await sendStatus('⚠️ Non ho trovato un totale valido. Inserisci la spesa manualmente o invia una foto più leggibile.');
         return;
     }
 
     const cantieri = await getCantieriAttivi();
     if (!cantieri || cantieri.length === 0) {
         try {
-            await insertSpesa(employee.id, null, spesa.importo, spesa.fornitore, spesa.descrizione, 'TELEGRAM_OCR', null);
-            await sendStatus(`🧾 Spesa rilevata: ${spesa.importo}€ (${spesa.fornitore || 'Ignoto'}).\n⚠️ Salvata come 'In sospeso': nessun cantiere attivo.`);
+            await insertSpesa(employee.id, null, simpleExpense.importo, simpleExpense.fornitore, simpleExpense.descrizione, 'TELEGRAM_OCR', null);
+            await sendStatus(`🧾 Spesa rilevata: ${simpleExpense.importo}€ (${simpleExpense.fornitore || 'Ignoto'}).\n⚠️ Salvata come 'In sospeso': nessun cantiere attivo.`);
         } catch (err) {
             logger.error({ err, event: 'insert_orphan_spesa_failed' }, 'insert_orphan_spesa_failed');
-            await sendStatus(`🧾 Spesa rilevata: ${spesa.importo}€.\n⚠️ Errore salvataggio e nessun cantiere attivo.`);
+            await sendStatus(`🧾 Spesa rilevata: ${simpleExpense.importo}€.\n⚠️ Errore salvataggio e nessun cantiere attivo.`);
         }
         return;
     }
 
     // Persiste la sessione su DB e usa il sessionId come chiave nel callback
     const sessionId = await createPendingExpense(employee.id, {
-        importo:     spesa.importo,
-        fornitore:   spesa.fornitore,
-        descrizione: spesa.descrizione,
+        importo:     simpleExpense.importo,
+        fornitore:   simpleExpense.fornitore,
+        descrizione: simpleExpense.descrizione,
     });
 
-    const fornitoreStr = spesa.fornitore ? ` presso *${spesa.fornitore}*` : '';
-    const descStr      = spesa.descrizione ? `\n🧾 Dettaglio: ${spesa.descrizione}` : '';
-    const txt = `🧾 *Nuova Spesa Rilevata*\n💶 Importo: *${spesa.importo}€*${fornitoreStr}${descStr}\n\n🏗️ A quale cantiere vuoi assegnarla?`;
+    const fornitoreStr = simpleExpense.fornitore ? ` presso **${simpleExpense.fornitore}**` : '';
+    const descStr      = simpleExpense.descrizione ? `\n🧾 Dettaglio: ${simpleExpense.descrizione}` : '';
+    const txt = `🧾 **Nuova Spesa Rilevata**\n💶 Importo: **${simpleExpense.importo}€**${fornitoreStr}${descStr}\n\n🏗️ A quale cantiere vuoi assegnarla?`;
 
     // callback_data usa sessionId (UUID DB) invece del msgId in-memory
     const inline_keyboard = cantieri.map((c) => ([{

@@ -23,10 +23,9 @@ function escapeHtml(text) {
 }
 
 function applyLightweightFormatting(text) {
-  const escaped = escapeHtml(text);
-  return escaped
-    .replace(/\*\*([^*\n][\s\S]*?[^*\n])\*\*/g, "<b>$1</b>")
-    .replace(/(^|[\s([{])\*([^*\n][^*\n]*?[^*\n])\*(?=$|[\s\]).,;:!?])/g, "$1<b>$2</b>");
+  return escapeHtml(text)
+    .replace(/\*\*([^\n*][^\n]*?[^\n*])\*\*/g, "<b>$1</b>")
+    .replace(/(^|[\s([{])\*([^\n*][^\n]*?[^\n*])\*(?=$|[\s\]).,;:!?])/gm, "$1<b>$2</b>");
 }
 
 function buildTextPayload(basePayload, options = {}) {

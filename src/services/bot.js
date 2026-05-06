@@ -21,19 +21,14 @@ import {
   updateReportHeader,
 } from "../db/index.js";
 import { tgSendMessage, tgGetFile, tgDownloadFile, tgEditMessageText, tgAnswerCallbackQuery } from "./telegram.js";
-import { transcribeAudio, extractReport, extractSpesaFromImage, getOpenAIUserFacingMessage } from "./openai.js";
+import { transcribeAudio, extractReport, getOpenAIUserFacingMessage } from "./openai.js";
 import { maybeConvertToWav } from "./audio.js";
 import { calculateDistance } from "../utils/geo.js";
 import { handleGdprAccept, sendGdprNotice } from "./registration.js";
 import { handleReport, saveManualReportRows, buildConfirmMessage, calcOreFromOrari, buildWbsKeyboard } from "./reportHandler.js";
 
 import { handleExpensePhoto, consumePendingExpense, consumePendingWarehouseLoad } from "./expenseHandler.js";
-import { createPendingExpense } from "../domain/bot/botSessionService.js";
-import {
-  getDefaultWarehouseLocation,
-  normalizeAutomaticLoadLine,
-  upsertArticleAndCreateLoadMovement,
-} from "../domain/magazzino/warehouseService.js";
+import { confirmSpesaOcr } from "../domain/logistica/speseOcrService.js";
 import { SECURITY, ValidationStatus } from "../constants.js";
 
 const log = logger.child({ module: "bot" });
@@ -219,30 +214,7 @@ export async function handleCallbackQuery(cq) {
     }
 
     if (action === "no") {
-      if (typeof warehouseData.importo !== "number" || warehouseData.importo <= 0) {
-        await tgAnswerCallbackQuery(cq.id, "Documento non registrato.");
-        await tgEditMessageText(chatId, messageId, "Documento non caricato a magazzino e senza totale valido per una spesa.");
-        return;
-      }
-
-      const session = await createPendingExpense(employee.id, {
-        importo: warehouseData.importo,
-        fornitore: warehouseData.fornitore,
-        descrizione: warehouseData.descrizione,
-      });
-      const cantieri = await getCantieriAttivi();
-      if (!cantieri || cantieri.length === 0) {
-        await tgAnswerCallbackQuery(cq.id, "Nessun cantiere attivo.");
-        await tgEditMessageText(chatId, messageId, "Nessun cantiere attivo: spesa non registrata.");
-        return;
-      }
-
-      await tgEditMessageText(chatId, messageId, "A quale cantiere vuoi assegnare la spesa?", {
-        inline_keyboard: cantieri.map((c) => ([{
-          text: `📍 ${c.nome}`,
-          callback_data: `spesa:${session}:${c.id}`,
-        }])),
-      });
+      await tgEditMessageText(chatId, messageId, "Carico annullato. Nessuna spesa o movimento di magazzino è stato creato.");
       await tgAnswerCallbackQuery(cq.id, "Carico annullato.");
       return;
     }
@@ -256,44 +228,25 @@ export async function handleCallbackQuery(cq) {
 
     try {
       const prisma = getDb();
-      const stats = await prisma.$transaction(async (tx) => {
-        const defaultLocation = await getDefaultWarehouseLocation(tx);
-        if (!defaultLocation) {
-          return { missingDefault: true, loaded: 0, articlesCreated: 0, reconcile: [] };
-        }
-
-        const result = { missingDefault: false, loaded: 0, articlesCreated: 0, reconcile: [] };
-        for (const rawLine of warehouseData.righe_materiali ?? []) {
-          const normalized = normalizeAutomaticLoadLine(rawLine);
-          const load = await upsertArticleAndCreateLoadMovement(tx, rawLine, {
-            ubicazioneId: defaultLocation.id,
-            userId: employee.user_id,
-          });
-
-          if (load.status === "loaded") {
-            result.loaded += 1;
-            if (load.articleCreated) result.articlesCreated += 1;
-          } else {
-            result.reconcile.push({
-              reason: load.reason,
-              codice_sku: normalized.codice_sku || null,
-              descrizione: normalized.descrizione,
-            });
-          }
-        }
-        return result;
+      const linkedUser = await prisma.user.findUnique({
+        where: { id: employee.user_id },
+        select: { role: true },
       });
-
-      if (stats.missingDefault) {
-        await tgAnswerCallbackQuery(cq.id, "Ubicazione default mancante.");
-        await tgEditMessageText(chatId, messageId, "Carico non registrato: manca una ubicazione magazzino con codice DEFAULT o PRINCIPALE.");
-        return;
-      }
+      const result = await confirmSpesaOcr(prisma, {
+        spesaId: warehouseData.spesa_id,
+        documentId: warehouseData.document_id ?? null,
+        lines: warehouseData.righe_materiali ?? warehouseData.ocr_payload?.righe_materiali ?? [],
+        user: {
+          id: employee.user_id,
+          employee_id: employee.id,
+          role: linkedUser?.role ?? employee.ruolo,
+        },
+      });
 
       await tgEditMessageText(
         chatId,
         messageId,
-        `✅ Carico magazzino registrato.\nRighe caricate: ${stats.loaded}\nArticoli creati: ${stats.articlesCreated}\nDa riconciliare: ${stats.reconcile.length}`
+        `✅ Carico magazzino registrato.\nRighe caricate: ${result.movimentiCaricoCreati}\nArticoli creati: ${result.articoliCreati}\nDa riconciliare: ${result.righeDaRiconciliare}`
       );
       await tgAnswerCallbackQuery(cq.id, "Carico registrato.");
     } catch (err) {
@@ -394,8 +347,12 @@ export async function handleTelegramUpdate(update) {
     await tgSendMessage(chatId, "⛔ Questo tipo di messaggio non è supportato. Inviami testo, nota vocale o la foto di uno scontrino.");
     return;
   }
-  if (message.document && !message.voice) {
-    await tgSendMessage(chatId, "⛔ I documenti non sono supportati. Inviami testo o nota vocale.");
+  const isOcrDocument = Boolean(message.document && (
+    String(message.document.mime_type ?? "").startsWith("image/")
+    || message.document.mime_type === "application/pdf"
+  ));
+  if (message.document && !message.voice && !isOcrDocument) {
+    await tgSendMessage(chatId, "⛔ Documento non supportato. Inviami testo, nota vocale, foto o una fattura/DDT immagine.");
     return;
   }
 
@@ -673,6 +630,12 @@ export async function handleTelegramUpdate(update) {
     await sendStatus("🖼️ Foto ricevuta. Elaborazione in corso...");
     await handleExpensePhoto(message, employee, sendStatus, statusMsgId);
 
+    return;
+  }
+
+  if (isOcrDocument) {
+    await sendStatus("📎 Documento ricevuto. Elaborazione in corso...");
+    await handleExpensePhoto(message, employee, sendStatus, statusMsgId);
     return;
   }
 }

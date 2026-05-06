@@ -282,6 +282,156 @@ export async function extractSpesaFromImage(base64Image) {
   }
 }
 
+const INVOICE_OCR_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "document_type",
+    "numero_documento",
+    "data_documento",
+    "codice_destinatario",
+    "fornitore",
+    "cliente",
+    "totale_imponibile",
+    "totale_imposta",
+    "totale_documento",
+    "righe_materiali",
+  ],
+  properties: {
+    document_type: {
+      type: "string",
+      enum: ["INVOICE", "DDT", "ACCOMPANYING_INVOICE", "CREDIT_NOTE", "RECEIPT", "UNKNOWN"],
+    },
+    numero_documento: { type: ["string", "null"] },
+    data_documento: { type: ["string", "null"] },
+    codice_destinatario: { type: ["string", "null"] },
+    fornitore: {
+      type: "object",
+      additionalProperties: false,
+      required: ["ragione_sociale", "partita_iva", "codice_fiscale", "indirizzo", "comune", "provincia", "cap"],
+      properties: {
+        ragione_sociale: { type: ["string", "null"] },
+        partita_iva: { type: ["string", "null"] },
+        codice_fiscale: { type: ["string", "null"] },
+        indirizzo: { type: ["string", "null"] },
+        comune: { type: ["string", "null"] },
+        provincia: { type: ["string", "null"] },
+        cap: { type: ["string", "null"] },
+      },
+    },
+    cliente: {
+      type: "object",
+      additionalProperties: false,
+      required: ["ragione_sociale", "partita_iva", "codice_fiscale", "indirizzo", "comune", "provincia", "cap"],
+      properties: {
+        ragione_sociale: { type: ["string", "null"] },
+        partita_iva: { type: ["string", "null"] },
+        codice_fiscale: { type: ["string", "null"] },
+        indirizzo: { type: ["string", "null"] },
+        comune: { type: ["string", "null"] },
+        provincia: { type: ["string", "null"] },
+        cap: { type: ["string", "null"] },
+      },
+    },
+    totale_imponibile: { type: ["number", "null"] },
+    totale_imposta: { type: ["number", "null"] },
+    totale_documento: { type: ["number", "null"] },
+    righe_materiali: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "codice_articolo",
+          "descrizione",
+          "quantita",
+          "unita_misura",
+          "prezzo_unitario",
+          "iva_percentuale",
+          "prezzo_totale",
+        ],
+        properties: {
+          codice_articolo: { type: ["string", "null"] },
+          descrizione: { type: ["string", "null"] },
+          quantita: { type: ["number", "null"] },
+          unita_misura: { type: ["string", "null"] },
+          prezzo_unitario: { type: ["number", "null"] },
+          iva_percentuale: { type: ["number", "null"] },
+          prezzo_totale: { type: ["number", "null"] },
+        },
+      },
+    },
+  },
+};
+
+function buildInvoiceOcrUserContent(base64File, mimeType, filename = "documento") {
+  const prompt = { type: "text", text: "Estrai i dati strutturati da questa fattura/DDT." };
+  if (mimeType === "application/pdf") {
+    return [
+      prompt,
+      {
+        type: "file",
+        file: {
+          filename: filename || "documento.pdf",
+          file_data: `data:${mimeType};base64,${base64File}`,
+        },
+      },
+    ];
+  }
+
+  return [
+    prompt,
+    {
+      type: "image_url",
+      image_url: { url: `data:${mimeType};base64,${base64File}` },
+    },
+  ];
+}
+
+export async function extractInvoiceOcrFromFile(base64File, mimeType = "image/jpeg", filename = "documento") {
+  try {
+    const completion = await withRetry(
+      () =>
+        openai.chat.completions.create({
+          model: process.env.OPENAI_VISION_MODEL || "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: [
+                "Sei un assistente OCR per fatture, DDT e fatture accompagnatorie italiane.",
+                "Estrai i dati leggibili senza inventare campi mancanti.",
+                "Usa numero_documento dal campo Numero documento e data_documento dal campo Data documento.",
+                "Nelle righe materiali, codice_articolo deve essere compilato solo se la colonna Cod. articolo e' leggibile.",
+                "I totali devono essere numeri senza simbolo valuta e con punto decimale.",
+              ].join(" "),
+            },
+            {
+              role: "user",
+              content: buildInvoiceOcrUserContent(base64File, mimeType, filename),
+            },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "invoice_ocr_schema", schema: INVOICE_OCR_SCHEMA, strict: true },
+          },
+        }),
+      { name: "openai.extractInvoiceOcr" }
+    );
+
+    const raw = completion.choices?.[0]?.message?.content || "{}";
+    const parsed = JSON.parse(raw);
+    parsed.righe_materiali = Array.isArray(parsed.righe_materiali) ? parsed.righe_materiali : [];
+    return parsed;
+  } catch (err) {
+    logger.error({ err: serializeOpenAIError(err), event: "extract_invoice_ocr_failed" }, "extract_invoice_ocr_failed");
+    throw err;
+  }
+}
+
+export async function extractInvoiceOcrFromImage(base64Image, mimeType = "image/jpeg") {
+  return extractInvoiceOcrFromFile(base64Image, mimeType, "immagine-fattura");
+}
+
 // ─── CV TEXT PARSING ──────────────────────────────────────────
 const CV_SCHEMA = {
   type: "object",

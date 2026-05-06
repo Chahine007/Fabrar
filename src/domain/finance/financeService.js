@@ -1,6 +1,6 @@
 import pkg from "@prisma/client";
 import { getDb } from "../../db/index.js";
-import { ValidationStatus } from "../../constants.js";
+import { LogisticaStatus, ValidationStatus } from "../../constants.js";
 import { round2, toNumber } from "../../utils/helpers.js";
 
 const { Prisma } = pkg;
@@ -48,6 +48,20 @@ function buildKeyedMoneyMap(rows, keyName, getAmount) {
 
 function buildContractTotal(cantiere) {
   return round2(toNumber(cantiere?.valore_contratto ?? cantiere?.budget));
+}
+
+function buildApprovedExpenseCostWhere(baseWhere = {}) {
+  return {
+    ...baseWhere,
+    stato_validazione: ValidationStatus.APPROVED,
+    OR: [{ fonte: null }, { fonte: { not: "MAGAZZINO" } }],
+    NOT: {
+      AND: [
+        { fonte: "IMPORT_GENYA" },
+        { logistica_status: LogisticaStatus.LOADED_TO_WAREHOUSE },
+      ],
+    },
+  };
 }
 
 export function buildMultiProjectFinancialsMap(
@@ -165,11 +179,9 @@ export async function getMultiProjectFinancials(prismaClient, cantiereIds, baseC
     }),
     prismaClient.spesa.groupBy({
       by: ["cantiere_id"],
-      where: {
+      where: buildApprovedExpenseCostWhere({
         cantiere_id: { in: normalizedIds },
-        stato_validazione: ValidationStatus.APPROVED,
-        OR: [{ fonte: null }, { fonte: { not: "MAGAZZINO" } }],
-      },
+      }),
       _sum: { importo: true },
     }),
     prismaClient.fattura.groupBy({
@@ -287,11 +299,9 @@ export async function calculateTrueCost(cantiere_id, task_id = null) {
       _sum: { valore_totale: true },
     }),
     prisma.spesa.aggregate({
-      where: {
+      where: buildApprovedExpenseCostWhere({
         ...baseWhere,
-        stato_validazione: ValidationStatus.APPROVED,
-        OR: [{ fonte: null }, { fonte: { not: "MAGAZZINO" } }],
-      },
+      }),
       _sum: { importo: true },
     }),
   ]);
@@ -363,12 +373,10 @@ export async function getTaskCostsMap(cantiere_id, taskIds, prismaClient = getDb
     }),
     prismaClient.spesa.groupBy({
       by: ["task_id"],
-      where: {
+      where: buildApprovedExpenseCostWhere({
         cantiere_id: cantiereId,
         task_id: { in: normalizedTaskIds },
-        stato_validazione: ValidationStatus.APPROVED,
-        OR: [{ fonte: null }, { fonte: { not: "MAGAZZINO" } }],
-      },
+      }),
       _sum: { importo: true },
     }),
   ]);

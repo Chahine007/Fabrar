@@ -4,7 +4,7 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, getApiErrorMessage } from '../../lib/api';
-import { hrKeys, employeeKeys } from './queryKeys';
+import { hrKeys, employeeKeys, magazzinoKeys } from './queryKeys';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -115,6 +115,67 @@ export interface HrAlertsResponse {
 export type AuditType = 'ore' | 'spese';
 export type AuditStatus = 'pending' | 'verified' | 'approved' | 'rejected';
 export type AuditMutationStatus = 'APPROVED' | 'REJECTED';
+export type LogisticaStatus =
+  | 'NOT_REQUIRED'
+  | 'PENDING_OCR'
+  | 'OCR_REVIEW'
+  | 'LOADED_TO_WAREHOUSE'
+  | 'RECONCILIATION_REQUIRED';
+
+export interface InvoiceOcrLine {
+  codice_articolo?: string | null;
+  codice_sku?: string | null;
+  descrizione?: string | null;
+  quantita?: number | null;
+  unita_misura?: string | null;
+  prezzo_unitario?: number | null;
+  costo_unitario?: number | null;
+  prezzo_totale?: number | null;
+  importo_riga?: number | null;
+  iva_percentuale?: number | null;
+}
+
+export interface InvoiceOcrPayload {
+  document_type?: string | null;
+  numero_documento?: string | null;
+  data_documento?: string | null;
+  codice_destinatario?: string | null;
+  fornitore?: {
+    ragione_sociale?: string | null;
+    partita_iva?: string | null;
+    codice_fiscale?: string | null;
+    indirizzo?: string | null;
+    comune?: string | null;
+    provincia?: string | null;
+    cap?: string | null;
+  } | null;
+  totale_imponibile?: number | null;
+  totale_imposta?: number | null;
+  totale_documento?: number | null;
+  righe_materiali?: InvoiceOcrLine[];
+}
+
+export interface SpesaOcrResponse {
+  spesa: AuditEntry & Record<string, unknown>;
+  document?: {
+    id: number;
+    name: string;
+    file_path?: string | null;
+    type?: string | null;
+  };
+  ocrPayload?: InvoiceOcrPayload;
+  suggestedLines?: InvoiceOcrLine[];
+  matchStatus?: {
+    score: number;
+    strength: 'strong' | 'weak' | 'none';
+    reasons: string[];
+    canConfirm?: boolean;
+  };
+  movimentiCaricoCreati?: number;
+  articoliCreati?: number;
+  righeDaRiconciliare?: number;
+  righeDaRiconciliareDettaglio?: Array<{ reason: string; line: unknown }>;
+}
 
 export interface AuditBulkItem {
   id: number;
@@ -140,6 +201,12 @@ export interface AuditEntry {
   task_title?: string | null;
   luogo_cantiere: string | null;
   report_id?: number;
+  documento_id?: number | null;
+  documento_nome?: string | null;
+  logistica_status?: LogisticaStatus | null;
+  ocr_payload?: InvoiceOcrPayload | null;
+  ocr_reviewed_at?: string | null;
+  movimenti_magazzino_count?: number;
 }
 
 
@@ -397,6 +464,63 @@ export function useSingleAuditAction() {
     approve: (id: number, type: AuditType) => bulk.mutateAsync({ items: [{ id, type, newStatus: 'APPROVED' }] }),
     reject:  (id: number, type: AuditType) => bulk.mutateAsync({ items: [{ id, type, newStatus: 'REJECTED' }] }),
   };
+}
+
+export function useAnalyzeSpesaOcr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ spesaId, file }: { spesaId: number; file: File }) => {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await apiFetch(`/api/admin/spese/${spesaId}/ocr`, {
+        method: 'POST',
+        body: form,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
+      }
+      return res.json() as Promise<SpesaOcrResponse>;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: hrKeys.all() });
+    },
+  });
+}
+
+export function useConfirmSpesaOcr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      spesaId,
+      documentId,
+      lines,
+      ubicazioneId,
+    }: {
+      spesaId: number;
+      documentId?: number | null;
+      lines: InvoiceOcrLine[];
+      ubicazioneId?: number | null;
+    }) => {
+      const res = await apiFetch(`/api/admin/spese/${spesaId}/ocr/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({
+          document_id: documentId ?? null,
+          lines,
+          ubicazione_id: ubicazioneId ?? null,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
+      }
+      return res.json() as Promise<SpesaOcrResponse>;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: hrKeys.all() });
+      qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
+    },
+  });
 }
 
 /**

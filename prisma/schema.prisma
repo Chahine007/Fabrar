@@ -217,6 +217,9 @@ model Spesa {
   input_method         String?          @default("telegram_ocr")
   fattura_rif          String?
   documento_id         Int? // Link opzionale al Documento (es. fattura)
+  logistica_status     LogisticaStatus  @default(NOT_REQUIRED)
+  ocr_payload          Json?
+  ocr_reviewed_at      DateTime?
   admin_note           String?
   modified_by_admin_at DateTime?
 
@@ -233,6 +236,7 @@ model Spesa {
   @@index([task_id])
   @@index([pricebook_id])
   @@index([documento_id])
+  @@index([logistica_status])
 }
 
 model Tariffa {
@@ -309,6 +313,14 @@ enum ValidationStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum LogisticaStatus {
+  NOT_REQUIRED
+  PENDING_OCR
+  OCR_REVIEW
+  LOADED_TO_WAREHOUSE
+  RECONCILIATION_REQUIRED
 }
 
 model Document {

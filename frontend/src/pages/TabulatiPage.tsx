@@ -4,14 +4,14 @@ import {
   ClipboardList, Clock, Banknote, MapPin, RefreshCw, Download,
   CheckCircle2, XCircle, Search, MessageCircle,
   ChevronDown, ChevronUp, Eye, Loader2, Pencil, X,
-  Plus, Trash2,
+  Plus, Trash2, Upload, PackageCheck, FileSearch,
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import { useAudit, useUpdateReportEntry, useExportCsv } from '../hooks/api/useHr';
+import { useAudit, useUpdateReportEntry, useExportCsv, useAnalyzeSpesaOcr, useConfirmSpesaOcr } from '../hooks/api/useHr';
 import { useMessageLogs, useApproveTelegramEntry } from '../hooks/api/useTelegramAudit';
 import { useCantieri } from '../hooks/api/useCantieri';
-import type { AuditEntry, AuditStatus, AuditFilters, AuditType } from '../hooks/api/useHr';
+import type { AuditEntry, AuditStatus, AuditFilters, AuditType, InvoiceOcrLine, SpesaOcrResponse } from '../hooks/api/useHr';
 import ErrorMessage from '../components/ErrorMessage';
 import { useAuthContext } from '../context/AuthContext';
 import { RoleGuard } from '../components/auth/RoleGuard';
@@ -70,6 +70,207 @@ const StatusBadge = ({ status }: { status: AuditStatus }) => {
   };
   const s = map[status] ?? { label: status, cls: 'bg-background text-text-secondary' };
   return <span className={cn('px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap', s.cls)}>{s.label}</span>;
+};
+
+function isGenyaEntry(entry: AuditEntry) {
+  const method = String(entry.input_method ?? '').toLowerCase();
+  return entry.type === 'spese' && (method.includes('genya') || method.includes('genia') || method.includes('import'));
+}
+
+const LogisticaBadge = ({ status }: { status?: AuditEntry['logistica_status'] }) => {
+  if (!status || status === 'NOT_REQUIRED') return null;
+  const map: Record<string, { label: string; cls: string }> = {
+    PENDING_OCR: { label: 'Da analizzare OCR', cls: 'bg-warning-bg text-warning-text border-warning-border' },
+    OCR_REVIEW: { label: 'OCR in revisione', cls: 'bg-info-bg text-info-text border-info-border' },
+    LOADED_TO_WAREHOUSE: { label: 'Caricato a magazzino', cls: 'bg-success-bg text-success-text border-success-border' },
+    RECONCILIATION_REQUIRED: { label: 'Da riconciliare', cls: 'bg-danger-bg text-danger-text border-danger-border' },
+  };
+  const item = map[status] ?? { label: status, cls: 'bg-background text-text-secondary border-border' };
+  return (
+    <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold', item.cls)}>
+      <PackageCheck size={11} />
+      {item.label}
+    </span>
+  );
+};
+
+function formatMoney(value: unknown) {
+  const amount = safeNumber(value);
+  return `€${amount.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function normalizeOcrLines(lines: InvoiceOcrLine[] | undefined | null) {
+  return Array.isArray(lines) ? lines : [];
+}
+
+const OcrInvoiceModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () => void }) => {
+  const analyze = useAnalyzeSpesaOcr();
+  const confirm = useConfirmSpesaOcr();
+  const toast = useToast();
+  const [file, setFile] = useState<File | null>(null);
+  const [analysis, setAnalysis] = useState<SpesaOcrResponse | null>(null);
+
+  const payload = analysis?.ocrPayload ?? entry.ocr_payload ?? null;
+  const lines = normalizeOcrLines(analysis?.suggestedLines ?? payload?.righe_materiali);
+  const documentId = analysis?.document?.id ?? entry.documento_id ?? null;
+  const canConfirm = lines.length > 0 && entry.logistica_status !== 'LOADED_TO_WAREHOUSE';
+
+  const handleAnalyze = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) {
+      toast.error('File mancante', 'Seleziona una foto della fattura o del DDT.');
+      return;
+    }
+    try {
+      const result = await analyze.mutateAsync({ spesaId: entry.id, file });
+      setAnalysis(result);
+      toast.success('OCR completato', 'Controlla le righe prima di confermare il carico.');
+    } catch (err) {
+      toast.error('OCR non riuscito', err instanceof Error ? err.message : 'Errore analisi fattura.');
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!canConfirm) return;
+    try {
+      const result = await confirm.mutateAsync({
+        spesaId: entry.id,
+        documentId,
+        lines,
+      });
+      toast.success('Carico registrato', `${result.movimentiCaricoCreati ?? 0} righe caricate a magazzino.`);
+      onClose();
+    } catch (err) {
+      toast.error('Conferma non riuscita', err instanceof Error ? err.message : 'Errore conferma carico.');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <motion.div initial={{ opacity: 0, scale: 0.95, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="relative z-10 flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border px-6 py-4">
+          <div>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-text-primary">
+              <FileSearch size={18} className="text-accent" />
+              Analizza fattura Genya
+            </h2>
+            <p className="text-xs text-text-secondary">
+              Spesa #{entry.id} · {entry.fornitore || 'Fornitore non indicato'} · {formatMoney(entry.value)}
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-xl p-2 text-text-secondary hover:bg-background">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto p-6">
+          <form onSubmit={handleAnalyze} className="mb-5 rounded-2xl border border-border bg-background p-4">
+            <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-text-secondary">
+              Fattura/DDT dettagliato
+            </label>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center">
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="flex-1 rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary"
+              />
+              <button
+                type="submit"
+                disabled={analyze.isPending}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+              >
+                {analyze.isPending ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                Analizza fattura
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-text-secondary">
+              Accetta immagini e PDF fattura/DDT. Il carico viene creato solo dopo conferma.
+            </p>
+          </form>
+
+          <div className="grid gap-4 md:grid-cols-4">
+            <div className="rounded-2xl border border-border bg-background p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Documento</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{payload?.numero_documento || '—'}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-background p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Data</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{payload?.data_documento || '—'}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-background p-4 md:col-span-1">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Totale OCR</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{formatMoney(payload?.totale_documento)}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-background p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Match</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{analysis?.matchStatus?.strength ?? '—'}</p>
+            </div>
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-border">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h3 className="text-sm font-bold text-text-primary">Righe materiali estratte</h3>
+              <span className="text-xs text-text-secondary">{lines.length} righe</span>
+            </div>
+            {lines.length === 0 ? (
+              <div className="p-6">
+                <EmptyState
+                  icon={FileSearch}
+                  title="Nessuna riga materiale"
+                  description="Carica una fattura accompagnatoria o un DDT con tabella articoli leggibile."
+                />
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-background text-xs uppercase tracking-wider text-text-secondary">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Codice</th>
+                      <th className="px-4 py-3 text-left">Descrizione</th>
+                      <th className="px-4 py-3 text-right">Q.tà</th>
+                      <th className="px-4 py-3 text-left">UM</th>
+                      <th className="px-4 py-3 text-right">Prezzo unit.</th>
+                      <th className="px-4 py-3 text-right">Totale</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {lines.map((line, index) => (
+                      <tr key={`${line.codice_articolo ?? 'row'}-${index}`}>
+                        <td className="px-4 py-3 font-bold text-text-primary">{line.codice_articolo || line.codice_sku || '—'}</td>
+                        <td className="px-4 py-3 text-text-secondary">{line.descrizione || '—'}</td>
+                        <td className="px-4 py-3 text-right text-text-primary">{safeNumber(line.quantita).toLocaleString('it-IT')}</td>
+                        <td className="px-4 py-3 text-text-secondary">{line.unita_misura || '—'}</td>
+                        <td className="px-4 py-3 text-right text-text-primary">{formatMoney(line.prezzo_unitario ?? line.costo_unitario)}</td>
+                        <td className="px-4 py-3 text-right font-bold text-text-primary">{formatMoney(line.prezzo_totale ?? line.importo_riga)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-border bg-background px-6 py-4 md:flex-row md:justify-end">
+          <button onClick={onClose} className="rounded-xl border border-border bg-card px-4 py-2 text-sm font-bold text-text-secondary hover:bg-background">
+            Chiudi
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={!canConfirm || confirm.isPending}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-success-bg px-4 py-2 text-sm font-bold text-success-text disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {confirm.isPending ? <Loader2 size={14} className="animate-spin" /> : <PackageCheck size={14} />}
+            Conferma carico magazzino
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
 };
 
 const EditModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () => void }) => {
@@ -147,6 +348,7 @@ export default function TabulatiPage() {
   const { user } = useAuthContext();
   const userRole = user?.role ?? '';
   const canManageAudit = userRole === 'ADMIN' || userRole === 'HR';
+  const canAnalyzeOcr = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'].includes(userRole);
   const canViewLogs = canManageAudit;
   const [searchParams] = useSearchParams();
   const initEmp = searchParams.get('employee_id') ?? '';
@@ -162,6 +364,7 @@ export default function TabulatiPage() {
   const [sortDir, setSortDir]     = useState<'asc'|'desc'>('desc');
   const [selected, setSelected]   = useState<Set<string>>(new Set());
   const [editEntry, setEditEntry] = useState<AuditEntry | null>(null);
+  const [ocrEntry, setOcrEntry] = useState<AuditEntry | null>(null);
   const [timeModal, setTimeModal] = useState<{ mode: 'create' } | { mode: 'edit'; entry: AuditEntry } | null>(null);
   const [expenseModal, setExpenseModal] = useState<{ mode: 'create' } | { mode: 'edit'; entry: AuditEntry } | null>(null);
   const [section, setSection]     = useState<'audit'|'logs'>('audit');
@@ -414,6 +617,12 @@ export default function TabulatiPage() {
                             Metodo:{' '}
                             <MethodBadge method={entry.input_method} />
                           </span>
+                          {entry.type === 'spese' && entry.logistica_status && entry.logistica_status !== 'NOT_REQUIRED' && (
+                            <span className="col-span-2">
+                              Logistica:{' '}
+                              <LogisticaBadge status={entry.logistica_status} />
+                            </span>
+                          )}
                           {entry.note && <span className="col-span-2">Note: <strong className="text-text-primary">{entry.note}</strong></span>}
                         </div>
 
@@ -452,6 +661,14 @@ export default function TabulatiPage() {
                                 Rifiuta
                               </button>
                             </>
+                          )}
+                          {canAnalyzeOcr && isGenyaEntry(entry) && entry.logistica_status !== 'LOADED_TO_WAREHOUSE' && (
+                            <button
+                              onClick={() => setOcrEntry(entry)}
+                              className="rounded-xl border border-border bg-background px-3 py-2 text-xs font-bold text-text-secondary hover:text-accent"
+                            >
+                              {entry.logistica_status === 'OCR_REVIEW' ? 'Rivedi OCR' : 'Analizza fattura'}
+                            </button>
                           )}
                         </div>
                       </div>
@@ -512,7 +729,10 @@ export default function TabulatiPage() {
                             {formatAuditValue(entry)}
                           </td>
                           <td className="px-5 py-3.5">
-                            <MethodBadge method={entry.input_method} />
+                            <div className="flex flex-col items-start gap-1">
+                              <MethodBadge method={entry.input_method} />
+                              {entry.type === 'spese' && <LogisticaBadge status={entry.logistica_status} />}
+                            </div>
                           </td>
                           <td className="px-5 py-3.5"><StatusBadge status={entry.status}/></td>
                           <td className="px-5 py-3.5">
@@ -559,6 +779,15 @@ export default function TabulatiPage() {
                                     <XCircle size={14}/>
                                   </button>
                                 </>
+                              )}
+                              {canAnalyzeOcr && isGenyaEntry(entry) && entry.logistica_status !== 'LOADED_TO_WAREHOUSE' && (
+                                <button
+                                  onClick={() => setOcrEntry(entry)}
+                                  className="p-1.5 rounded-lg bg-background border border-border text-text-secondary hover:text-accent hover:border-accent/40 transition-all"
+                                  title={entry.logistica_status === 'OCR_REVIEW' ? 'Rivedi OCR' : 'Analizza fattura'}
+                                >
+                                  <FileSearch size={14}/>
+                                </button>
                               )}
                             </div>
                           </td>
@@ -613,6 +842,7 @@ export default function TabulatiPage() {
 
       <AnimatePresence>
         {editEntry && <EditModal entry={editEntry} onClose={()=>setEditEntry(null)}/>}
+        {ocrEntry && <OcrInvoiceModal entry={ocrEntry} onClose={()=>setOcrEntry(null)}/>}
         {timeModal && (
           <TimeEntryModal
             entry={timeModal.mode === 'edit' ? timeModal.entry : null}
