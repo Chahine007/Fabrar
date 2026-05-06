@@ -480,12 +480,18 @@ export function useChatSockets(currentUser?: CurrentChatUser | null) {
       const preview = getConversationPreview(mappedMessage.content, mappedMessage.type, mappedMessage.metadata);
       const messagesKey = conversationKeys.messages(conversationId);
       const existingMessages = queryClient.getQueryData<ChatMessage[]>(messagesKey);
+      const existingConversations = queryClient.getQueryData<Conversation[]>(conversationKeys.list());
 
       if (existingMessages) {
         queryClient.setQueryData<ChatMessage[]>(
           messagesKey,
           (messages = []) => mergeIncomingMessage(messages, mappedMessage)
         );
+      }
+
+      if (!existingConversations?.some((conversation) => conversation.id === conversationId)) {
+        queryClient.invalidateQueries({ queryKey: conversationKeys.list() });
+        return;
       }
 
       queryClient.setQueryData<Conversation[]>(
@@ -503,7 +509,7 @@ export function useChatSockets(currentUser?: CurrentChatUser | null) {
       if (!conversationId) return;
 
       const existingConversations = queryClient.getQueryData<Conversation[]>(conversationKeys.list());
-      if (!existingConversations) {
+      if (!existingConversations?.some((conversation) => conversation.id === conversationId)) {
         queryClient.invalidateQueries({ queryKey: conversationKeys.list() });
         return;
       }

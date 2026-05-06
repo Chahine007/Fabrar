@@ -9,7 +9,7 @@ interface ShareModalProps {
   isOpen: boolean;
   onClose: () => void;
   itemToShare: ProjectShareItem | null;
-  onShare: (conversationId: string, message: string, item: ProjectShareItem | null) => void;
+  onShare: (conversationId: string, message: string, item: ProjectShareItem | null) => void | Promise<void>;
 }
 
 export default function ShareModal({ isOpen, onClose, itemToShare, onShare }: ShareModalProps) {
@@ -24,9 +24,9 @@ export default function ShareModal({ isOpen, onClose, itemToShare, onShare }: Sh
     conversation.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleShare = () => {
+  const handleShare = async () => {
     if (selectedConv) {
-      onShare(selectedConv, message, itemToShare);
+      await onShare(selectedConv, message, itemToShare);
       onClose();
       setSelectedConv(null);
       setMessage('');
@@ -119,7 +119,7 @@ export default function ShareModal({ isOpen, onClose, itemToShare, onShare }: Sh
 
           <div className="p-6 border-t border-border bg-card shrink-0">
             <button 
-              onClick={handleShare}
+              onClick={() => void handleShare()}
               disabled={!selectedConv}
               className="w-full py-3 bg-accent text-white rounded-xl font-bold shadow-lg shadow-accent/20 hover:bg-accent/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
