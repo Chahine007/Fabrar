@@ -37,6 +37,8 @@ export const confirmSpesaOcrController = asyncHandler(async (req, res) => {
     documentId: req.body.document_id ?? req.body.documentId ?? null,
     lines: req.body.lines ?? req.body.righe_materiali ?? [],
     ubicazioneId: req.body.ubicazione_id ?? req.body.ubicazioneId ?? null,
+    costCategory: req.body.cost_category ?? req.body.costCategory ?? null,
+    allocationScope: req.body.allocation_scope ?? req.body.allocationScope ?? null,
     user: req.user,
   });
 
@@ -52,6 +54,8 @@ export const confirmGenericInvoiceOcrController = asyncHandler(async (req, res) 
     spesaId: req.body.spesa_id ?? req.body.spesaId ?? null,
     cantiereId: req.body.cantiere_id ?? req.body.cantiereId ?? null,
     ubicazioneId: req.body.ubicazione_id ?? req.body.ubicazioneId ?? null,
+    costCategory: req.body.cost_category ?? req.body.costCategory ?? null,
+    allocationScope: req.body.allocation_scope ?? req.body.allocationScope ?? null,
     user: req.user,
   });
 

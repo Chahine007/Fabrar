@@ -201,42 +201,49 @@ model ReportEntry {
 }
 
 model Spesa {
-  id                   Int              @id @default(autoincrement())
-  timestamp_utc        DateTime         @default(now())
+  id                   Int                 @id @default(autoincrement())
+  timestamp_utc        DateTime            @default(now())
   employee_id          Int
-  cantiere_id          Int
+  cantiere_id          Int?
   wbs_node_id          Int? // NEW: link to WBS per il Job Costing dettagliato
   task_id              Int?
-  importo              Decimal          @db.Decimal(10, 2)
+  importo              Decimal             @db.Decimal(10, 2)
   fornitore            String?
+  fornitore_id         Int?
   descrizione          String?
   pricebook_id         Int?
-  quantita             Decimal?         @db.Decimal(10, 2)
-  stato_validazione    ValidationStatus @default(PENDING)
-  fonte                String?          @default("TELEGRAM")
-  input_method         String?          @default("telegram_ocr")
+  quantita             Decimal?            @db.Decimal(10, 2)
+  stato_validazione    ValidationStatus    @default(PENDING)
+  fonte                String?             @default("TELEGRAM")
+  input_method         String?             @default("telegram_ocr")
   fattura_rif          String?
   documento_id         Int? // Link opzionale al Documento (es. fattura)
-  logistica_status     LogisticaStatus  @default(NOT_REQUIRED)
+  logistica_status     LogisticaStatus     @default(NOT_REQUIRED)
+  cost_category        CostCategory        @default(OTHER)
+  allocation_scope     CostAllocationScope @default(PROJECT)
   ocr_payload          Json?
   ocr_reviewed_at      DateTime?
   admin_note           String?
   modified_by_admin_at DateTime?
 
-  employee  Employee   @relation(fields: [employee_id], references: [id])
-  cantiere  Cantiere   @relation(fields: [cantiere_id], references: [id])
-  pricebook Pricebook? @relation(fields: [pricebook_id], references: [id])
-  wbs_node  WbsNode?   @relation(fields: [wbs_node_id], references: [id])
-  task      Task?      @relation(fields: [task_id], references: [id])
-  documento Document?  @relation(fields: [documento_id], references: [id])
+  employee             Employee   @relation(fields: [employee_id], references: [id])
+  cantiere             Cantiere?  @relation(fields: [cantiere_id], references: [id])
+  fornitore_anagrafica Fornitore? @relation(fields: [fornitore_id], references: [id])
+  pricebook            Pricebook? @relation(fields: [pricebook_id], references: [id])
+  wbs_node             WbsNode?   @relation(fields: [wbs_node_id], references: [id])
+  task                 Task?      @relation(fields: [task_id], references: [id])
+  documento            Document?  @relation(fields: [documento_id], references: [id])
 
   @@index([employee_id])
   @@index([cantiere_id])
+  @@index([fornitore_id])
   @@index([wbs_node_id])
   @@index([task_id])
   @@index([pricebook_id])
   @@index([documento_id])
   @@index([logistica_status])
+  @@index([cost_category])
+  @@index([allocation_scope])
 }
 
 model Tariffa {
@@ -323,9 +330,29 @@ enum LogisticaStatus {
   RECONCILIATION_REQUIRED
 }
 
+enum CostCategory {
+  INVENTORY_MATERIAL
+  CONSUMABLE_SUPPLY
+  SERVICE
+  LEASING_RENTAL
+  UTILITY
+  INSURANCE
+  TAX_FEE
+  PROFESSIONAL_SERVICE
+  TRAVEL_VEHICLE
+  OTHER
+  UNKNOWN
+}
+
+enum CostAllocationScope {
+  PROJECT
+  OVERHEAD
+  REVIEW
+}
+
 model Document {
   id          Int      @id @default(autoincrement())
-  cantiere_id Int
+  cantiere_id Int?
   name        String // Nome originale del file (display)
   file_path   String? // Percorso relativo su disco: cantieri/{id}/{filename}
   type        String
@@ -342,7 +369,7 @@ model Document {
   data_emissione DateTime? @db.Date
   importo        Decimal?  @db.Decimal(10, 2)
 
-  cantiere            Cantiere             @relation(fields: [cantiere_id], references: [id])
+  cantiere            Cantiere?            @relation(fields: [cantiere_id], references: [id])
   uploaded_by         Employee?            @relation("DocumentUploader", fields: [employee_id], references: [id])
   spese_collegate     Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
@@ -366,16 +393,16 @@ enum InvoiceStatus {
 }
 
 model Fattura {
-  id              Int           @id @default(autoincrement())
-  cantiere_id     Int
-  numero_fattura  String?
-  data_emissione  DateTime?     @db.Date
-  importo_totale  Decimal       @db.Decimal(10, 2)
-  stato           InvoiceStatus @default(DRAFT)
-  documento_id    Int?
-  note            String?
-  created_at      DateTime      @default(now())
-  updated_at      DateTime      @updatedAt
+  id             Int           @id @default(autoincrement())
+  cantiere_id    Int
+  numero_fattura String?
+  data_emissione DateTime?     @db.Date
+  importo_totale Decimal       @db.Decimal(10, 2)
+  stato          InvoiceStatus @default(DRAFT)
+  documento_id   Int?
+  note           String?
+  created_at     DateTime      @default(now())
+  updated_at     DateTime      @updatedAt
 
   cantiere  Cantiere  @relation(fields: [cantiere_id], references: [id])
   documento Document? @relation(fields: [documento_id], references: [id])
@@ -386,17 +413,17 @@ model Fattura {
 }
 
 model Rata {
-  id                     Int                @id @default(autoincrement())
+  id                     Int               @id @default(autoincrement())
   cantiere_id            Int
   wbs_node_id            Int?
   nome                   String
-  percentuale            Decimal?           @db.Decimal(5, 2)
-  importo_previsto       Decimal            @db.Decimal(10, 2)
-  data_scadenza_prevista DateTime?          @db.Date
-  stato                  InstallmentStatus  @default(PENDING)
+  percentuale            Decimal?          @db.Decimal(5, 2)
+  importo_previsto       Decimal           @db.Decimal(10, 2)
+  data_scadenza_prevista DateTime?         @db.Date
+  stato                  InstallmentStatus @default(PENDING)
   fattura_id             Int?
-  created_at             DateTime           @default(now())
-  updated_at             DateTime           @updatedAt
+  created_at             DateTime          @default(now())
+  updated_at             DateTime          @updatedAt
 
   cantiere Cantiere @relation(fields: [cantiere_id], references: [id])
   wbs_node WbsNode? @relation(fields: [wbs_node_id], references: [id])
@@ -467,6 +494,7 @@ model Fornitore {
 
   articoli_default    Articolo[]
   movimenti_magazzino MovimentoMagazzino[]
+  spese               Spesa[]
 }
 
 model Articolo {

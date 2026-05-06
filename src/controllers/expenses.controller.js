@@ -1,7 +1,7 @@
 import { insertSpesa, listPricebook, getDb } from "../db/index.js";
 import { normalizeOptionalText, parseIdParam } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { LogisticaStatus, ValidationStatus } from "../constants.js";
+import { CostAllocationScope, CostCategory, LogisticaStatus, ValidationStatus } from "../constants.js";
 import {
     ensureCantiereActive,
     ensureTaskBelongsToCantiere,
@@ -215,6 +215,8 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
                     fattura_rif: normalizeOptionalText(item.fattura_rif),
                     stato_validazione: ValidationStatus.PENDING,
                     logistica_status: LogisticaStatus.PENDING_OCR,
+                    cost_category: CostCategory.UNKNOWN,
+                    allocation_scope: CostAllocationScope.REVIEW,
                 },
             });
             importStats.speseCreate += 1;

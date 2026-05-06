@@ -287,6 +287,9 @@ const INVOICE_OCR_SCHEMA = {
   additionalProperties: false,
   required: [
     "document_type",
+    "cost_category",
+    "allocation_scope",
+    "logistica_required",
     "tipo_documento",
     "numero_documento",
     "data_documento",
@@ -298,12 +301,34 @@ const INVOICE_OCR_SCHEMA = {
     "totale_documento",
     "pagamento",
     "righe_materiali",
+    "righe_costo",
   ],
   properties: {
     document_type: {
       type: "string",
       enum: ["INVOICE", "DDT", "ACCOMPANYING_INVOICE", "CREDIT_NOTE", "RECEIPT", "UNKNOWN"],
     },
+    cost_category: {
+      type: "string",
+      enum: [
+        "INVENTORY_MATERIAL",
+        "CONSUMABLE_SUPPLY",
+        "SERVICE",
+        "LEASING_RENTAL",
+        "UTILITY",
+        "INSURANCE",
+        "TAX_FEE",
+        "PROFESSIONAL_SERVICE",
+        "TRAVEL_VEHICLE",
+        "OTHER",
+        "UNKNOWN",
+      ],
+    },
+    allocation_scope: {
+      type: "string",
+      enum: ["PROJECT", "OVERHEAD", "REVIEW"],
+    },
+    logistica_required: { type: "boolean" },
     tipo_documento: { type: ["string", "null"] },
     numero_documento: { type: ["string", "null"] },
     data_documento: { type: ["string", "null"] },
@@ -363,6 +388,8 @@ const INVOICE_OCR_SCHEMA = {
           "prezzo_unitario",
           "iva_percentuale",
           "prezzo_totale",
+          "cost_category",
+          "stockable",
         ],
         properties: {
           codice_articolo: { type: ["string", "null"] },
@@ -372,6 +399,68 @@ const INVOICE_OCR_SCHEMA = {
           prezzo_unitario: { type: ["number", "null"] },
           iva_percentuale: { type: ["number", "null"] },
           prezzo_totale: { type: ["number", "null"] },
+          cost_category: {
+            type: "string",
+            enum: [
+              "INVENTORY_MATERIAL",
+              "CONSUMABLE_SUPPLY",
+              "SERVICE",
+              "LEASING_RENTAL",
+              "UTILITY",
+              "INSURANCE",
+              "TAX_FEE",
+              "PROFESSIONAL_SERVICE",
+              "TRAVEL_VEHICLE",
+              "OTHER",
+              "UNKNOWN",
+            ],
+          },
+          stockable: { type: "boolean" },
+        },
+      },
+    },
+    righe_costo: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "descrizione",
+          "cost_category",
+          "allocation_scope",
+          "importo",
+          "iva_percentuale",
+          "quantita",
+          "unita_misura",
+          "prezzo_unitario",
+        ],
+        properties: {
+          descrizione: { type: ["string", "null"] },
+          cost_category: {
+            type: "string",
+            enum: [
+              "INVENTORY_MATERIAL",
+              "CONSUMABLE_SUPPLY",
+              "SERVICE",
+              "LEASING_RENTAL",
+              "UTILITY",
+              "INSURANCE",
+              "TAX_FEE",
+              "PROFESSIONAL_SERVICE",
+              "TRAVEL_VEHICLE",
+              "OTHER",
+              "UNKNOWN",
+            ],
+          },
+          allocation_scope: {
+            type: "string",
+            enum: ["PROJECT", "OVERHEAD", "REVIEW"],
+          },
+          importo: { type: ["number", "null"] },
+          iva_percentuale: { type: ["number", "null"] },
+          quantita: { type: ["number", "null"] },
+          unita_misura: { type: ["string", "null"] },
+          prezzo_unitario: { type: ["number", "null"] },
         },
       },
     },
@@ -417,7 +506,12 @@ export async function extractInvoiceOcrFromFile(base64File, mimeType = "image/jp
                 "Estrai tipo_documento come testo leggibile dalla tabella, ad esempio 'TD01 fattura'.",
                 "Usa numero_documento dal campo Numero documento e data_documento dal campo Data documento.",
                 "Estrai codice_destinatario se presente.",
-                "Nelle righe materiali, codice_articolo deve essere compilato solo se la colonna Cod. articolo e' leggibile.",
+                "Classifica il costo contabile: INVENTORY_MATERIAL per materiali fisici stockabili; CONSUMABLE_SUPPLY per forniture consumabili; SERVICE per servizi generici; LEASING_RENTAL per leasing, noleggi, canoni auto o locazioni operative; UTILITY per utenze; INSURANCE per assicurazioni; TAX_FEE per tasse/diritti; PROFESSIONAL_SERVICE per consulenze; TRAVEL_VEHICLE per carburante, pedaggi, manutenzione veicoli; OTHER o UNKNOWN se non chiaro.",
+                "allocation_scope deve essere OVERHEAD per leasing, noleggi auto, utenze, assicurazioni, tasse, servizi aziendali e costi generali; PROJECT solo per costi chiaramente imputabili a un cantiere; REVIEW se serve decisione manuale.",
+                "logistica_required deve essere true solo quando il documento contiene materiali fisici da caricare in magazzino.",
+                "Nelle righe_materiali inserisci solo articoli fisici stockabili. codice_articolo deve essere compilato solo se la colonna Cod. articolo e' leggibile; non usare numeri pratica, targa, modello auto, numero rata o codici servizio come SKU.",
+                "Le righe di servizi, leasing, spese di incasso, canoni, rimborsi e costi non stockabili vanno in righe_costo, non in righe_materiali.",
+                "Per fatture di leasing/noleggio auto: cost_category LEASING_RENTAL, allocation_scope OVERHEAD, logistica_required false, righe_materiali vuoto.",
                 "I totali devono essere numeri senza simbolo valuta e con punto decimale.",
                 "Estrai anche modalita_pagamento, IBAN, scadenza e importo_scadenza quando sono presenti.",
               ].join(" "),
@@ -438,6 +532,7 @@ export async function extractInvoiceOcrFromFile(base64File, mimeType = "image/jp
     const raw = completion.choices?.[0]?.message?.content || "{}";
     const parsed = JSON.parse(raw);
     parsed.righe_materiali = Array.isArray(parsed.righe_materiali) ? parsed.righe_materiali : [];
+    parsed.righe_costo = Array.isArray(parsed.righe_costo) ? parsed.righe_costo : [];
     return parsed;
   } catch (err) {
     logger.error({ err: serializeOpenAIError(err), event: "extract_invoice_ocr_failed" }, "extract_invoice_ocr_failed");

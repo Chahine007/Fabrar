@@ -12,6 +12,8 @@ export const getAuditSchema = z.object({
         status: z.string().optional().nullable(),
         employee_id: z.coerce.number().optional().nullable(),
         cantiere_id: z.coerce.number().optional().nullable(),
+        cost_category: z.string().optional().nullable(),
+        allocation_scope: z.string().optional().nullable(),
         from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
         to:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
         limit: z.coerce.number().int().min(1).max(500).optional(),

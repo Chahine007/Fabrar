@@ -1,6 +1,6 @@
 import path from "path";
 import { Prisma } from "@prisma/client";
-import { LogisticaStatus } from "../../constants.js";
+import { CostAllocationScope, CostCategory, LogisticaStatus } from "../../constants.js";
 import { canAccessCantiere } from "../shared/accessControl.js";
 import {
   getDefaultWarehouseLocation,
@@ -17,6 +17,21 @@ const LOGISTIC_MATCH_STATUSES = [
   LogisticaStatus.RECONCILIATION_REQUIRED,
   LogisticaStatus.NOT_REQUIRED,
 ];
+const OVERHEAD_COST_CATEGORIES = new Set([
+  CostCategory.LEASING_RENTAL,
+  CostCategory.UTILITY,
+  CostCategory.INSURANCE,
+  CostCategory.TAX_FEE,
+  CostCategory.PROFESSIONAL_SERVICE,
+  CostCategory.TRAVEL_VEHICLE,
+  CostCategory.SERVICE,
+]);
+const PROJECT_COST_CATEGORIES = new Set([
+  CostCategory.INVENTORY_MATERIAL,
+  CostCategory.CONSUMABLE_SUPPLY,
+]);
+const COST_CATEGORY_VALUES = new Set(Object.values(CostCategory));
+const ALLOCATION_SCOPE_VALUES = new Set(Object.values(CostAllocationScope));
 
 function httpError(message, status = 400, extra = {}) {
   const err = new Error(message);
@@ -64,6 +79,51 @@ function normalizeOcrSku(value) {
     .replace(/[^A-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return compact || null;
+}
+
+function normalizeCostCategory(value, fallback = CostCategory.UNKNOWN) {
+  const category = String(value ?? "").trim().toUpperCase();
+  return COST_CATEGORY_VALUES.has(category) ? category : fallback;
+}
+
+function normalizeAllocationScope(value, costCategory = CostCategory.UNKNOWN) {
+  const scope = String(value ?? "").trim().toUpperCase();
+  if (ALLOCATION_SCOPE_VALUES.has(scope)) return scope;
+  if (OVERHEAD_COST_CATEGORIES.has(costCategory)) return CostAllocationScope.OVERHEAD;
+  if (PROJECT_COST_CATEGORIES.has(costCategory)) return CostAllocationScope.PROJECT;
+  return CostAllocationScope.REVIEW;
+}
+
+function isWarehouseLoadableLine(line = {}) {
+  return Boolean(
+    line.codice_sku
+      && line.quantita
+      && line.quantita > 0
+      && normalizeCostCategory(line.cost_category, CostCategory.INVENTORY_MATERIAL) === CostCategory.INVENTORY_MATERIAL
+      && line.stockable !== false
+  );
+}
+
+function shouldRequireWarehouse(ocrPayload = {}, lines = []) {
+  const category = normalizeCostCategory(ocrPayload.cost_category);
+  const explicit = Boolean(ocrPayload.logistica_required);
+  return (
+    category === CostCategory.INVENTORY_MATERIAL
+    && (explicit || lines.some((line) => isWarehouseLoadableLine(line)))
+  );
+}
+
+function resolveLogisticaStatus({ allocationScope, costCategory, warehouseRequired, loadedCount = 0, reconcileCount = 0 }) {
+  if (loadedCount > 0 && reconcileCount === 0) return LogisticaStatus.LOADED_TO_WAREHOUSE;
+  if (warehouseRequired && reconcileCount > 0) return LogisticaStatus.RECONCILIATION_REQUIRED;
+  if (warehouseRequired) return LogisticaStatus.OCR_REVIEW;
+  if (allocationScope === CostAllocationScope.OVERHEAD || OVERHEAD_COST_CATEGORIES.has(costCategory)) {
+    return LogisticaStatus.NOT_REQUIRED;
+  }
+  if (costCategory === CostCategory.UNKNOWN || allocationScope === CostAllocationScope.REVIEW || reconcileCount > 0) {
+    return LogisticaStatus.RECONCILIATION_REQUIRED;
+  }
+  return LogisticaStatus.NOT_REQUIRED;
 }
 
 function parseMoney(value) {
@@ -173,12 +233,16 @@ function normalizeLine(line = {}) {
     line.codice_articolo ?? line.codice_sku ?? line.sku ?? line.cod_articolo
   );
   const codiceSku = normalizeOcrSku(codiceArticolo);
+  const costCategory = normalizeCostCategory(line.cost_category, CostCategory.INVENTORY_MATERIAL);
+  const stockable = line.stockable === false ? false : costCategory === CostCategory.INVENTORY_MATERIAL;
 
   return {
     codice_articolo: codiceArticolo,
     codice_articolo_raw: codiceArticolo,
     codice_sku: codiceSku,
     descrizione: normalizeOptionalText(line.descrizione ?? line.descrizione_articolo ?? line.prodotto),
+    cost_category: costCategory,
+    stockable,
     quantita,
     unita_misura: normalizeOptionalText(line.unita_misura ?? line.um ?? line.unita) ?? "pz",
     prezzo_unitario: prezzoUnitario,
@@ -190,9 +254,41 @@ function normalizeLine(line = {}) {
   };
 }
 
+function normalizeCostLine(line = {}) {
+  const costCategory = normalizeCostCategory(line.cost_category, CostCategory.OTHER);
+  return {
+    descrizione: normalizeOptionalText(line.descrizione ?? line.descrizione_costo ?? line.prodotto),
+    cost_category: costCategory,
+    allocation_scope: normalizeAllocationScope(line.allocation_scope, costCategory),
+    importo: parseMoney(line.importo ?? line.prezzo_totale ?? line.importo_riga),
+    iva_percentuale: parseMoney(line.iva_percentuale ?? line.iva),
+    quantita: parsePositiveNumber(line.quantita ?? line.qta ?? line.qty),
+    unita_misura: normalizeOptionalText(line.unita_misura ?? line.um ?? line.unita),
+    prezzo_unitario: parseMoney(line.prezzo_unitario ?? line.costo_unitario),
+    raw: line,
+  };
+}
+
 export function normalizeInvoiceOcrPayload(payload = {}) {
   const righe = Array.isArray(payload.righe_materiali) ? payload.righe_materiali : [];
   const normalizedLines = righe.map(normalizeLine);
+  const costLinesFromPayload = Array.isArray(payload.righe_costo) ? payload.righe_costo : [];
+  const nonStockableLines = normalizedLines
+    .filter((line) => line.stockable === false || line.cost_category !== CostCategory.INVENTORY_MATERIAL)
+    .map((line) => normalizeCostLine({
+      ...line.raw,
+      descrizione: line.descrizione,
+      cost_category: line.cost_category,
+      importo: line.prezzo_totale,
+      iva_percentuale: line.iva_percentuale,
+      quantita: line.quantita,
+      unita_misura: line.unita_misura,
+      prezzo_unitario: line.prezzo_unitario,
+    }));
+  const normalizedCostLines = [
+    ...costLinesFromPayload.map(normalizeCostLine),
+    ...nonStockableLines,
+  ];
   const tipoDocumento = normalizeOptionalText(payload.tipo_documento ?? payload.documento?.tipo_documento);
   const numeroDocumento = normalizeOptionalText(payload.numero_documento ?? payload.numero_fattura ?? payload.documento?.numero_documento);
   const dataDocumento = normalizeOptionalText(payload.data_documento ?? payload.data_emissione ?? payload.documento?.data_documento);
@@ -201,9 +297,20 @@ export function normalizeInvoiceOcrPayload(payload = {}) {
   const totaleImposta = parseMoney(payload.totale_imposta ?? payload.totali?.totale_imposta);
   const totaleDocumento = parseMoney(payload.totale_documento ?? payload.importo_totale ?? payload.totali?.totale_documento);
   const pagamento = payload.pagamento ?? {};
+  const normalizedMaterialLines = normalizedLines.filter((line) => line.cost_category === CostCategory.INVENTORY_MATERIAL);
+  const fallbackCategory = normalizedMaterialLines.length > 0
+    ? CostCategory.INVENTORY_MATERIAL
+    : normalizedCostLines[0]?.cost_category ?? CostCategory.UNKNOWN;
+  const costCategory = normalizeCostCategory(payload.cost_category, fallbackCategory);
+  const allocationScope = normalizeAllocationScope(payload.allocation_scope, costCategory);
+  const logisticaRequired = payload.logistica_required === true
+    || (costCategory === CostCategory.INVENTORY_MATERIAL && normalizedMaterialLines.some((line) => line.codice_sku));
 
   return {
     document_type: normalizeOptionalText(payload.document_type)?.toUpperCase() ?? "UNKNOWN",
+    cost_category: costCategory,
+    allocation_scope: allocationScope,
+    logistica_required: logisticaRequired,
     tipo_documento: tipoDocumento,
     numero_documento: numeroDocumento,
     data_documento: dataDocumento,
@@ -246,7 +353,8 @@ export function normalizeInvoiceOcrPayload(payload = {}) {
       scadenza: normalizeOptionalText(pagamento.scadenza ?? payload.scadenza),
       importo_scadenza: parseMoney(pagamento.importo_scadenza ?? payload.importo_scadenza),
     },
-    righe_materiali: normalizedLines,
+    righe_materiali: normalizedMaterialLines,
+    righe_costo: normalizedCostLines,
   };
 }
 
@@ -280,11 +388,11 @@ async function enrichLinePreviews(prisma, lines = []) {
   const existingBySku = new Map(existingArticles.map((article) => [article.codice_sku, article]));
 
   return lines.map((line) => {
-    if (!line.codice_sku) {
+    if (!isWarehouseLoadableLine(line)) {
       return {
         ...line,
         magazzino_status: "reconcile",
-        reconcile_reason: "SKU_MISSING",
+        reconcile_reason: line.codice_sku ? "NOT_STOCKABLE" : "SKU_MISSING",
       };
     }
     const existingArticle = existingBySku.get(line.codice_sku);
@@ -386,10 +494,13 @@ export async function findOcrExpenseMatches(prisma, ocrPayload, options = {}) {
 }
 
 async function createOcrDocument(prisma, { spesa, file, user, ocrPayload }) {
-  const saved = await saveFile(file, { folder: path.join("cantieri", String(spesa.cantiere_id), "ocr") });
+  const folder = spesa.cantiere_id
+    ? path.join("cantieri", String(spesa.cantiere_id), "ocr")
+    : path.join("overhead", "ocr");
+  const saved = await saveFile(file, { folder });
   return prisma.document.create({
     data: {
-      cantiere_id: spesa.cantiere_id,
+      cantiere_id: spesa.cantiere_id ?? null,
       name: file.originalname || saved.filename,
       file_path: saved.relativePath,
       type: detectDocumentType(ocrPayload, file),
@@ -406,13 +517,13 @@ async function createOcrDocument(prisma, { spesa, file, user, ocrPayload }) {
   });
 }
 
-async function createOcrDocumentFromStoredUpload(prisma, { cantiereId, upload, user, ocrPayload }) {
+async function createOcrDocumentFromStoredUpload(prisma, { cantiereId = null, upload, user, ocrPayload }) {
   if (!upload?.token) throw httpError("File OCR temporaneo non disponibile.", 400);
   resolveStoredPath(upload.token);
 
   return prisma.document.create({
     data: {
-      cantiere_id: Number(cantiereId),
+      cantiere_id: cantiereId ? Number(cantiereId) : null,
       name: upload.originalName || path.basename(upload.token),
       file_path: upload.token,
       type: detectDocumentType(ocrPayload, { mimetype: upload.mimeType }),
@@ -440,10 +551,16 @@ async function ensureSpesaAccess(prisma, user, spesaId, options = {}) {
 
   if (!spesa) throw httpError("Spesa Genya non trovata.", 404);
 
-  const allowed = await canAccessCantiere(prisma, user, spesa.cantiere_id, {
-    globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
-    ownerRoles: ["PROJECT_MANAGER"],
-  });
+  let allowed = false;
+  if (spesa.cantiere_id) {
+    allowed = await canAccessCantiere(prisma, user, spesa.cantiere_id, {
+      globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
+      ownerRoles: ["PROJECT_MANAGER"],
+    });
+  } else {
+    allowed = ["ADMIN", "HR", "WAREHOUSEMAN"].includes(user?.role)
+      || (user?.employee_id && Number(user.employee_id) === Number(spesa.employee_id));
+  }
   if (!allowed) throw httpError("Accesso negato alla spesa del cantiere.", 403);
 
   if (!options.allowNonGenya && spesa.fonte !== GENYA_SOURCE && spesa.input_method !== "import_genya") {
@@ -465,7 +582,12 @@ export async function analyzeSpesaOcr(prisma, { spesaId, file, user }) {
   const match = scoreSpesaMatch(spesa, ocrPayload);
   const nextStatus = match.strength === "none"
     ? LogisticaStatus.RECONCILIATION_REQUIRED
-    : LogisticaStatus.OCR_REVIEW;
+    : resolveLogisticaStatus({
+        allocationScope: ocrPayload.allocation_scope,
+        costCategory: ocrPayload.cost_category,
+        warehouseRequired: shouldRequireWarehouse(ocrPayload, suggestedLines),
+        reconcileCount: suggestedLines.filter((line) => !isWarehouseLoadableLine(line)).length,
+      });
 
   const updatedSpesa = await prisma.spesa.update({
     where: { id: spesa.id },
@@ -473,6 +595,8 @@ export async function analyzeSpesaOcr(prisma, { spesaId, file, user }) {
       documento_id: document.id,
       ocr_payload: ocrPayload,
       logistica_status: nextStatus,
+      cost_category: ocrPayload.cost_category,
+      allocation_scope: ocrPayload.allocation_scope,
     },
     include: {
       cantiere: { select: { id: true, nome: true } },
@@ -487,7 +611,7 @@ export async function analyzeSpesaOcr(prisma, { spesaId, file, user }) {
     suggestedLines,
     matchStatus: {
       ...match,
-      canConfirm: match.strength !== "none" && suggestedLines.some((line) => line.codice_sku),
+      canConfirm: match.strength !== "none",
     },
   };
 }
@@ -500,10 +624,13 @@ export async function analyzeGenericInvoiceOcr(prisma, { file, user, cantiereId 
   const visibleMatches = [];
 
   for (const match of matches) {
-    const allowed = await canAccessCantiere(prisma, user, match.spesa.cantiere_id, {
-      globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
-      ownerRoles: ["PROJECT_MANAGER"],
-    });
+    const allowed = match.spesa.cantiere_id
+      ? await canAccessCantiere(prisma, user, match.spesa.cantiere_id, {
+          globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
+          ownerRoles: ["PROJECT_MANAGER"],
+        })
+      : ["ADMIN", "HR", "WAREHOUSEMAN"].includes(user?.role)
+        || (user?.employee_id && Number(user.employee_id) === Number(match.spesa.employee_id));
     if (allowed) visibleMatches.push(match);
   }
 
@@ -583,7 +710,16 @@ function normalizeConfirmLines(lines, fallbackPayload) {
   return source.map(normalizeLine);
 }
 
-export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, lines = [], ubicazioneId = null, user, allowNonGenya = false }) {
+export async function confirmSpesaOcr(prisma, {
+  spesaId,
+  documentId = null,
+  lines = [],
+  ubicazioneId = null,
+  costCategory = null,
+  allocationScope = null,
+  user,
+  allowNonGenya = false,
+}) {
   const spesaForAccess = await ensureSpesaAccess(prisma, user, spesaId, { allowNonGenya });
   if (spesaForAccess.logistica_status === LogisticaStatus.LOADED_TO_WAREHOUSE) {
     throw httpError("Questa spesa è già stata caricata a magazzino.", 409);
@@ -602,7 +738,7 @@ export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, line
     const targetDocumentId = documentId ? Number(documentId) : spesa.documento_id;
     if (targetDocumentId) {
       const document = await tx.document.findFirst({
-        where: { id: targetDocumentId, cantiere_id: spesa.cantiere_id },
+        where: { id: targetDocumentId, cantiere_id: spesa.cantiere_id ?? null },
         select: { id: true },
       });
       if (!document) throw httpError("Documento OCR non trovato o non collegato al cantiere.", 400);
@@ -615,17 +751,25 @@ export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, line
       }
     }
 
-    const fallbackPayload = normalizeInvoiceOcrPayload(spesa.ocr_payload ?? {});
+    const fallbackPayload = normalizeInvoiceOcrPayload({
+      ...(spesa.ocr_payload ?? {}),
+      ...(costCategory ? { cost_category: costCategory } : {}),
+      ...(allocationScope ? { allocation_scope: allocationScope } : {}),
+    });
     const confirmedLines = normalizeConfirmLines(lines, fallbackPayload);
-    if (!confirmedLines.length) {
-      throw httpError("Nessuna riga materiale confermata.", 400);
-    }
+    const warehouseLines = confirmedLines.filter(isWarehouseLoadableLine);
+    const costCategory = normalizeCostCategory(fallbackPayload.cost_category, CostCategory.UNKNOWN);
+    const allocationScope = normalizeAllocationScope(fallbackPayload.allocation_scope, costCategory);
+    const warehouseRequired = shouldRequireWarehouse(fallbackPayload, confirmedLines);
 
-    const targetLocation = ubicazioneId
-      ? await tx.ubicazione.findUnique({ where: { id: Number(ubicazioneId) } })
-      : await getDefaultWarehouseLocation(tx);
-    if (!targetLocation) {
-      throw httpError("Carico non registrato: manca una ubicazione magazzino con codice DEFAULT o PRINCIPALE.", 400);
+    let targetLocation = null;
+    if (warehouseRequired && warehouseLines.length > 0) {
+      targetLocation = ubicazioneId
+        ? await tx.ubicazione.findUnique({ where: { id: Number(ubicazioneId) } })
+        : await getDefaultWarehouseLocation(tx);
+      if (!targetLocation) {
+        throw httpError("Carico non registrato: manca una ubicazione magazzino con codice DEFAULT o PRINCIPALE.", 400);
+      }
     }
 
     const ocrPayload = {
@@ -636,7 +780,7 @@ export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, line
     const supplier = supplierResult?.fornitore ?? null;
 
     const results = [];
-    for (const line of confirmedLines) {
+    for (const line of warehouseLines) {
       const result = await upsertArticleAndCreateLoadMovement(tx, line, {
         ubicazioneId: targetLocation.id,
         userId: user?.id,
@@ -647,21 +791,37 @@ export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, line
     }
 
     const loaded = results.filter((result) => result.status === "loaded");
-    const reconcile = results.filter((result) => result.status !== "loaded");
-    const nextStatus = loaded.length > 0 && reconcile.length === 0
-      ? LogisticaStatus.LOADED_TO_WAREHOUSE
-      : LogisticaStatus.RECONCILIATION_REQUIRED;
+    const reconcile = [
+      ...results.filter((result) => result.status !== "loaded"),
+      ...confirmedLines
+        .filter((line) => !isWarehouseLoadableLine(line))
+        .map((line) => ({
+          status: "reconcile",
+          reason: line.codice_articolo ? "Riga non classificata come materiale di magazzino" : "Codice articolo mancante",
+          line,
+        })),
+    ];
+    const nextStatus = resolveLogisticaStatus({
+      allocationScope,
+      costCategory,
+      warehouseRequired,
+      loadedCount: loaded.length,
+      reconcileCount: reconcile.length,
+    });
 
     const updatedSpesa = await tx.spesa.update({
       where: { id: spesa.id },
       data: {
         documento_id: targetDocumentId ?? spesa.documento_id,
+        fornitore_id: supplier?.id ?? spesa.fornitore_id ?? null,
+        cost_category: costCategory,
+        allocation_scope: allocationScope,
         ocr_payload: {
           ...ocrPayload,
           confirmation: {
             confirmed_at: new Date().toISOString(),
             confirmed_by_user_id: user?.id ?? null,
-            ubicazione_id: targetLocation.id,
+            ubicazione_id: targetLocation?.id ?? null,
             fornitore_id: supplier?.id ?? null,
             fornitore_action: supplierResult?.action ?? null,
             loaded_lines: loaded.length,
@@ -701,13 +861,25 @@ export async function confirmGenericInvoiceOcr(prisma, {
   spesaId = null,
   cantiereId = null,
   ubicazioneId = null,
+  costCategory = null,
+  allocationScope = null,
   user,
 }) {
-  const normalizedPayload = normalizeInvoiceOcrPayload(ocrPayload);
+  const normalizedPayload = normalizeInvoiceOcrPayload({
+    ...ocrPayload,
+    ...(costCategory ? { cost_category: costCategory } : {}),
+    ...(allocationScope ? { allocation_scope: allocationScope } : {}),
+  });
   const confirmedLines = normalizeConfirmLines(lines, normalizedPayload);
-  const hasLoadableLines = confirmedLines.some((line) => line.codice_sku);
+  const warehouseLines = confirmedLines.filter(isWarehouseLoadableLine);
+  const warehouseRequired = shouldRequireWarehouse(normalizedPayload, confirmedLines);
+  const normalizedCostCategory = normalizeCostCategory(normalizedPayload.cost_category);
+  const normalizedAllocationScope = normalizeAllocationScope(normalizedPayload.allocation_scope, normalizedCostCategory);
   const payloadForSave = {
     ...normalizedPayload,
+    cost_category: normalizedCostCategory,
+    allocation_scope: normalizedAllocationScope,
+    logistica_required: warehouseRequired,
     righe_materiali: confirmedLines,
   };
   const targetSpesaId = spesaId ? Number(spesaId) : null;
@@ -724,15 +896,23 @@ export async function confirmGenericInvoiceOcr(prisma, {
         user,
         ocrPayload: payloadForSave,
       });
-      const supplierResult = hasLoadableLines ? null : await upsertSupplierFromOcr(tx, payloadForSave);
+      const supplierResult = warehouseRequired && warehouseLines.length > 0
+        ? null
+        : await upsertSupplierFromOcr(tx, payloadForSave);
       const updatedSpesa = await tx.spesa.update({
         where: { id: existingSpesa.id },
         data: {
           documento_id: document.id,
           ocr_payload: payloadForSave,
-          logistica_status: hasLoadableLines
-            ? LogisticaStatus.OCR_REVIEW
-            : LogisticaStatus.RECONCILIATION_REQUIRED,
+          fornitore_id: supplierResult?.fornitore?.id ?? existingSpesa.fornitore_id ?? null,
+          cost_category: normalizedCostCategory,
+          allocation_scope: normalizedAllocationScope,
+          logistica_status: resolveLogisticaStatus({
+            allocationScope: normalizedAllocationScope,
+            costCategory: normalizedCostCategory,
+            warehouseRequired,
+            reconcileCount: confirmedLines.filter((line) => !isWarehouseLoadableLine(line)).length,
+          }),
         },
         include: {
           cantiere: { select: { id: true, nome: true } },
@@ -743,7 +923,7 @@ export async function confirmGenericInvoiceOcr(prisma, {
       return { document, updatedSpesa, supplierResult };
     });
 
-    if (!hasLoadableLines) {
+    if (!warehouseRequired || warehouseLines.length === 0) {
       return {
         spesa: updatedSpesa,
         document,
@@ -753,9 +933,13 @@ export async function confirmGenericInvoiceOcr(prisma, {
         fornitoreAction: supplierResult?.action ?? null,
         movimentiCaricoCreati: 0,
         articoliCreati: 0,
-        righeDaRiconciliare: confirmedLines.length,
+        righeDaRiconciliare: warehouseRequired
+          ? confirmedLines.filter((line) => !isWarehouseLoadableLine(line)).length
+          : 0,
         righeDaRiconciliareDettaglio: confirmedLines.map((line) => ({
-          reason: line.codice_articolo ? "SKU non normalizzabile" : "Codice articolo mancante",
+          reason: warehouseRequired
+            ? (line.codice_articolo ? "SKU non normalizzabile" : "Codice articolo mancante")
+            : "Costo non logistico: nessun carico magazzino richiesto",
           line,
         })),
       };
@@ -771,18 +955,23 @@ export async function confirmGenericInvoiceOcr(prisma, {
   }
 
   const parsedCantiereId = Number(cantiereId);
-  if (!Number.isInteger(parsedCantiereId) || parsedCantiereId <= 0) {
-    throw httpError("Se nessuna spesa Genya viene agganciata, seleziona un cantiere per creare la nuova spesa.", 400);
+  const hasProjectCantiere = Number.isInteger(parsedCantiereId) && parsedCantiereId > 0;
+  if (normalizedAllocationScope === CostAllocationScope.PROJECT && !hasProjectCantiere) {
+    throw httpError("Per una spesa di progetto seleziona un cantiere prima della registrazione.", 400);
   }
   if (!user?.employee_id) {
     throw httpError("Utente senza employee_id collegato: impossibile creare la spesa OCR.", 400);
   }
 
-  const allowed = await canAccessCantiere(prisma, user, parsedCantiereId, {
-    globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
-    ownerRoles: ["PROJECT_MANAGER"],
-  });
-  if (!allowed) throw httpError("Accesso negato al cantiere selezionato.", 403);
+  if (hasProjectCantiere) {
+    const allowed = await canAccessCantiere(prisma, user, parsedCantiereId, {
+      globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
+      ownerRoles: ["PROJECT_MANAGER"],
+    });
+    if (!allowed) throw httpError("Accesso negato al cantiere selezionato.", 403);
+  } else if (!["ADMIN", "HR", "WAREHOUSEMAN"].includes(user?.role)) {
+    throw httpError("Solo amministrazione o magazzino possono registrare costi overhead senza cantiere.", 403);
+  }
 
   const importo = parseMoney(normalizedPayload.totale_documento);
   if (!importo || importo <= 0) {
@@ -790,34 +979,44 @@ export async function confirmGenericInvoiceOcr(prisma, {
   }
 
   const { spesa, document, supplierResult } = await prisma.$transaction(async (tx) => {
-    const rootWbs = await tx.wbsNode.findFirst({
-      where: { cantiere_id: parsedCantiereId, parent_id: null },
-      select: { id: true },
-    });
+    const rootWbs = hasProjectCantiere
+      ? await tx.wbsNode.findFirst({
+          where: { cantiere_id: parsedCantiereId, parent_id: null },
+          select: { id: true },
+        })
+      : null;
     const document = await createOcrDocumentFromStoredUpload(tx, {
-      cantiereId: parsedCantiereId,
+      cantiereId: hasProjectCantiere ? parsedCantiereId : null,
       upload,
       user,
       ocrPayload: payloadForSave,
     });
-    const supplierResult = hasLoadableLines ? null : await upsertSupplierFromOcr(tx, payloadForSave);
+    const supplierResult = warehouseRequired && warehouseLines.length > 0
+      ? null
+      : await upsertSupplierFromOcr(tx, payloadForSave);
 
     const spesa = await tx.spesa.create({
       data: {
         timestamp_utc: parseDateOnly(payloadForSave.data_documento) ?? new Date(),
         employee_id: Number(user.employee_id),
-        cantiere_id: parsedCantiereId,
+        cantiere_id: hasProjectCantiere ? parsedCantiereId : null,
         wbs_node_id: rootWbs?.id ?? null,
         importo,
         fornitore: supplierNameFromPayload(payloadForSave),
+        fornitore_id: supplierResult?.fornitore?.id ?? null,
         descrizione: normalizeOptionalText(`OCR fattura ${payloadForSave.numero_documento ?? ""}`),
         fonte: "OCR_WEB",
         input_method: "invoice_ocr",
         fattura_rif: payloadForSave.numero_documento,
         stato_validazione: "PENDING",
-        logistica_status: hasLoadableLines
-          ? LogisticaStatus.OCR_REVIEW
-          : LogisticaStatus.RECONCILIATION_REQUIRED,
+        cost_category: normalizedCostCategory,
+        allocation_scope: normalizedAllocationScope,
+        logistica_status: resolveLogisticaStatus({
+          allocationScope: normalizedAllocationScope,
+          costCategory: normalizedCostCategory,
+          warehouseRequired,
+          reconcileCount: confirmedLines.filter((line) => !isWarehouseLoadableLine(line)).length,
+        }),
         documento_id: document.id,
         ocr_payload: payloadForSave,
       },
@@ -830,7 +1029,7 @@ export async function confirmGenericInvoiceOcr(prisma, {
     return { spesa, document, supplierResult };
   });
 
-  if (!hasLoadableLines) {
+  if (!warehouseRequired || warehouseLines.length === 0) {
     return {
       spesa,
       document,
@@ -840,9 +1039,13 @@ export async function confirmGenericInvoiceOcr(prisma, {
       fornitoreAction: supplierResult?.action ?? null,
       movimentiCaricoCreati: 0,
       articoliCreati: 0,
-      righeDaRiconciliare: confirmedLines.length,
+      righeDaRiconciliare: warehouseRequired
+        ? confirmedLines.filter((line) => !isWarehouseLoadableLine(line)).length
+        : 0,
       righeDaRiconciliareDettaglio: confirmedLines.map((line) => ({
-        reason: line.codice_articolo ? "SKU non normalizzabile" : "Codice articolo mancante",
+        reason: warehouseRequired
+          ? (line.codice_articolo ? "SKU non normalizzabile" : "Codice articolo mancante")
+          : "Costo non logistico: nessun carico magazzino richiesto",
         line,
       })),
     };
@@ -864,10 +1067,13 @@ export async function matchSpesaOcr(prisma, { ocrPayload, user, cantiereId = nul
   const visibleMatches = [];
 
   for (const match of matches) {
-    const allowed = await canAccessCantiere(prisma, user, match.spesa.cantiere_id, {
-      globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
-      ownerRoles: ["PROJECT_MANAGER"],
-    });
+    const allowed = match.spesa.cantiere_id
+      ? await canAccessCantiere(prisma, user, match.spesa.cantiere_id, {
+          globalRoles: ["ADMIN", "HR", "WAREHOUSEMAN"],
+          ownerRoles: ["PROJECT_MANAGER"],
+        })
+      : ["ADMIN", "HR", "WAREHOUSEMAN"].includes(user?.role)
+        || (user?.employee_id && Number(user.employee_id) === Number(match.spesa.employee_id));
     if (allowed) visibleMatches.push(match);
   }
 

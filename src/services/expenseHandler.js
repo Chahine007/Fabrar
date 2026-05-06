@@ -8,6 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import logger from '../logger.js';
+import { CostAllocationScope, CostCategory, LogisticaStatus } from '../constants.js';
 import { getCantieriAttivi, insertSpesa, getDb } from '../db/index.js';
 import { tgGetFile, tgDownloadFile, tgEditMessageText } from './telegram.js';
 import { extractInvoiceOcrFromFile, getOpenAIUserFacingMessage } from './openai.js';
@@ -202,6 +203,23 @@ export async function handleExpensePhoto(message, employee, sendStatus, statusMs
 
     if (typeof simpleExpense.importo !== 'number' || simpleExpense.importo <= 0) {
         await sendStatus('⚠️ Non ho trovato un totale valido. Inserisci la spesa manualmente o invia una foto più leggibile.');
+        return;
+    }
+
+    if (ocrPayload.allocation_scope === CostAllocationScope.OVERHEAD) {
+        try {
+            await insertSpesa(employee.id, null, simpleExpense.importo, simpleExpense.fornitore, simpleExpense.descrizione, 'TELEGRAM_OCR', ocrPayload.numero_documento ?? null, {
+                cost_category: ocrPayload.cost_category ?? CostCategory.OTHER,
+                allocation_scope: CostAllocationScope.OVERHEAD,
+                logistica_status: LogisticaStatus.NOT_REQUIRED,
+                input_method: 'telegram_ocr',
+                ocr_payload: ocrPayload,
+            });
+            await sendStatus(`🧾 Spesa overhead rilevata: ${simpleExpense.importo}€ (${simpleExpense.fornitore || 'Ignoto'}).\n✅ Salvata senza carico magazzino e senza cantiere.`);
+        } catch (err) {
+            logger.error({ err, event: 'insert_overhead_spesa_failed' }, 'insert_overhead_spesa_failed');
+            await sendStatus(`🧾 Spesa overhead rilevata: ${simpleExpense.importo}€.\n⚠️ Errore durante il salvataggio.`);
+        }
         return;
     }
 

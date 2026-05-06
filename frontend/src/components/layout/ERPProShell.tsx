@@ -42,13 +42,11 @@ const WAREHOUSE_ROLES = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'];
 
 const NAV_TREE: NavNode[] = [
   {
-    id: 'dashboard-section',
+    id: 'dashboard',
     label: 'Dashboard',
     icon: LayoutDashboard,
+    path: '/dashboard',
     roles: ['ADMIN'],
-    children: [
-      { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard', id: 'dashboard', roles: ['ADMIN'] },
-    ],
   },
   {
     id: 'operations-section',
@@ -121,7 +119,24 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: bo
 
   const isPathActive = React.useCallback((path?: string) => {
     if (!path) return false;
-    return location.pathname === path || (path !== '/' && location.pathname.startsWith(`${path}/`));
+
+    const normalizePath = (value: string) => {
+      if (value === '/') return value;
+      return value.replace(/\/+$/, '');
+    };
+
+    const currentPath = normalizePath(location.pathname);
+    const targetPath = normalizePath(path);
+
+    if (targetPath === '/projects') {
+      return currentPath === targetPath || currentPath.startsWith(`${targetPath}/`);
+    }
+
+    if (targetPath === '/hr') {
+      return currentPath === targetPath || currentPath.startsWith('/hr/employees/');
+    }
+
+    return currentPath === targetPath;
   }, [location.pathname]);
 
   const isNodeActive = React.useCallback((node: NavNode): boolean => {
@@ -230,7 +245,7 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: bo
           onClick={closeMobile}
           aria-label={node.label}
           className={cn(
-            "flex h-11 w-11 items-center justify-center rounded-xl transition-all duration-200",
+            "mx-auto flex h-11 w-11 items-center justify-center rounded-xl transition-all duration-200",
             active
               ? "bg-sidebar-hover text-white shadow-lg"
               : "text-slate-400 hover:bg-sidebar-hover/50 hover:text-white"
@@ -295,13 +310,9 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: bo
             <Activity size={20} />
           </div>
           {isExpanded && (
-            <motion.span 
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="text-xl font-bold text-white tracking-tight"
-            >
+            <span className="text-xl font-bold text-white tracking-tight">
               ERP Pro
-            </motion.span>
+            </span>
           )}
         </Link>
         {isExpanded && !isMobileOpen && (

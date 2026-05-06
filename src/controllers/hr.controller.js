@@ -110,6 +110,9 @@ function mapAuditSpesaRow(spesa) {
         documento_id: spesa.documento_id ?? null,
         documento_nome: spesa.documento?.name ?? null,
         logistica_status: spesa.logistica_status ?? null,
+        cost_category: spesa.cost_category ?? null,
+        allocation_scope: spesa.allocation_scope ?? null,
+        fornitore_id: spesa.fornitore_id ?? null,
         ocr_payload: spesa.ocr_payload ?? null,
         ocr_reviewed_at: spesa.ocr_reviewed_at ?? null,
         movimenti_magazzino_count: spesa.documento?._count?.movimenti_magazzino ?? 0,
@@ -463,7 +466,7 @@ export const getUserKpi = asyncHandler(async (req, res) => {
 
 export const getAudit = asyncHandler(async (req, res) => {
     const prisma = getDb();
-    const { type, status, employee_id, cantiere_id, from, to } = req.query; // Validati da Zod
+    const { type, status, employee_id, cantiere_id, from, to, cost_category, allocation_scope } = req.query; // Validati da Zod
     const { limit, offset } = parsePagination(req.query, { defaultLimit: 200, maxLimit: 500 });
     const pageWindow = limit + offset;
 
@@ -520,6 +523,8 @@ export const getAudit = asyncHandler(async (req, res) => {
                 ...(employeeId  ? { employee_id: employeeId }  : {}),
                 ...(cantiereId  ? { cantiere_id: cantiereId }  : {}),
                 ...(statusValue ? { stato_validazione: statusValue } : {}),
+                ...(cost_category ? { cost_category: String(cost_category).toUpperCase() } : {}),
+                ...(allocation_scope ? { allocation_scope: String(allocation_scope).toUpperCase() } : {}),
                 ...((fromDate || toDate) ? {
                     timestamp_utc: {
                         ...(fromDate ? { gte: fromDate } : {}),

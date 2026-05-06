@@ -121,6 +121,19 @@ export type LogisticaStatus =
   | 'OCR_REVIEW'
   | 'LOADED_TO_WAREHOUSE'
   | 'RECONCILIATION_REQUIRED';
+export type CostCategory =
+  | 'INVENTORY_MATERIAL'
+  | 'CONSUMABLE_SUPPLY'
+  | 'SERVICE'
+  | 'LEASING_RENTAL'
+  | 'UTILITY'
+  | 'INSURANCE'
+  | 'TAX_FEE'
+  | 'PROFESSIONAL_SERVICE'
+  | 'TRAVEL_VEHICLE'
+  | 'OTHER'
+  | 'UNKNOWN';
+export type CostAllocationScope = 'PROJECT' | 'OVERHEAD' | 'REVIEW';
 
 export interface InvoiceOcrLine {
   codice_articolo?: string | null;
@@ -134,6 +147,8 @@ export interface InvoiceOcrLine {
   prezzo_totale?: number | null;
   importo_riga?: number | null;
   iva_percentuale?: number | null;
+  cost_category?: CostCategory | string | null;
+  stockable?: boolean | null;
   magazzino_status?: 'new' | 'existing' | 'reconcile' | string;
   reconcile_reason?: string | null;
   articolo_id?: number | null;
@@ -141,6 +156,9 @@ export interface InvoiceOcrLine {
 
 export interface InvoiceOcrPayload {
   document_type?: string | null;
+  cost_category?: CostCategory | string | null;
+  allocation_scope?: CostAllocationScope | string | null;
+  logistica_required?: boolean | null;
   tipo_documento?: string | null;
   numero_documento?: string | null;
   data_documento?: string | null;
@@ -184,6 +202,16 @@ export interface InvoiceOcrPayload {
     importo_scadenza?: number | null;
   } | null;
   righe_materiali?: InvoiceOcrLine[];
+  righe_costo?: Array<{
+    descrizione?: string | null;
+    cost_category?: CostCategory | string | null;
+    allocation_scope?: CostAllocationScope | string | null;
+    importo?: number | null;
+    iva_percentuale?: number | null;
+    quantita?: number | null;
+    unita_misura?: string | null;
+    prezzo_unitario?: number | null;
+  }>;
 }
 
 export interface SpesaOcrResponse {
@@ -268,6 +296,9 @@ export interface AuditEntry {
   documento_id?: number | null;
   documento_nome?: string | null;
   logistica_status?: LogisticaStatus | null;
+  cost_category?: CostCategory | string | null;
+  allocation_scope?: CostAllocationScope | string | null;
+  fornitore_id?: number | null;
   ocr_payload?: InvoiceOcrPayload | null;
   ocr_reviewed_at?: string | null;
   movimenti_magazzino_count?: number;
@@ -286,6 +317,8 @@ export interface AuditFilters {
   cantiere_id?: number;
   from?: string; // YYYY-MM-DD
   to?: string;   // YYYY-MM-DD
+  cost_category?: string;
+  allocation_scope?: string;
 }
 
 // ─── Fetch helpers ───────────────────────────────────────────────────────────
@@ -307,6 +340,8 @@ function buildQuery(filters: AuditFilters): string {
   if (filters.cantiere_id) params.set('cantiere_id', String(filters.cantiere_id));
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);
+  if (filters.cost_category) params.set('cost_category', filters.cost_category);
+  if (filters.allocation_scope) params.set('allocation_scope', filters.allocation_scope);
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }
@@ -585,6 +620,8 @@ export function useConfirmGenericInvoiceOcr() {
       spesaId,
       cantiereId,
       ubicazioneId,
+      costCategory,
+      allocationScope,
     }: {
       upload: GenericInvoiceOcrUpload;
       ocrPayload: InvoiceOcrPayload;
@@ -592,6 +629,8 @@ export function useConfirmGenericInvoiceOcr() {
       spesaId?: number | null;
       cantiereId?: number | null;
       ubicazioneId?: number | null;
+      costCategory?: CostCategory | string | null;
+      allocationScope?: CostAllocationScope | string | null;
     }) => {
       const res = await apiFetch('/api/admin/spese/ocr/confirm', {
         method: 'POST',
@@ -602,6 +641,8 @@ export function useConfirmGenericInvoiceOcr() {
           spesa_id: spesaId ?? null,
           cantiere_id: cantiereId ?? null,
           ubicazione_id: ubicazioneId ?? null,
+          cost_category: costCategory ?? null,
+          allocation_scope: allocationScope ?? null,
         }),
       });
       if (!res.ok) {
@@ -625,11 +666,15 @@ export function useConfirmSpesaOcr() {
       documentId,
       lines,
       ubicazioneId,
+      costCategory,
+      allocationScope,
     }: {
       spesaId: number;
       documentId?: number | null;
       lines: InvoiceOcrLine[];
       ubicazioneId?: number | null;
+      costCategory?: CostCategory | string | null;
+      allocationScope?: CostAllocationScope | string | null;
     }) => {
       const res = await apiFetch(`/api/admin/spese/${spesaId}/ocr/confirm`, {
         method: 'POST',
@@ -637,6 +682,8 @@ export function useConfirmSpesaOcr() {
           document_id: documentId ?? null,
           lines,
           ubicazione_id: ubicazioneId ?? null,
+          cost_category: costCategory ?? null,
+          allocation_scope: allocationScope ?? null,
         }),
       });
       if (!res.ok) {

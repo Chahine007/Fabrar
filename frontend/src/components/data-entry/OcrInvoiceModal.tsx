@@ -9,7 +9,15 @@ import {
   useConfirmSpesaOcr,
 } from '../../hooks/api/useHr';
 import { useCantieri } from '../../hooks/api/useCantieri';
-import type { AuditEntry, GenericInvoiceOcrResponse, InvoiceOcrLine, InvoiceOcrPayload, SpesaOcrResponse } from '../../hooks/api/useHr';
+import type {
+  AuditEntry,
+  CostAllocationScope,
+  CostCategory,
+  GenericInvoiceOcrResponse,
+  InvoiceOcrLine,
+  InvoiceOcrPayload,
+  SpesaOcrResponse,
+} from '../../hooks/api/useHr';
 import { Button, EmptyState, useToast } from '../ui';
 
 function safeNumber(value: unknown) {
@@ -31,6 +39,42 @@ function normalizeOcrLines(lines: InvoiceOcrLine[] | undefined | null) {
   return Array.isArray(lines) ? lines : [];
 }
 
+function isLoadableLine(line: InvoiceOcrLine) {
+  return Boolean(
+    line.codice_sku
+      && line.stockable !== false
+      && (line.cost_category == null || line.cost_category === 'INVENTORY_MATERIAL')
+  );
+}
+
+const COST_CATEGORY_OPTIONS: Array<{ value: CostCategory; label: string }> = [
+  { value: 'INVENTORY_MATERIAL', label: 'Materiale di magazzino' },
+  { value: 'CONSUMABLE_SUPPLY', label: 'Fornitura / consumabile' },
+  { value: 'SERVICE', label: 'Servizio' },
+  { value: 'LEASING_RENTAL', label: 'Leasing / noleggio' },
+  { value: 'UTILITY', label: 'Utenza' },
+  { value: 'INSURANCE', label: 'Assicurazione' },
+  { value: 'TAX_FEE', label: 'Tassa / diritto' },
+  { value: 'PROFESSIONAL_SERVICE', label: 'Prestazione professionale' },
+  { value: 'TRAVEL_VEHICLE', label: 'Viaggio / veicolo' },
+  { value: 'OTHER', label: 'Altro' },
+  { value: 'UNKNOWN', label: 'Da classificare' },
+];
+
+const ALLOCATION_SCOPE_OPTIONS: Array<{ value: CostAllocationScope; label: string }> = [
+  { value: 'PROJECT', label: 'Progetto / cantiere' },
+  { value: 'OVERHEAD', label: 'Overhead aziendale' },
+  { value: 'REVIEW', label: 'Da rivedere' },
+];
+
+function categoryLabel(value?: string | null) {
+  return COST_CATEGORY_OPTIONS.find((item) => item.value === value)?.label ?? value ?? 'Da classificare';
+}
+
+function scopeLabel(value?: string | null) {
+  return ALLOCATION_SCOPE_OPTIONS.find((item) => item.value === value)?.label ?? value ?? 'Da rivedere';
+}
+
 function formatOcrAddress(subject?: InvoiceOcrPayload['fornitore'] | InvoiceOcrPayload['cliente'] | null) {
   if (!subject) return '—';
   const locality = [subject.cap, subject.comune].filter(Boolean).join(' ');
@@ -39,7 +83,7 @@ function formatOcrAddress(subject?: InvoiceOcrPayload['fornitore'] | InvoiceOcrP
 }
 
 function lineStatusMeta(line: InvoiceOcrLine) {
-  if (!line.codice_sku) {
+  if (!isLoadableLine(line)) {
     return { label: 'Da riconciliare', cls: 'bg-warning-bg text-warning-text border-warning-border' };
   }
   if (line.magazzino_status === 'existing') {
@@ -69,8 +113,9 @@ export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry;
   const payload = analysis?.ocrPayload ?? entry.ocr_payload ?? null;
   const lines = normalizeOcrLines(analysis?.suggestedLines ?? payload?.righe_materiali);
   const documentId = analysis?.document?.id ?? entry.documento_id ?? null;
-  const loadableLines = lines.filter((line) => line.codice_sku);
-  const canConfirm = loadableLines.length > 0 && entry.logistica_status !== 'LOADED_TO_WAREHOUSE' && !confirmation;
+  const loadableLines = lines.filter(isLoadableLine);
+  const requiresWarehouse = payload?.logistica_required === true || payload?.cost_category === 'INVENTORY_MATERIAL';
+  const canConfirm = Boolean(payload) && entry.logistica_status !== 'LOADED_TO_WAREHOUSE' && !confirmation;
   const fornitore = payload?.fornitore ?? null;
   const cliente = payload?.cliente ?? null;
   const pagamento = payload?.pagamento ?? null;
@@ -95,10 +140,16 @@ export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry;
   const handleConfirm = async () => {
     if (!canConfirm) return;
     try {
-      const result = await confirm.mutateAsync({ spesaId: entry.id, documentId, lines });
+      const result = await confirm.mutateAsync({
+        spesaId: entry.id,
+        documentId,
+        lines,
+        costCategory: payload?.cost_category ?? null,
+        allocationScope: payload?.allocation_scope ?? null,
+      });
       setConfirmation(result);
       toast.success(
-        'Carico registrato',
+        requiresWarehouse ? 'Carico registrato' : 'Fattura registrata',
         `${result.movimentiCaricoCreati ?? 0} righe caricate. ${supplierActionLabel(result.fornitoreAction)}.`
       );
     } catch (err) {
@@ -298,7 +349,7 @@ export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry;
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-success-bg px-4 py-2 text-sm font-bold text-success-text disabled:cursor-not-allowed disabled:opacity-50"
           >
             {confirm.isPending ? <Loader2 size={14} className="animate-spin" /> : <PackageCheck size={14} />}
-            Conferma carico magazzino
+            {requiresWarehouse ? 'Conferma carico magazzino' : 'Conferma registrazione'}
           </button>
         </div>
       </motion.div>
@@ -316,16 +367,22 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
   const [analysis, setAnalysis] = useState<GenericInvoiceOcrResponse | null>(null);
   const [selectedSpesaId, setSelectedSpesaId] = useState<number | null>(null);
   const [mode, setMode] = useState<'existing' | 'new'>('new');
+  const [costCategory, setCostCategory] = useState<CostCategory>('UNKNOWN');
+  const [allocationScope, setAllocationScope] = useState<CostAllocationScope>('REVIEW');
   const [confirmation, setConfirmation] = useState<SpesaOcrResponse | null>(null);
 
   const payload = analysis?.ocrPayload ?? null;
   const lines = normalizeOcrLines(analysis?.suggestedLines ?? payload?.righe_materiali);
-  const loadableLines = lines.filter((line) => line.codice_sku);
+  const costLines = payload?.righe_costo ?? [];
+  const loadableLines = lines.filter(isLoadableLine);
   const candidates = analysis?.candidates ?? [];
   const fornitore = payload?.fornitore ?? null;
   const pagamento = payload?.pagamento ?? null;
+  const requiresWarehouse = costCategory === 'INVENTORY_MATERIAL' && loadableLines.length > 0;
+  const reviewRequired = costCategory === 'INVENTORY_MATERIAL' && loadableLines.length === 0;
+  const nonLogistic = allocationScope === 'OVERHEAD' || (!requiresWarehouse && !reviewRequired);
   const canConfirmExisting = mode === 'existing' && Boolean(selectedSpesaId);
-  const canConfirmNew = mode === 'new' && Boolean(selectedCantiereId);
+  const canConfirmNew = mode === 'new' && (allocationScope !== 'PROJECT' || Boolean(selectedCantiereId));
   const canConfirm = Boolean(analysis?.upload) && !confirmation && (canConfirmExisting || canConfirmNew);
 
   const handleAnalyze = async (event: React.FormEvent) => {
@@ -342,6 +399,8 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
       });
       setAnalysis(result);
       setConfirmation(null);
+      setCostCategory((result.ocrPayload.cost_category as CostCategory) ?? 'UNKNOWN');
+      setAllocationScope((result.ocrPayload.allocation_scope as CostAllocationScope) ?? 'REVIEW');
       const best = result.candidates[0];
       if (best?.spesa?.id) {
         setMode('existing');
@@ -364,7 +423,9 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
         ocrPayload: analysis.ocrPayload,
         lines,
         spesaId: mode === 'existing' ? selectedSpesaId : null,
-        cantiereId: mode === 'new' ? Number(selectedCantiereId) : null,
+        cantiereId: mode === 'new' && allocationScope === 'PROJECT' ? Number(selectedCantiereId) : null,
+        costCategory,
+        allocationScope,
       });
       setConfirmation(result);
       toast.success(
@@ -476,6 +537,55 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
                 </div>
 
                 <div className="rounded-2xl border border-border bg-background p-4">
+                  <p className="text-sm font-bold text-text-primary">Classificazione contabile</p>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    OCR: {categoryLabel(payload?.cost_category)} · {scopeLabel(payload?.allocation_scope)}
+                  </p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary">
+                        Categoria costo
+                      </label>
+                      <select
+                        value={costCategory}
+                        onChange={(event) => setCostCategory(event.target.value as CostCategory)}
+                        className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary"
+                      >
+                        {COST_CATEGORY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary">
+                        Destinazione
+                      </label>
+                      <select
+                        value={allocationScope}
+                        onChange={(event) => setAllocationScope(event.target.value as CostAllocationScope)}
+                        className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary"
+                      >
+                        {ALLOCATION_SCOPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className={cn(
+                    'mt-3 rounded-xl border px-3 py-2 text-xs font-semibold',
+                    nonLogistic
+                      ? 'border-info-border bg-info-bg text-info-text'
+                      : 'border-success-border bg-success-bg text-success-text'
+                  )}>
+                    {reviewRequired
+                      ? 'Materiale senza SKU caricabili: nessun carico automatico, serve riconciliazione.'
+                      : nonLogistic
+                        ? 'Costo overhead/non logistico: nessun articolo e nessun carico magazzino verranno creati.'
+                        : 'Materiale di magazzino: verranno creati articoli e carichi solo per righe con SKU valido.'}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-border bg-background p-4">
                   <p className="text-sm font-bold text-text-primary">Destinazione contabile</p>
                   <div className="mt-3 space-y-2">
                     {candidates.map((candidate) => {
@@ -515,7 +625,9 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
                       <span>
                         <span className="block font-bold text-text-primary">Crea nuova spesa OCR</span>
                         <span className="block text-xs text-text-secondary">
-                          Richiede un cantiere selezionato. Usa questa opzione solo se la fattura non è già in Genya.
+                          {allocationScope === 'PROJECT'
+                            ? 'Richiede un cantiere selezionato. Usa questa opzione solo se la fattura non è già in Genya.'
+                            : 'Per costi overhead non serve selezionare un cantiere.'}
                         </span>
                       </span>
                     </label>
@@ -567,6 +679,26 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
                         })}
                       </tbody>
                     </table>
+                  </div>
+                )}
+                {costLines.length > 0 && (
+                  <div className="border-t border-border p-4">
+                    <h4 className="text-sm font-bold text-text-primary">Righe costo non logistiche</h4>
+                    <div className="mt-3 space-y-2">
+                      {costLines.map((line, index) => (
+                        <div key={`${line.descrizione ?? 'cost'}-${index}`} className="rounded-xl border border-border bg-background p-3 text-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-text-primary">{line.descrizione || 'Costo senza descrizione'}</p>
+                              <p className="mt-1 text-xs text-text-secondary">
+                                {categoryLabel(line.cost_category)} · {scopeLabel(line.allocation_scope)}
+                              </p>
+                            </div>
+                            <span className="font-bold text-text-primary">{formatOptionalMoney(line.importo)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

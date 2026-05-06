@@ -19,6 +19,26 @@ export const LogisticaStatus = Object.freeze({
     RECONCILIATION_REQUIRED: 'RECONCILIATION_REQUIRED',
 });
 
+export const CostCategory = Object.freeze({
+    INVENTORY_MATERIAL: 'INVENTORY_MATERIAL',
+    CONSUMABLE_SUPPLY: 'CONSUMABLE_SUPPLY',
+    SERVICE: 'SERVICE',
+    LEASING_RENTAL: 'LEASING_RENTAL',
+    UTILITY: 'UTILITY',
+    INSURANCE: 'INSURANCE',
+    TAX_FEE: 'TAX_FEE',
+    PROFESSIONAL_SERVICE: 'PROFESSIONAL_SERVICE',
+    TRAVEL_VEHICLE: 'TRAVEL_VEHICLE',
+    OTHER: 'OTHER',
+    UNKNOWN: 'UNKNOWN',
+});
+
+export const CostAllocationScope = Object.freeze({
+    PROJECT: 'PROJECT',
+    OVERHEAD: 'OVERHEAD',
+    REVIEW: 'REVIEW',
+});
+
 export const AUDIT_TYPE = Object.freeze({
     ORE:       'ore',
     SPESE:     'spese',

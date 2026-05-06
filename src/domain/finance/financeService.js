@@ -1,6 +1,6 @@
 import pkg from "@prisma/client";
 import { getDb } from "../../db/index.js";
-import { LogisticaStatus, ValidationStatus } from "../../constants.js";
+import { CostAllocationScope, LogisticaStatus, ValidationStatus } from "../../constants.js";
 import { round2, toNumber } from "../../utils/helpers.js";
 
 const { Prisma } = pkg;
@@ -54,6 +54,7 @@ function buildApprovedExpenseCostWhere(baseWhere = {}) {
   return {
     ...baseWhere,
     stato_validazione: ValidationStatus.APPROVED,
+    allocation_scope: CostAllocationScope.PROJECT,
     OR: [{ fonte: null }, { fonte: { not: "MAGAZZINO" } }],
     NOT: {
       AND: [
