@@ -287,6 +287,7 @@ const INVOICE_OCR_SCHEMA = {
   additionalProperties: false,
   required: [
     "document_type",
+    "tipo_documento",
     "numero_documento",
     "data_documento",
     "codice_destinatario",
@@ -295,6 +296,7 @@ const INVOICE_OCR_SCHEMA = {
     "totale_imponibile",
     "totale_imposta",
     "totale_documento",
+    "pagamento",
     "righe_materiali",
   ],
   properties: {
@@ -302,6 +304,7 @@ const INVOICE_OCR_SCHEMA = {
       type: "string",
       enum: ["INVOICE", "DDT", "ACCOMPANYING_INVOICE", "CREDIT_NOTE", "RECEIPT", "UNKNOWN"],
     },
+    tipo_documento: { type: ["string", "null"] },
     numero_documento: { type: ["string", "null"] },
     data_documento: { type: ["string", "null"] },
     codice_destinatario: { type: ["string", "null"] },
@@ -336,6 +339,17 @@ const INVOICE_OCR_SCHEMA = {
     totale_imponibile: { type: ["number", "null"] },
     totale_imposta: { type: ["number", "null"] },
     totale_documento: { type: ["number", "null"] },
+    pagamento: {
+      type: "object",
+      additionalProperties: false,
+      required: ["modalita_pagamento", "iban", "scadenza", "importo_scadenza"],
+      properties: {
+        modalita_pagamento: { type: ["string", "null"] },
+        iban: { type: ["string", "null"] },
+        scadenza: { type: ["string", "null"] },
+        importo_scadenza: { type: ["number", "null"] },
+      },
+    },
     righe_materiali: {
       type: "array",
       items: {
@@ -400,9 +414,12 @@ export async function extractInvoiceOcrFromFile(base64File, mimeType = "image/jp
               content: [
                 "Sei un assistente OCR per fatture, DDT e fatture accompagnatorie italiane.",
                 "Estrai i dati leggibili senza inventare campi mancanti.",
+                "Estrai tipo_documento come testo leggibile dalla tabella, ad esempio 'TD01 fattura'.",
                 "Usa numero_documento dal campo Numero documento e data_documento dal campo Data documento.",
+                "Estrai codice_destinatario se presente.",
                 "Nelle righe materiali, codice_articolo deve essere compilato solo se la colonna Cod. articolo e' leggibile.",
                 "I totali devono essere numeri senza simbolo valuta e con punto decimale.",
+                "Estrai anche modalita_pagamento, IBAN, scadenza e importo_scadenza quando sono presenti.",
               ].join(" "),
             },
             {

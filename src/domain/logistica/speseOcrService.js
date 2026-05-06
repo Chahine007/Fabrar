@@ -49,6 +49,23 @@ function normalizeVat(value) {
   return compactAlnum(value).replace(/^IT/, "");
 }
 
+function normalizeVatCandidates(value) {
+  const raw = compactAlnum(value);
+  const withoutCountry = normalizeVat(value);
+  return [...new Set([raw, withoutCountry, withoutCountry ? `IT${withoutCountry}` : null].filter(Boolean))];
+}
+
+function normalizeOcrSku(value) {
+  const compact = String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return compact || null;
+}
+
 function parseMoney(value) {
   if (value == null || value === "") return null;
   if (value instanceof Prisma.Decimal) return value.toNumber();
@@ -126,11 +143,26 @@ function detectDocumentType(payload = {}, file = null) {
 }
 
 function supplierNameFromPayload(payload = {}) {
-  return normalizeOptionalText(payload.fornitore?.ragione_sociale ?? payload.fornitore);
+  return normalizeOptionalText(
+    payload.fornitore?.ragione_sociale
+      ?? (typeof payload.fornitore === "string" ? payload.fornitore : null)
+      ?? payload.ragione_sociale_fornitore
+      ?? payload.nome_fornitore
+  );
 }
 
 function supplierVatFromPayload(payload = {}) {
   return normalizeOptionalText(payload.fornitore?.partita_iva ?? payload.partita_iva_fornitore);
+}
+
+function formatSupplierAddress(fornitore = {}) {
+  const indirizzo = normalizeOptionalText(fornitore.indirizzo);
+  const cap = normalizeOptionalText(fornitore.cap);
+  const comune = normalizeOptionalText(fornitore.comune);
+  const provincia = normalizeOptionalText(fornitore.provincia);
+  const locality = [cap, comune].filter(Boolean).join(" ");
+  const province = provincia ? `(${provincia})` : null;
+  return [indirizzo, [locality, province].filter(Boolean).join(" ")].filter(Boolean).join(", ") || null;
 }
 
 function normalizeLine(line = {}) {
@@ -140,10 +172,12 @@ function normalizeLine(line = {}) {
   const codiceArticolo = normalizeOptionalText(
     line.codice_articolo ?? line.codice_sku ?? line.sku ?? line.cod_articolo
   );
+  const codiceSku = normalizeOcrSku(codiceArticolo);
 
   return {
     codice_articolo: codiceArticolo,
-    codice_sku: codiceArticolo,
+    codice_articolo_raw: codiceArticolo,
+    codice_sku: codiceSku,
     descrizione: normalizeOptionalText(line.descrizione ?? line.descrizione_articolo ?? line.prodotto),
     quantita,
     unita_misura: normalizeOptionalText(line.unita_misura ?? line.um ?? line.unita) ?? "pz",
@@ -159,12 +193,27 @@ function normalizeLine(line = {}) {
 export function normalizeInvoiceOcrPayload(payload = {}) {
   const righe = Array.isArray(payload.righe_materiali) ? payload.righe_materiali : [];
   const normalizedLines = righe.map(normalizeLine);
+  const tipoDocumento = normalizeOptionalText(payload.tipo_documento ?? payload.documento?.tipo_documento);
+  const numeroDocumento = normalizeOptionalText(payload.numero_documento ?? payload.numero_fattura ?? payload.documento?.numero_documento);
+  const dataDocumento = normalizeOptionalText(payload.data_documento ?? payload.data_emissione ?? payload.documento?.data_documento);
+  const codiceDestinatario = normalizeOptionalText(payload.codice_destinatario ?? payload.documento?.codice_destinatario);
+  const totaleImponibile = parseMoney(payload.totale_imponibile ?? payload.totali?.totale_imponibile);
+  const totaleImposta = parseMoney(payload.totale_imposta ?? payload.totali?.totale_imposta);
+  const totaleDocumento = parseMoney(payload.totale_documento ?? payload.importo_totale ?? payload.totali?.totale_documento);
+  const pagamento = payload.pagamento ?? {};
 
   return {
     document_type: normalizeOptionalText(payload.document_type)?.toUpperCase() ?? "UNKNOWN",
-    numero_documento: normalizeOptionalText(payload.numero_documento ?? payload.numero_fattura),
-    data_documento: normalizeOptionalText(payload.data_documento ?? payload.data_emissione),
-    codice_destinatario: normalizeOptionalText(payload.codice_destinatario),
+    tipo_documento: tipoDocumento,
+    numero_documento: numeroDocumento,
+    data_documento: dataDocumento,
+    codice_destinatario: codiceDestinatario,
+    documento: {
+      tipo_documento: tipoDocumento,
+      numero_documento: numeroDocumento,
+      data_documento: dataDocumento,
+      codice_destinatario: codiceDestinatario,
+    },
     fornitore: {
       ragione_sociale: supplierNameFromPayload(payload),
       partita_iva: supplierVatFromPayload(payload),
@@ -178,10 +227,25 @@ export function normalizeInvoiceOcrPayload(payload = {}) {
       ragione_sociale: normalizeOptionalText(payload.cliente?.ragione_sociale),
       partita_iva: normalizeOptionalText(payload.cliente?.partita_iva),
       codice_fiscale: normalizeOptionalText(payload.cliente?.codice_fiscale),
+      indirizzo: normalizeOptionalText(payload.cliente?.indirizzo),
+      comune: normalizeOptionalText(payload.cliente?.comune),
+      provincia: normalizeOptionalText(payload.cliente?.provincia),
+      cap: normalizeOptionalText(payload.cliente?.cap),
     },
-    totale_imponibile: parseMoney(payload.totale_imponibile),
-    totale_imposta: parseMoney(payload.totale_imposta),
-    totale_documento: parseMoney(payload.totale_documento ?? payload.importo_totale),
+    totale_imponibile: totaleImponibile,
+    totale_imposta: totaleImposta,
+    totale_documento: totaleDocumento,
+    totali: {
+      totale_imponibile: totaleImponibile,
+      totale_imposta: totaleImposta,
+      totale_documento: totaleDocumento,
+    },
+    pagamento: {
+      modalita_pagamento: normalizeOptionalText(pagamento.modalita_pagamento ?? payload.modalita_pagamento),
+      iban: normalizeOptionalText(pagamento.iban ?? payload.iban),
+      scadenza: normalizeOptionalText(pagamento.scadenza ?? payload.scadenza),
+      importo_scadenza: parseMoney(pagamento.importo_scadenza ?? payload.importo_scadenza),
+    },
     righe_materiali: normalizedLines,
   };
 }
@@ -203,6 +267,33 @@ export async function extractInvoiceFromUploadedFile(file) {
     file.originalname || "documento"
   );
   return normalizeInvoiceOcrPayload(rawPayload);
+}
+
+async function enrichLinePreviews(prisma, lines = []) {
+  const skus = [...new Set(lines.map((line) => line.codice_sku).filter(Boolean))];
+  const existingArticles = skus.length
+    ? await prisma.articolo.findMany({
+        where: { codice_sku: { in: skus } },
+        select: { id: true, codice_sku: true },
+      })
+    : [];
+  const existingBySku = new Map(existingArticles.map((article) => [article.codice_sku, article]));
+
+  return lines.map((line) => {
+    if (!line.codice_sku) {
+      return {
+        ...line,
+        magazzino_status: "reconcile",
+        reconcile_reason: "SKU_MISSING",
+      };
+    }
+    const existingArticle = existingBySku.get(line.codice_sku);
+    return {
+      ...line,
+      magazzino_status: existingArticle ? "existing" : "new",
+      articolo_id: existingArticle?.id ?? null,
+    };
+  });
 }
 
 export function scoreSpesaMatch(spesa, ocrPayload) {
@@ -346,6 +437,7 @@ export async function analyzeSpesaOcr(prisma, { spesaId, file, user }) {
   }
 
   const ocrPayload = await extractInvoiceFromUploadedFile(file);
+  const suggestedLines = await enrichLinePreviews(prisma, ocrPayload.righe_materiali);
   const document = await createOcrDocument(prisma, { spesa, file, user, ocrPayload });
   const match = scoreSpesaMatch(spesa, ocrPayload);
   const nextStatus = match.strength === "none"
@@ -369,10 +461,10 @@ export async function analyzeSpesaOcr(prisma, { spesaId, file, user }) {
     spesa: updatedSpesa,
     document,
     ocrPayload,
-    suggestedLines: ocrPayload.righe_materiali,
+    suggestedLines,
     matchStatus: {
       ...match,
-      canConfirm: match.strength !== "none" && ocrPayload.righe_materiali.some((line) => line.codice_articolo),
+      canConfirm: match.strength !== "none" && suggestedLines.some((line) => line.codice_sku),
     },
   };
 }
@@ -382,34 +474,50 @@ async function upsertSupplierFromOcr(tx, ocrPayload) {
   if (!ragioneSociale) return null;
 
   const partitaIva = supplierVatFromPayload(ocrPayload);
+  const indirizzo = formatSupplierAddress(ocrPayload.fornitore);
   if (partitaIva) {
+    const vatCandidates = normalizeVatCandidates(partitaIva);
     const byVat = await tx.fornitore.findFirst({
-      where: { partita_iva: { equals: partitaIva, mode: "insensitive" } },
+      where: {
+        OR: vatCandidates.map((candidate) => ({
+          partita_iva: { equals: candidate, mode: "insensitive" },
+        })),
+      },
     });
     if (byVat) {
-      return tx.fornitore.update({
-        where: { id: byVat.id },
-        data: {
-          ragione_sociale: byVat.ragione_sociale || ragioneSociale,
-          indirizzo: byVat.indirizzo ?? ocrPayload.fornitore?.indirizzo ?? undefined,
-        },
-      });
+      const data = {};
+      if (!byVat.ragione_sociale && ragioneSociale) data.ragione_sociale = ragioneSociale;
+      if (!byVat.partita_iva && partitaIva) data.partita_iva = partitaIva;
+      if (!byVat.indirizzo && indirizzo) data.indirizzo = indirizzo;
+      const fornitore = Object.keys(data).length
+        ? await tx.fornitore.update({ where: { id: byVat.id }, data })
+        : byVat;
+      return { fornitore, action: Object.keys(data).length ? "updated" : "found" };
     }
   }
 
   const byName = await tx.fornitore.findFirst({
     where: { ragione_sociale: { equals: ragioneSociale, mode: "insensitive" } },
   });
-  if (byName) return byName;
+  if (byName) {
+    const data = {};
+    if (!byName.partita_iva && partitaIva) data.partita_iva = partitaIva;
+    if (!byName.indirizzo && indirizzo) data.indirizzo = indirizzo;
+    const fornitore = Object.keys(data).length
+      ? await tx.fornitore.update({ where: { id: byName.id }, data })
+      : byName;
+    return { fornitore, action: Object.keys(data).length ? "updated" : "found" };
+  }
 
-  return tx.fornitore.create({
+  const fornitore = await tx.fornitore.create({
     data: {
       ragione_sociale: ragioneSociale,
       partita_iva: partitaIva,
-      indirizzo: ocrPayload.fornitore?.indirizzo ?? null,
+      indirizzo,
       note: "Creato automaticamente da OCR fattura/DDT.",
     },
   });
+  return { fornitore, action: "created" };
 }
 
 function normalizeConfirmLines(lines, fallbackPayload) {
@@ -468,7 +576,8 @@ export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, line
       ...fallbackPayload,
       righe_materiali: confirmedLines,
     };
-    const supplier = await upsertSupplierFromOcr(tx, ocrPayload);
+    const supplierResult = await upsertSupplierFromOcr(tx, ocrPayload);
+    const supplier = supplierResult?.fornitore ?? null;
 
     const results = [];
     for (const line of confirmedLines) {
@@ -497,6 +606,8 @@ export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, line
             confirmed_at: new Date().toISOString(),
             confirmed_by_user_id: user?.id ?? null,
             ubicazione_id: targetLocation.id,
+            fornitore_id: supplier?.id ?? null,
+            fornitore_action: supplierResult?.action ?? null,
             loaded_lines: loaded.length,
             reconcile_lines: reconcile.length,
           },
@@ -515,6 +626,7 @@ export async function confirmSpesaOcr(prisma, { spesaId, documentId = null, line
       document_id: targetDocumentId ?? null,
       ubicazione: targetLocation,
       fornitore: supplier,
+      fornitoreAction: supplierResult?.action ?? null,
       movimentiCaricoCreati: loaded.length,
       articoliCreati: loaded.filter((result) => result.articleCreated).length,
       righeDaRiconciliare: reconcile.length,

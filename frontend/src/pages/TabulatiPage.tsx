@@ -11,7 +11,7 @@ import { cn } from '../lib/utils';
 import { useAudit, useUpdateReportEntry, useExportCsv, useAnalyzeSpesaOcr, useConfirmSpesaOcr } from '../hooks/api/useHr';
 import { useMessageLogs, useApproveTelegramEntry } from '../hooks/api/useTelegramAudit';
 import { useCantieri } from '../hooks/api/useCantieri';
-import type { AuditEntry, AuditStatus, AuditFilters, AuditType, InvoiceOcrLine, SpesaOcrResponse } from '../hooks/api/useHr';
+import type { AuditEntry, AuditStatus, AuditFilters, AuditType, InvoiceOcrLine, InvoiceOcrPayload, SpesaOcrResponse } from '../hooks/api/useHr';
 import ErrorMessage from '../components/ErrorMessage';
 import { useAuthContext } from '../context/AuthContext';
 import { RoleGuard } from '../components/auth/RoleGuard';
@@ -99,8 +99,40 @@ function formatMoney(value: unknown) {
   return `€${amount.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function formatOptionalMoney(value: unknown) {
+  if (value == null || value === '') return '—';
+  return formatMoney(value);
+}
+
 function normalizeOcrLines(lines: InvoiceOcrLine[] | undefined | null) {
   return Array.isArray(lines) ? lines : [];
+}
+
+function formatOcrAddress(subject?: InvoiceOcrPayload['fornitore'] | InvoiceOcrPayload['cliente'] | null) {
+  if (!subject) return '—';
+  const locality = [subject.cap, subject.comune].filter(Boolean).join(' ');
+  const province = subject.provincia ? `(${subject.provincia})` : '';
+  return [subject.indirizzo, [locality, province].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—';
+}
+
+function lineStatusMeta(line: InvoiceOcrLine) {
+  if (!line.codice_sku) {
+    return { label: 'Da riconciliare', cls: 'bg-warning-bg text-warning-text border-warning-border' };
+  }
+  if (line.magazzino_status === 'existing') {
+    return { label: 'Articolo esistente', cls: 'bg-info-bg text-info-text border-info-border' };
+  }
+  if (line.magazzino_status === 'reconcile') {
+    return { label: 'Da riconciliare', cls: 'bg-warning-bg text-warning-text border-warning-border' };
+  }
+  return { label: 'Nuovo articolo', cls: 'bg-success-bg text-success-text border-success-border' };
+}
+
+function supplierActionLabel(action?: SpesaOcrResponse['fornitoreAction']) {
+  if (action === 'created') return 'Fornitore creato';
+  if (action === 'updated') return 'Fornitore aggiornato';
+  if (action === 'found') return 'Fornitore già presente';
+  return 'Fornitore non variato';
 }
 
 const OcrInvoiceModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () => void }) => {
@@ -109,11 +141,16 @@ const OcrInvoiceModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () =>
   const toast = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<SpesaOcrResponse | null>(null);
+  const [confirmation, setConfirmation] = useState<SpesaOcrResponse | null>(null);
 
   const payload = analysis?.ocrPayload ?? entry.ocr_payload ?? null;
   const lines = normalizeOcrLines(analysis?.suggestedLines ?? payload?.righe_materiali);
   const documentId = analysis?.document?.id ?? entry.documento_id ?? null;
-  const canConfirm = lines.length > 0 && entry.logistica_status !== 'LOADED_TO_WAREHOUSE';
+  const loadableLines = lines.filter((line) => line.codice_sku);
+  const canConfirm = loadableLines.length > 0 && entry.logistica_status !== 'LOADED_TO_WAREHOUSE' && !confirmation;
+  const fornitore = payload?.fornitore ?? null;
+  const cliente = payload?.cliente ?? null;
+  const pagamento = payload?.pagamento ?? null;
 
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -138,8 +175,11 @@ const OcrInvoiceModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () =>
         documentId,
         lines,
       });
-      toast.success('Carico registrato', `${result.movimentiCaricoCreati ?? 0} righe caricate a magazzino.`);
-      onClose();
+      setConfirmation(result);
+      toast.success(
+        'Carico registrato',
+        `${result.movimentiCaricoCreati ?? 0} righe caricate. ${supplierActionLabel(result.fornitoreAction)}.`
+      );
     } catch (err) {
       toast.error('Conferma non riuscita', err instanceof Error ? err.message : 'Errore conferma carico.');
     }
@@ -192,7 +232,38 @@ const OcrInvoiceModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () =>
             </p>
           </form>
 
-          <div className="grid gap-4 md:grid-cols-4">
+          {confirmation && (
+            <div className="mb-5 rounded-2xl border border-success-border bg-success-bg p-4 text-sm text-success-text">
+              <p className="font-bold">Carico magazzino completato</p>
+              <div className="mt-2 grid gap-2 md:grid-cols-4">
+                <span>{supplierActionLabel(confirmation.fornitoreAction)}</span>
+                <span>{confirmation.articoliCreati ?? 0} articoli creati</span>
+                <span>{confirmation.movimentiCaricoCreati ?? 0} movimenti di carico</span>
+                <span>{confirmation.righeDaRiconciliare ?? 0} righe da riconciliare</span>
+              </div>
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border border-border bg-background p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Fornitore</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{fornitore?.ragione_sociale || '—'}</p>
+              <p className="mt-1 text-xs text-text-secondary">P.IVA: {fornitore?.partita_iva || '—'}</p>
+              <p className="mt-1 text-xs text-text-secondary">{formatOcrAddress(fornitore)}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-background p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Cliente</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{cliente?.ragione_sociale || '—'}</p>
+              <p className="mt-1 text-xs text-text-secondary">P.IVA: {cliente?.partita_iva || '—'}</p>
+              <p className="mt-1 text-xs text-text-secondary">{formatOcrAddress(cliente)}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-4">
+            <div className="rounded-2xl border border-border bg-background p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Tipo documento</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{payload?.tipo_documento || payload?.document_type || '—'}</p>
+            </div>
             <div className="rounded-2xl border border-border bg-background p-4">
               <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Documento</p>
               <p className="mt-1 text-sm font-bold text-text-primary">{payload?.numero_documento || '—'}</p>
@@ -203,18 +274,41 @@ const OcrInvoiceModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () =>
             </div>
             <div className="rounded-2xl border border-border bg-background p-4 md:col-span-1">
               <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Totale OCR</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{formatMoney(payload?.totale_documento)}</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_documento)}</p>
             </div>
             <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Match</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{analysis?.matchStatus?.strength ?? '—'}</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Codice destinatario</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{payload?.codice_destinatario || '—'}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-4">
+            <div className="rounded-2xl border border-border bg-background p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Imponibile</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_imponibile)}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-background p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">IVA</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_imposta)}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-background p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Pagamento</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{pagamento?.modalita_pagamento || '—'}</p>
+              <p className="mt-1 text-xs text-text-secondary">{pagamento?.iban || '—'}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-background p-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Scadenza</p>
+              <p className="mt-1 text-sm font-bold text-text-primary">{pagamento?.scadenza || '—'}</p>
+              <p className="mt-1 text-xs text-text-secondary">{formatOptionalMoney(pagamento?.importo_scadenza)}</p>
             </div>
           </div>
 
           <div className="mt-5 rounded-2xl border border-border">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <h3 className="text-sm font-bold text-text-primary">Righe materiali estratte</h3>
-              <span className="text-xs text-text-secondary">{lines.length} righe</span>
+              <span className="text-xs text-text-secondary">
+                {loadableLines.length} caricabili · {lines.length - loadableLines.length} da riconciliare
+              </span>
             </div>
             {lines.length === 0 ? (
               <div className="p-6">
@@ -231,6 +325,7 @@ const OcrInvoiceModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () =>
                     <tr>
                       <th className="px-4 py-3 text-left">Codice</th>
                       <th className="px-4 py-3 text-left">Descrizione</th>
+                      <th className="px-4 py-3 text-left">Esito</th>
                       <th className="px-4 py-3 text-right">Q.tà</th>
                       <th className="px-4 py-3 text-left">UM</th>
                       <th className="px-4 py-3 text-right">Prezzo unit.</th>
@@ -238,16 +333,29 @@ const OcrInvoiceModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () =>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {lines.map((line, index) => (
-                      <tr key={`${line.codice_articolo ?? 'row'}-${index}`}>
-                        <td className="px-4 py-3 font-bold text-text-primary">{line.codice_articolo || line.codice_sku || '—'}</td>
-                        <td className="px-4 py-3 text-text-secondary">{line.descrizione || '—'}</td>
-                        <td className="px-4 py-3 text-right text-text-primary">{safeNumber(line.quantita).toLocaleString('it-IT')}</td>
-                        <td className="px-4 py-3 text-text-secondary">{line.unita_misura || '—'}</td>
-                        <td className="px-4 py-3 text-right text-text-primary">{formatMoney(line.prezzo_unitario ?? line.costo_unitario)}</td>
-                        <td className="px-4 py-3 text-right font-bold text-text-primary">{formatMoney(line.prezzo_totale ?? line.importo_riga)}</td>
-                      </tr>
-                    ))}
+                    {lines.map((line, index) => {
+                      const status = lineStatusMeta(line);
+                      return (
+                        <tr key={`${line.codice_articolo ?? 'row'}-${index}`}>
+                          <td className="px-4 py-3">
+                            <p className="font-bold text-text-primary">{line.codice_sku || line.codice_articolo || '—'}</p>
+                            {line.codice_articolo && line.codice_sku && line.codice_articolo !== line.codice_sku && (
+                              <p className="text-[10px] text-text-secondary">Orig.: {line.codice_articolo}</p>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-text-secondary">{line.descrizione || '—'}</td>
+                          <td className="px-4 py-3">
+                            <span className={cn('inline-flex rounded-full border px-2 py-1 text-[10px] font-bold', status.cls)}>
+                              {status.label}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right text-text-primary">{safeNumber(line.quantita).toLocaleString('it-IT')}</td>
+                          <td className="px-4 py-3 text-text-secondary">{line.unita_misura || '—'}</td>
+                          <td className="px-4 py-3 text-right text-text-primary">{formatOptionalMoney(line.prezzo_unitario ?? line.costo_unitario)}</td>
+                          <td className="px-4 py-3 text-right font-bold text-text-primary">{formatOptionalMoney(line.prezzo_totale ?? line.importo_riga)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

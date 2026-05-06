@@ -13,7 +13,13 @@ function emitWarehouseDischarged(eventPayload) {
 }
 
 function normalizeSku(value) {
-    return String(value ?? "").trim().toUpperCase();
+    return String(value ?? "")
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
 }
 
 function normalizeMaterialText(value) {

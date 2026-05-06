@@ -124,6 +124,7 @@ export type LogisticaStatus =
 
 export interface InvoiceOcrLine {
   codice_articolo?: string | null;
+  codice_articolo_raw?: string | null;
   codice_sku?: string | null;
   descrizione?: string | null;
   quantita?: number | null;
@@ -133,14 +134,33 @@ export interface InvoiceOcrLine {
   prezzo_totale?: number | null;
   importo_riga?: number | null;
   iva_percentuale?: number | null;
+  magazzino_status?: 'new' | 'existing' | 'reconcile' | string;
+  reconcile_reason?: string | null;
+  articolo_id?: number | null;
 }
 
 export interface InvoiceOcrPayload {
   document_type?: string | null;
+  tipo_documento?: string | null;
   numero_documento?: string | null;
   data_documento?: string | null;
   codice_destinatario?: string | null;
+  documento?: {
+    tipo_documento?: string | null;
+    numero_documento?: string | null;
+    data_documento?: string | null;
+    codice_destinatario?: string | null;
+  } | null;
   fornitore?: {
+    ragione_sociale?: string | null;
+    partita_iva?: string | null;
+    codice_fiscale?: string | null;
+    indirizzo?: string | null;
+    comune?: string | null;
+    provincia?: string | null;
+    cap?: string | null;
+  } | null;
+  cliente?: {
     ragione_sociale?: string | null;
     partita_iva?: string | null;
     codice_fiscale?: string | null;
@@ -152,6 +172,17 @@ export interface InvoiceOcrPayload {
   totale_imponibile?: number | null;
   totale_imposta?: number | null;
   totale_documento?: number | null;
+  totali?: {
+    totale_imponibile?: number | null;
+    totale_imposta?: number | null;
+    totale_documento?: number | null;
+  } | null;
+  pagamento?: {
+    modalita_pagamento?: string | null;
+    iban?: string | null;
+    scadenza?: string | null;
+    importo_scadenza?: number | null;
+  } | null;
   righe_materiali?: InvoiceOcrLine[];
 }
 
@@ -173,6 +204,13 @@ export interface SpesaOcrResponse {
   };
   movimentiCaricoCreati?: number;
   articoliCreati?: number;
+  fornitore?: {
+    id: number;
+    ragione_sociale: string;
+    partita_iva?: string | null;
+    indirizzo?: string | null;
+  } | null;
+  fornitoreAction?: 'created' | 'updated' | 'found' | string | null;
   righeDaRiconciliare?: number;
   righeDaRiconciliareDettaglio?: Array<{ reason: string; line: unknown }>;
 }
