@@ -5,7 +5,6 @@ import {
   UserCircle, 
   Package, 
   Activity, 
-  Euro,
   Settings, 
   Search, 
   Bell, 
@@ -17,6 +16,7 @@ import {
   ClipboardList,
   ChevronDown,
   Truck,
+  Inbox,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
@@ -55,6 +55,7 @@ const NAV_TREE: NavNode[] = [
     label: 'Operatività',
     icon: Briefcase,
     children: [
+      { icon: Inbox, label: 'Raccolta Dati', path: '/data-entry', id: 'data-entry', roles: ALL_AUTH_ROLES },
       { icon: Briefcase, label: 'Progetti', path: '/projects', id: 'projects' },
       { icon: Activity, label: 'Attività', path: '/activities', id: 'activities' },
       { icon: MessageSquare, label: 'Messaggi', path: '/messages', id: 'messages' },
@@ -78,15 +79,6 @@ const NAV_TREE: NavNode[] = [
       { icon: Package, label: 'Magazzino', path: '/warehouse', id: 'warehouse', roles: WAREHOUSE_ROLES },
       { icon: Truck, label: 'Fornitori', path: '/suppliers', id: 'suppliers', roles: WAREHOUSE_ROLES },
       { icon: ClipboardList, label: 'Richieste Materiali', path: '/material-requests', id: 'material-requests', roles: ALL_AUTH_ROLES },
-    ],
-  },
-  {
-    id: 'administration-section',
-    label: 'Amministrazione',
-    icon: Euro,
-    roles: ['ADMIN'],
-    children: [
-      { icon: Euro, label: 'Finanza', path: '/finance', id: 'finance', roles: ['ADMIN'] },
     ],
   },
 ];

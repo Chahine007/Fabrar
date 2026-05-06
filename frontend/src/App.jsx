@@ -22,6 +22,7 @@ import WarehousePage      from "./pages/WarehousePage";
 import SuppliersPage      from "./pages/SuppliersPage";
 import MaterialRequestsPage from "./pages/MaterialRequestsPage";
 import ActivitiesPage     from "./pages/ActivitiesPage";
+import DataEntryPage      from "./pages/DataEntryPage";
 
 // Public Guard Component (redirects to home if already logged in)
 const PublicRoute = ({ children }) => {
@@ -58,7 +59,7 @@ const HomeRedirect = () => {
     case "WAREHOUSEMAN":
       return <Navigate to="/warehouse" replace />;
     case "WORKER":
-      return <Navigate to="/timesheets" replace />;
+      return <Navigate to="/data-entry" replace />;
     default:
       return <Navigate to="/settings/account" replace />;
   }
@@ -95,6 +96,7 @@ function AppRoutes() {
         <Route path="/projects/:id"     element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ProjectDetailPage /></RoleRoute>} />
 
         <Route path="/activities" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ActivitiesPage /></RoleRoute>} />
+        <Route path="/data-entry" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><DataEntryPage /></RoleRoute>} />
 
         {/* ── RISORSE ── */}
         <Route path="/hr"                element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><EmployeesPage /></RoleRoute>} />
@@ -124,6 +126,7 @@ function AppRoutes() {
         <Route path="/cantieri" element={<Navigate to="/projects" replace />} />
         <Route path="/spese"    element={<Navigate to="/messages" replace />} />
         <Route path="/report"   element={<Navigate to="/hr"       replace />} />
+        <Route path="/inserimenti" element={<Navigate to="/data-entry" replace />} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />

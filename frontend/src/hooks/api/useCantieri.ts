@@ -4,7 +4,7 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, api } from '../../lib/api';
-import { cantierKeys } from './queryKeys';
+import { cantierKeys, hrKeys } from './queryKeys';
 import type { ProjectDocument } from '../../types/project-detail';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -224,6 +224,7 @@ export function useCreateCantiere() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: cantierKeys.list() });
+      qc.invalidateQueries({ queryKey: hrKeys.all() });
     },
   });
 }
@@ -251,6 +252,7 @@ export function useGenyaImport(cantiereId?: number | null) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: cantierKeys.list() });
+      qc.invalidateQueries({ queryKey: hrKeys.all() });
     },
   });
 }

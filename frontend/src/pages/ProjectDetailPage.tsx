@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent } from 'react';
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -6,8 +6,6 @@ import {
   Building2,
   CheckSquare,
   ChevronDown,
-  Clock,
-  Download,
   Euro,
   FileText,
   Users,
@@ -22,9 +20,7 @@ import DocumentsTab from '../components/projects/detail/DocumentsTab';
 import ProjectOperationsTab from '../components/projects/detail/ProjectOperationsTab';
 import ProjectResourcesTab from '../components/projects/detail/ProjectResourcesTab';
 import ProjectFinanceTab from '../components/projects/detail/ProjectFinanceTab';
-import { useCantieri, useCantiereDetail, useGenyaImport } from '../hooks/api/useCantieri';
-import { UI_LABELS } from '../lib/labels';
-import { useToast } from '../components/ui';
+import { useCantieri, useCantiereDetail } from '../hooks/api/useCantieri';
 import type { ProjectDetailTabId, ProjectShareItem, ProjectTabDefinition } from '../types/project-detail';
 
 const TABS: ProjectTabDefinition[] = [
@@ -39,11 +35,8 @@ const TABS: ProjectTabDefinition[] = [
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const toast = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const cantiereId = id ? parseInt(id, 10) : null;
   const detailCantiereId = Number.isInteger(cantiereId) ? cantiereId : null;
-  const genyaImport = useGenyaImport(detailCantiereId);
 
   const { data: cantieri, isLoading: loadingList } = useCantieri();
   const { data: projectDetail } = useCantiereDetail(detailCantiereId);
@@ -62,24 +55,6 @@ export default function ProjectDetailPage() {
   const handleShare = (item: ProjectShareItem) => {
     setItemToShare(item);
     setShareModalOpen(true);
-  };
-
-  const handleGenyaImport = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const result = await genyaImport.mutateAsync(file);
-      toast.success('Import Genya completato', `Importate ${result.inserted ?? '?'} spese da ${file.name}`);
-    } catch (error: unknown) {
-      toast.error('Import Genya non riuscito', error instanceof Error ? error.message : 'Errore import');
-    }
-
-    event.target.value = '';
   };
 
   if (loadingList && !cantiere) {
@@ -196,35 +171,11 @@ export default function ProjectDetailPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {genyaImport.data && (
-              <span className="text-xs font-medium text-text-secondary bg-card border border-border px-3 py-2 rounded-xl">
-                ✅ Importate {genyaImport.data.inserted} spese
-              </span>
-            )}
-            {genyaImport.error && (
-              <span className="text-xs font-medium text-danger-text bg-danger-bg border border-danger-border px-3 py-2 rounded-xl">
-                ❌ {genyaImport.error.message}
-              </span>
-            )}
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              className="hidden"
-              onChange={handleFileSelected}
-            />
             <button
               onClick={() => setActiveTab('activities')}
               className="flex items-center gap-2 px-4 py-2.5 bg-accent hover:bg-accent/90 text-white rounded-xl text-sm font-bold transition-all border border-accent shadow-lg shadow-accent/20"
             >
               <CheckSquare size={16} /> Nuovo Task
-            </button>
-            <button
-              onClick={() => setActiveTab('hours')}
-              className="flex items-center gap-2 px-4 py-2.5 bg-success-bg hover:opacity-80 text-success-text rounded-xl text-sm font-bold transition-all border border-success-border shadow-sm"
-            >
-              <Clock size={16} /> Log Ore
             </button>
 
             <div className="relative">
@@ -249,20 +200,6 @@ export default function ProjectDetailPage() {
                     transition={{ duration: 0.14 }}
                     className="absolute right-0 top-full mt-2 w-64 rounded-2xl border border-border bg-card p-2 shadow-xl z-30"
                   >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProjectActionsOpen(false);
-                        handleGenyaImport();
-                      }}
-                      disabled={genyaImport.isPending}
-                      className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-primary hover:bg-background transition-colors disabled:opacity-50"
-                    >
-                      {genyaImport.isPending
-                        ? <div className="w-4 h-4 border-2 border-border border-t-accent rounded-full animate-spin" />
-                        : <Download size={16} />}
-                      {UI_LABELS.module.genya.ui}
-                    </button>
                     <button
                       type="button"
                       onClick={() => {
