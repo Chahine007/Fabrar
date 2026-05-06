@@ -4,7 +4,7 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, getApiErrorMessage } from '../../lib/api';
-import { hrKeys, employeeKeys, magazzinoKeys } from './queryKeys';
+import { accountingKeys, hrKeys, employeeKeys, magazzinoKeys } from './queryKeys';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -147,6 +147,8 @@ export interface InvoiceOcrLine {
   prezzo_totale?: number | null;
   importo_riga?: number | null;
   iva_percentuale?: number | null;
+  imponibile_riga?: number | null;
+  imposta_riga?: number | null;
   cost_category?: CostCategory | string | null;
   stockable?: boolean | null;
   magazzino_status?: 'new' | 'existing' | 'reconcile' | string;
@@ -223,6 +225,8 @@ export interface PurchaseInvoiceLine {
   unita_misura?: string | null;
   prezzo_unitario?: number | string | null;
   iva_percentuale?: number | string | null;
+  imponibile_riga?: number | string | null;
+  imposta_riga?: number | string | null;
   prezzo_totale?: number | string | null;
   cost_category?: CostCategory | string | null;
   allocation_scope?: CostAllocationScope | string | null;
@@ -263,6 +267,14 @@ export interface PurchaseInvoiceDraft {
   allocation_scope?: CostAllocationScope | string | null;
   logistica_required?: boolean | null;
   righe?: PurchaseInvoiceLine[];
+  scadenze?: Array<{
+    id: number;
+    data_scadenza: string;
+    importo: number | string;
+    modalita_pagamento?: string | null;
+    iban?: string | null;
+    status?: string;
+  }>;
 }
 
 export interface PurchaseInvoiceSummary {
@@ -275,6 +287,8 @@ export interface PurchaseInvoiceSummary {
   totale_documento?: number | string | null;
   pagamento_modalita?: string | null;
   pagamento_scadenza?: string | null;
+  pagamento_iban?: string | null;
+  pagamento_importo?: number | string | null;
   righe_count?: number;
 }
 
@@ -730,6 +744,7 @@ export function useConfirmGenericInvoiceOcr() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: hrKeys.all() });
       qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
+      qc.invalidateQueries({ queryKey: accountingKeys.all() });
     },
   });
 }
@@ -771,6 +786,7 @@ export function useConfirmSpesaOcr() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: hrKeys.all() });
       qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
+      qc.invalidateQueries({ queryKey: accountingKeys.all() });
     },
   });
 }

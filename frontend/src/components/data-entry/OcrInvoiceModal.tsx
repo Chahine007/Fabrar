@@ -102,6 +102,13 @@ function supplierActionLabel(action?: SpesaOcrResponse['fornitoreAction']) {
   return 'Fornitore non variato';
 }
 
+function purchaseInvoiceDueLabel(invoice?: { scadenze?: Array<{ data_scadenza?: string; importo?: number | string }> } | null) {
+  const due = invoice?.scadenze?.[0];
+  if (!due) return 'scadenziario non generato';
+  const date = String(due.data_scadenza ?? '').slice(0, 10) || 'senza data';
+  return `scadenza ${date} · ${formatOptionalMoney(due.importo)}`;
+}
+
 export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry; onClose: () => void }) {
   const analyze = useAnalyzeSpesaOcr();
   const confirm = useConfirmSpesaOcr();
@@ -224,7 +231,7 @@ export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry;
               </div>
               {confirmation.fatturaAcquisto?.id && (
                 <p className="mt-2 text-xs font-semibold">
-                  Fattura acquisto #{confirmation.fatturaAcquisto.id} salvata con dati IVA, pagamento e righe OCR.
+                  Fattura acquisto #{confirmation.fatturaAcquisto.id} salvata con dati IVA, righe OCR e {purchaseInvoiceDueLabel(confirmation.fatturaAcquisto)}.
                 </p>
               )}
             </div>
@@ -290,7 +297,7 @@ export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry;
               <p className="font-bold">Fattura acquisto strutturata</p>
               <p className="mt-1 text-xs">
                 {purchaseInvoice.numero_documento || payload?.numero_documento || 'Documento senza numero'} ·{' '}
-                {purchaseInvoice.righe?.length ?? 0} righe salvabili · dati fornitore, IVA e pagamento disponibili.
+                {purchaseInvoice.righe?.length ?? 0} righe salvabili · dati fornitore, IVA e scadenziario disponibili.
               </p>
             </div>
           )}
@@ -530,7 +537,7 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
               </div>
               {confirmation.fatturaAcquisto?.id && (
                 <p className="mt-2 text-xs font-semibold">
-                  Fattura acquisto #{confirmation.fatturaAcquisto.id} salvata con dati IVA, pagamento e righe OCR.
+                  Fattura acquisto #{confirmation.fatturaAcquisto.id} salvata con dati IVA, righe OCR e {purchaseInvoiceDueLabel(confirmation.fatturaAcquisto)}.
                 </p>
               )}
             </div>
@@ -557,13 +564,31 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
                     <p className="mt-1 text-xs text-text-secondary">{pagamento?.modalita_pagamento || 'Pagamento non letto'}</p>
                   </div>
                 </div>
+                <div className="grid gap-3 md:grid-cols-4">
+                  <div className="rounded-2xl border border-border bg-background p-4">
+                    <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Imponibile</p>
+                    <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_imponibile)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-border bg-background p-4">
+                    <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">IVA</p>
+                    <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_imposta)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-border bg-background p-4">
+                    <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Scadenza</p>
+                    <p className="mt-1 text-sm font-bold text-text-primary">{pagamento?.scadenza || '—'}</p>
+                  </div>
+                  <div className="rounded-2xl border border-border bg-background p-4">
+                    <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Importo rata</p>
+                    <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(pagamento?.importo_scadenza)}</p>
+                  </div>
+                </div>
 
                 {purchaseInvoice && (
                   <div className="rounded-2xl border border-info-border bg-info-bg p-4 text-sm text-info-text">
                     <p className="font-bold">Fattura acquisto strutturata</p>
                     <p className="mt-1 text-xs">
                       {purchaseInvoice.numero_documento || payload?.numero_documento || 'Documento senza numero'} ·{' '}
-                      {purchaseInvoice.righe?.length ?? 0} righe · fornitore, IVA, pagamento e snapshot cliente saranno salvati.
+                      {purchaseInvoice.righe?.length ?? 0} righe · fornitore, IVA, pagamento e scadenziario saranno salvati.
                     </p>
                   </div>
                 )}

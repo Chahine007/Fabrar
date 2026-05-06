@@ -16,6 +16,7 @@ import timesheetsRoutes from "./timesheets.routes.js";
 import userRoutes from "./user.routes.js";
 import billingRoutes from "./billing.routes.js";
 import documentsRoutes from "./documents.routes.js";
+import accountingRoutes from "./accounting.routes.js";
 
 const router = express.Router();
 
@@ -41,5 +42,6 @@ router.use("/api/material-requests", materialRequestsRoutes);
 router.use("/api/user", userRoutes);
 router.use("/api/billing", billingRoutes);
 router.use("/api/documents", documentsRoutes);
+router.use("/api/accounting", accountingRoutes);
 
 export default router;

@@ -1,6 +1,12 @@
 import path from "path";
 import { Prisma } from "@prisma/client";
-import { CostAllocationScope, CostCategory, LogisticaStatus } from "../../constants.js";
+import {
+  CostAllocationScope,
+  CostCategory,
+  LogisticaStatus,
+  PaymentDueSource,
+  PaymentDueStatus,
+} from "../../constants.js";
 import { canAccessCantiere } from "../shared/accessControl.js";
 import {
   getDefaultWarehouseLocation,
@@ -186,6 +192,32 @@ function decimalOrNull(value) {
   }
 }
 
+function roundMoney(value) {
+  const parsed = parseMoney(value);
+  if (parsed == null) return null;
+  return Math.round((parsed + Number.EPSILON) * 100) / 100;
+}
+
+function calculateLineVatAmounts(line = {}) {
+  const imponibile = parseMoney(
+    line.imponibile_riga
+      ?? line.imponibile
+      ?? line.prezzo_totale
+      ?? line.importo_riga
+      ?? line.valore_riga
+      ?? line.importo
+  );
+  const explicitTax = parseMoney(line.imposta_riga ?? line.imposta ?? line.importo_iva ?? line.iva_importo);
+  const ivaPercent = parseMoney(line.iva_percentuale ?? line.iva);
+  const imposta = explicitTax ?? (
+    imponibile != null && ivaPercent != null
+      ? roundMoney((imponibile * ivaPercent) / 100)
+      : null
+  );
+
+  return { imponibile, imposta };
+}
+
 function formatFileSize(bytes) {
   const size = Number(bytes) || 0;
   if (size < 1024) return `${size} B`;
@@ -270,6 +302,7 @@ function normalizeLine(line = {}) {
   const quantita = parsePositiveNumber(line.quantita ?? line.qta ?? line.qty);
   const prezzoUnitario = parsePositiveNumber(line.prezzo_unitario ?? line.costo_unitario);
   const prezzoTotale = parsePositiveNumber(line.prezzo_totale ?? line.importo_riga ?? line.valore_riga);
+  const vatAmounts = calculateLineVatAmounts(line);
   const codiceArticolo = normalizeOptionalText(
     line.codice_articolo ?? line.codice_sku ?? line.sku ?? line.cod_articolo
   );
@@ -288,6 +321,8 @@ function normalizeLine(line = {}) {
     unita_misura: normalizeOptionalText(line.unita_misura ?? line.um ?? line.unita) ?? "pz",
     prezzo_unitario: prezzoUnitario,
     costo_unitario: prezzoUnitario,
+    imponibile_riga: vatAmounts.imponibile,
+    imposta_riga: vatAmounts.imposta,
     prezzo_totale: prezzoTotale,
     importo_riga: prezzoTotale,
     iva_percentuale: parseMoney(line.iva_percentuale ?? line.iva),
@@ -297,12 +332,15 @@ function normalizeLine(line = {}) {
 
 function normalizeCostLine(line = {}) {
   const costCategory = normalizeCostCategory(line.cost_category, CostCategory.OTHER);
+  const vatAmounts = calculateLineVatAmounts(line);
   return {
     descrizione: normalizeOptionalText(line.descrizione ?? line.descrizione_costo ?? line.prodotto),
     cost_category: costCategory,
     allocation_scope: normalizeAllocationScope(line.allocation_scope, costCategory),
     importo: parseMoney(line.importo ?? line.prezzo_totale ?? line.importo_riga),
     iva_percentuale: parseMoney(line.iva_percentuale ?? line.iva),
+    imponibile_riga: vatAmounts.imponibile,
+    imposta_riga: vatAmounts.imposta,
     quantita: parsePositiveNumber(line.quantita ?? line.qta ?? line.qty),
     unita_misura: normalizeOptionalText(line.unita_misura ?? line.um ?? line.unita),
     prezzo_unitario: parseMoney(line.prezzo_unitario ?? line.costo_unitario),
@@ -411,6 +449,8 @@ function buildPurchaseInvoiceDraft(ocrPayload = {}, lines = null) {
       unita_misura: line.unita_misura ?? null,
       prezzo_unitario: line.prezzo_unitario ?? line.costo_unitario ?? null,
       iva_percentuale: line.iva_percentuale ?? null,
+      imponibile_riga: line.imponibile_riga ?? line.prezzo_totale ?? line.importo_riga ?? null,
+      imposta_riga: line.imposta_riga ?? calculateLineVatAmounts(line).imposta,
       prezzo_totale: line.prezzo_totale ?? line.importo_riga ?? null,
       cost_category: normalizeCostCategory(line.cost_category, CostCategory.INVENTORY_MATERIAL),
       allocation_scope: normalizeAllocationScope(line.allocation_scope, line.cost_category),
@@ -431,6 +471,8 @@ function buildPurchaseInvoiceDraft(ocrPayload = {}, lines = null) {
         unita_misura: line.unita_misura ?? null,
         prezzo_unitario: line.prezzo_unitario ?? null,
         iva_percentuale: line.iva_percentuale ?? null,
+        imponibile_riga: line.imponibile_riga ?? line.importo ?? null,
+        imposta_riga: line.imposta_riga ?? calculateLineVatAmounts(line).imposta,
         prezzo_totale: line.importo ?? null,
         cost_category: category,
         allocation_scope: normalizeAllocationScope(line.allocation_scope, category),
@@ -477,6 +519,9 @@ function purchaseInvoiceInclude() {
     documento: { select: { id: true, name: true, file_path: true, tag: true } },
     spesa: { select: { id: true, importo: true, fonte: true, input_method: true } },
     cantiere: { select: { id: true, nome: true } },
+    scadenze: {
+      orderBy: [{ data_scadenza: "asc" }, { id: "asc" }],
+    },
     righe: {
       orderBy: { id: "asc" },
       include: {
@@ -553,6 +598,8 @@ function buildPurchaseInvoiceLinesData({ fatturaAcquistoId, ocrPayload, lines, m
       unita_misura: line.unita_misura ?? null,
       prezzo_unitario: decimalOrNull(line.prezzo_unitario ?? line.costo_unitario),
       iva_percentuale: decimalOrNull(line.iva_percentuale),
+      imponibile_riga: decimalOrNull(line.imponibile_riga ?? line.prezzo_totale ?? line.importo_riga),
+      imposta_riga: decimalOrNull(line.imposta_riga ?? calculateLineVatAmounts(line).imposta),
       prezzo_totale: decimalOrNull(line.prezzo_totale ?? line.importo_riga),
       cost_category: category,
       allocation_scope: normalizeAllocationScope(line.allocation_scope, category),
@@ -577,6 +624,8 @@ function buildPurchaseInvoiceLinesData({ fatturaAcquistoId, ocrPayload, lines, m
       unita_misura: line.unita_misura ?? null,
       prezzo_unitario: decimalOrNull(line.prezzo_unitario),
       iva_percentuale: decimalOrNull(line.iva_percentuale),
+      imponibile_riga: decimalOrNull(line.imponibile_riga ?? line.importo),
+      imposta_riga: decimalOrNull(line.imposta_riga ?? calculateLineVatAmounts(line).imposta),
       prezzo_totale: decimalOrNull(line.importo),
       cost_category: category,
       allocation_scope: normalizeAllocationScope(line.allocation_scope, category),
@@ -587,6 +636,58 @@ function buildPurchaseInvoiceLinesData({ fatturaAcquistoId, ocrPayload, lines, m
   });
 
   return [...materialRows, ...costRows];
+}
+
+function dateKey(value) {
+  const date = value instanceof Date ? value : parseDateOnly(value);
+  if (!date) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+async function syncPaymentDueFromPurchaseInvoice(tx, fatturaAcquisto, data) {
+  const dueDate = data.pagamento_scadenza ?? null;
+  const amount = decimalOrNull(data.pagamento_importo ?? data.totale_documento);
+  if (!dueDate || !amount || amount.lte(0)) return null;
+
+  const paidAutoDue = await tx.scadenzaPagamento.findFirst({
+    where: {
+      fattura_acquisto_id: fatturaAcquisto.id,
+      source: PaymentDueSource.OCR,
+      status: PaymentDueStatus.PAID,
+    },
+  });
+  if (paidAutoDue) return paidAutoDue;
+
+  await tx.scadenzaPagamento.deleteMany({
+    where: {
+      fattura_acquisto_id: fatturaAcquisto.id,
+      source: PaymentDueSource.OCR,
+      status: { not: PaymentDueStatus.PAID },
+    },
+  });
+
+  const sourceKey = [
+    "fattura-acquisto",
+    fatturaAcquisto.id,
+    "ocr",
+    dateKey(dueDate),
+    amount.toFixed(2),
+  ].join(":");
+
+  return tx.scadenzaPagamento.create({
+    data: {
+      fattura_acquisto_id: fatturaAcquisto.id,
+      spesa_id: data.spesa_id ?? null,
+      fornitore_id: data.fornitore_id ?? null,
+      data_scadenza: dueDate,
+      importo: amount,
+      modalita_pagamento: data.pagamento_modalita ?? null,
+      iban: data.pagamento_iban ?? null,
+      source: PaymentDueSource.OCR,
+      source_key: sourceKey,
+      note: "Scadenza generata da OCR fattura acquisto.",
+    },
+  });
 }
 
 async function upsertPurchaseInvoiceFromOcr(tx, {
@@ -659,6 +760,8 @@ async function upsertPurchaseInvoiceFromOcr(tx, {
       await tx.rigaFatturaAcquisto.createMany({ data: rows });
     }
   }
+
+  await syncPaymentDueFromPurchaseInvoice(tx, fatturaAcquisto, data);
 
   return tx.fatturaAcquisto.findUnique({
     where: { id: fatturaAcquisto.id },

@@ -235,6 +235,7 @@ model Spesa {
   task                 Task?            @relation(fields: [task_id], references: [id])
   documento            Document?        @relation(fields: [documento_id], references: [id])
   fattura_acquisto     FatturaAcquisto?
+  scadenze_pagamento   ScadenzaPagamento[]
 
   @@index([employee_id])
   @@index([cantiere_id])
@@ -350,6 +351,18 @@ enum CostAllocationScope {
   PROJECT
   OVERHEAD
   REVIEW
+}
+
+enum PaymentDueStatus {
+  OPEN
+  PAID
+  CANCELLED
+}
+
+enum PaymentDueSource {
+  OCR
+  GENYA
+  MANUAL
 }
 
 model Document {
@@ -506,6 +519,7 @@ model Fornitore {
   movimenti_magazzino MovimentoMagazzino[]
   spese               Spesa[]
   fatture_acquisto    FatturaAcquisto[]
+  scadenze_pagamento  ScadenzaPagamento[]
 
   @@index([partita_iva_normalizzata])
   @@index([ragione_sociale])
@@ -658,6 +672,7 @@ model FatturaAcquisto {
   fornitore Fornitore?            @relation(fields: [fornitore_id], references: [id])
   cantiere  Cantiere?             @relation(fields: [cantiere_id], references: [id])
   righe     RigaFatturaAcquisto[]
+  scadenze  ScadenzaPagamento[]
 
   @@index([fornitore_id, numero_documento, data_documento])
   @@index([spesa_id])
@@ -678,6 +693,8 @@ model RigaFatturaAcquisto {
   unita_misura              String?
   prezzo_unitario           Decimal?            @db.Decimal(10, 2)
   iva_percentuale           Decimal?            @db.Decimal(5, 2)
+  imponibile_riga           Decimal?            @db.Decimal(10, 2)
+  imposta_riga              Decimal?            @db.Decimal(10, 2)
   prezzo_totale             Decimal?            @db.Decimal(10, 2)
   cost_category             CostCategory        @default(UNKNOWN)
   allocation_scope          CostAllocationScope @default(REVIEW)
@@ -695,6 +712,35 @@ model RigaFatturaAcquisto {
   @@index([articolo_id])
   @@index([codice_sku_normalizzato])
   @@index([cost_category])
+}
+
+model ScadenzaPagamento {
+  id                  Int              @id @default(autoincrement())
+  fattura_acquisto_id Int
+  spesa_id            Int?
+  fornitore_id        Int?
+  data_scadenza       DateTime         @db.Date
+  importo             Decimal          @db.Decimal(10, 2)
+  modalita_pagamento  String?
+  iban                String?
+  status              PaymentDueStatus @default(OPEN)
+  source              PaymentDueSource @default(MANUAL)
+  source_key          String?          @unique
+  paid_at             DateTime?
+  paid_amount         Decimal?         @db.Decimal(10, 2)
+  note                String?
+  created_at          DateTime         @default(now())
+  updated_at          DateTime         @updatedAt
+
+  fattura_acquisto FatturaAcquisto @relation(fields: [fattura_acquisto_id], references: [id], onDelete: Cascade)
+  spesa            Spesa?          @relation(fields: [spesa_id], references: [id])
+  fornitore        Fornitore?      @relation(fields: [fornitore_id], references: [id])
+
+  @@index([fattura_acquisto_id])
+  @@index([spesa_id])
+  @@index([fornitore_id])
+  @@index([data_scadenza, status])
+  @@index([source])
 }
 
 model RichiestaMateriale {

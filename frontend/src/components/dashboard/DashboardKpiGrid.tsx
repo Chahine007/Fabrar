@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { motion, Reorder } from 'motion/react';
-import { Activity, GripVertical, Plus, RotateCcw, X, type LucideIcon } from 'lucide-react';
+import { motion } from 'motion/react';
+import { Activity, Plus, RotateCcw, X, type LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Button, Dialog, Field, IconButton, Input, Textarea } from '../ui';
 
@@ -27,7 +27,6 @@ export interface DashboardKpiDefinition {
 }
 
 export interface DashboardTabKpiPrefs {
-  order: string[];
   hidden: string[];
   custom: CustomDashboardKpi[];
 }
@@ -38,7 +37,6 @@ export interface DashboardKpiSectionProps {
   isEditMode: boolean;
   prefs: DashboardTabKpiPrefs;
   customKpis: DashboardKpiDefinition[];
-  onReorder: (orderedIds: string[]) => void;
   onRemove: (id: string) => void;
 }
 
@@ -85,7 +83,7 @@ export const DASHBOARD_KPI_CATALOG: Record<DashboardTabId, { id: string; label: 
 };
 
 export function createDefaultKpiPrefs(): DashboardTabKpiPrefs {
-  return { order: [], hidden: [], custom: [] };
+  return { hidden: [], custom: [] };
 }
 
 export function customKpiToDefinition(kpi: CustomDashboardKpi): DashboardKpiDefinition {
@@ -115,7 +113,6 @@ export function normalizeDashboardKpiPrefs(value: unknown): DashboardKpiPrefs {
     if (!tab || typeof tab !== 'object') return;
 
     result[tabId] = {
-      order: Array.isArray(tab.order) ? normalizeIds(tab.order.map(String)) : [],
       hidden: Array.isArray(tab.hidden) ? normalizeIds(tab.hidden.map(String)) : [],
       custom: Array.isArray(tab.custom)
         ? tab.custom
@@ -150,34 +147,19 @@ export function DashboardKpiGrid({
   className?: string;
 }) {
   const visibleDefinitions = useMemo(() => {
-    const byId = new Map(definitions.map((definition) => [definition.id, definition]));
-    const orderedIds = normalizeIds([
-      ...controls.prefs.order,
-      ...definitions.map((definition) => definition.id),
-    ]);
+    return definitions.filter((definition) => !controls.prefs.hidden.includes(definition.id));
+  }, [controls.prefs.hidden, definitions]);
 
-    return orderedIds
-      .map((id) => byId.get(id))
-      .filter((definition): definition is DashboardKpiDefinition => !!definition)
-      .filter((definition) => !controls.prefs.hidden.includes(definition.id));
-  }, [controls.prefs.hidden, controls.prefs.order, definitions]);
-
-  const renderCard = (definition: DashboardKpiDefinition, isDragging = false) => {
+  const renderCard = (definition: DashboardKpiDefinition) => {
     const Icon = definition.icon;
     return (
       <div
         className={cn(
-          'relative h-full rounded-2xl border border-border bg-card p-5 transition-colors',
-          controls.isEditMode && 'cursor-grab active:cursor-grabbing',
-          isDragging && 'shadow-xl'
+          'relative h-full rounded-2xl border border-border bg-card p-5 transition-colors'
         )}
       >
         {controls.isEditMode && (
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-text-secondary">
-              <GripVertical size={15} />
-              Sposta
-            </div>
+          <div className="mb-4 flex justify-end">
             <IconButton
               label={definition.custom ? 'Rimuovi KPI custom' : 'Nascondi KPI'}
               size="sm"
@@ -241,18 +223,13 @@ export function DashboardKpiGrid({
   }
 
   return (
-    <Reorder.Group
-      axis="y"
-      values={visibleDefinitions}
-      onReorder={(next) => controls.onReorder(next.map((definition) => definition.id))}
-      className={cn('grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4', className)}
-    >
+    <div className={cn('grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4', className)}>
       {visibleDefinitions.map((definition) => (
-        <Reorder.Item key={definition.id} value={definition} className="list-none">
+        <div key={definition.id}>
           {renderCard(definition)}
-        </Reorder.Item>
+        </div>
       ))}
-    </Reorder.Group>
+    </div>
   );
 }
 

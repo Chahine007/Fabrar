@@ -83,7 +83,7 @@ function getTabPrefs(prefs: DashboardKpiPrefs, tabId: DashboardTabId): Dashboard
   return prefs[tabId] ?? createDefaultKpiPrefs();
 }
 
-function normalizeOrder(ids: string[]) {
+function normalizeIds(ids: string[]) {
   return Array.from(new Set(ids.filter(Boolean)));
 }
 
@@ -135,20 +135,12 @@ export default function Dashboard() {
     }));
   }, []);
 
-  const handleKpiReorder = useCallback((tabId: DashboardTabId, orderedIds: string[]) => {
-    updateTabPrefs(tabId, (current) => ({
-      ...current,
-      order: normalizeOrder([...orderedIds, ...current.order.filter((id) => !orderedIds.includes(id))]),
-    }));
-  }, [updateTabPrefs]);
-
   const handleRemoveKpi = useCallback((tabId: DashboardTabId, id: string) => {
     updateTabPrefs(tabId, (current) => {
       const isCustom = current.custom.some((item) => item.id === id);
       return {
         ...current,
-        order: current.order.filter((itemId) => itemId !== id),
-        hidden: isCustom ? current.hidden.filter((itemId) => itemId !== id) : normalizeOrder([...current.hidden, id]),
+        hidden: isCustom ? current.hidden.filter((itemId) => itemId !== id) : normalizeIds([...current.hidden, id]),
         custom: isCustom ? current.custom.filter((item) => item.id !== id) : current.custom,
       };
     });
@@ -158,7 +150,6 @@ export default function Dashboard() {
     updateTabPrefs(tabId, (current) => ({
       ...current,
       hidden: current.hidden.filter((itemId) => itemId !== id),
-      order: normalizeOrder([...current.order, id]),
     }));
   }, [updateTabPrefs]);
 
@@ -168,7 +159,6 @@ export default function Dashboard() {
     updateTabPrefs(tabId, (current) => ({
       ...current,
       custom: [...current.custom, custom],
-      order: normalizeOrder([...current.order, id]),
     }));
   }, [updateTabPrefs]);
 
@@ -178,10 +168,9 @@ export default function Dashboard() {
       isEditMode,
       prefs,
       customKpis: prefs.custom.map(customKpiToDefinition),
-      onReorder: (orderedIds) => handleKpiReorder(tabId, orderedIds),
       onRemove: (id) => handleRemoveKpi(tabId, id),
     };
-  }, [handleKpiReorder, handleRemoveKpi, isEditMode, kpiPrefs]);
+  }, [handleRemoveKpi, isEditMode, kpiPrefs]);
 
   const activeTabPrefs = getTabPrefs(kpiPrefs, activeTab);
   const availableBuiltIns = DASHBOARD_KPI_CATALOG[activeTab].filter((item) => activeTabPrefs.hidden.includes(item.id));

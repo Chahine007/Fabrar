@@ -69,6 +69,13 @@ export const billingKeys = {
   project: (cantiereId: number) => [...billingKeys.all(), cantiereId] as const,
 };
 
+export const accountingKeys = {
+  all: () => ['accounting'] as const,
+  payables: (filters?: object) => [...accountingKeys.all(), 'payables', filters ?? {}] as const,
+  vatRegister: (filters?: object) => [...accountingKeys.all(), 'vat-register', filters ?? {}] as const,
+  purchaseInvoice: (id: number) => [...accountingKeys.all(), 'purchase-invoices', id] as const,
+};
+
 export const wbsKeys = {
   all:  ()                  => ['wbs'] as const,
   tree: (cantiereId: number) => [...wbsKeys.all(), 'tree', cantiereId] as const,

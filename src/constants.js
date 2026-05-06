@@ -39,6 +39,18 @@ export const CostAllocationScope = Object.freeze({
     REVIEW: 'REVIEW',
 });
 
+export const PaymentDueStatus = Object.freeze({
+    OPEN: 'OPEN',
+    PAID: 'PAID',
+    CANCELLED: 'CANCELLED',
+});
+
+export const PaymentDueSource = Object.freeze({
+    OCR: 'OCR',
+    GENYA: 'GENYA',
+    MANUAL: 'MANUAL',
+});
+
 export const AUDIT_TYPE = Object.freeze({
     ORE:       'ore',
     SPESE:     'spese',
