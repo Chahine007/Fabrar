@@ -8,7 +8,6 @@ import {
   History,
   Key,
   LifeBuoy,
-  Package,
   ShieldCheck,
   ShoppingBag,
   User,
