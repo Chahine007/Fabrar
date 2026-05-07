@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { AuthProvider, useAuthContext } from "./context/AuthContext";
 import { ProtectedRoute, RoleRoute } from "./components/auth/RoleGuard";
-import { ToastProvider } from "./components/ui";
+import { FullPageLoader, ToastProvider } from "./components/ui";
 
 // Unified Shell
 import ERPProShell from "./components/layout/ERPProShell";
@@ -29,11 +29,7 @@ const PublicRoute = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuthContext();
   
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
-      </div>
-    );
+    return <FullPageLoader label="Verifica sessione..." />;
   }
   
   if (isAuthenticated) {
@@ -97,13 +93,14 @@ function AppRoutes() {
         <Route path="/projects/:id"     element={<RoleRoute allowedRoles={PROJECT_ROLES} allowedCapabilities={["projects:read"]}><ProjectDetailPage /></RoleRoute>} />
 
         <Route path="/activities" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES} allowedCapabilities={["tasks:read"]}><ActivitiesPage /></RoleRoute>} />
-        <Route path="/data-entry" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><DataEntryPage /></RoleRoute>} />
+        <Route path="/data-entry" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES} allowedCapabilities={["data_entry:read"]}><DataEntryPage /></RoleRoute>} />
 
         {/* ── RISORSE ── */}
         <Route path="/hr"                element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["hr:read"]}><EmployeesPage /></RoleRoute>} />
         <Route path="/personnel"         element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><Navigate to="/hr" replace /></RoleRoute>} />
         <Route path="/hr/employees/:id"  element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["hr:read"]}><EmployeeDetailPage /></RoleRoute>} />
         <Route path="/hr/tabulati"       element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["audit:approve"]}><TabulatiPage /></RoleRoute>} />
+        <Route path="/hr/telegram-audit" element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["audit:approve"]}><TelegramAuditPage /></RoleRoute>} />
         <Route path="/timesheets"        element={<RoleRoute allowedRoles={["WORKER"]} allowedCapabilities={["timesheets:self:write"]}><TabulatiPage /></RoleRoute>} />
         {/* Legacy: /hr/audit → /hr/tabulati */}
         <Route path="/hr/audit"          element={<Navigate to="/hr/tabulati" replace />} />

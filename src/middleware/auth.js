@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { getJwtVerifyOptions } from "../constants.js";
+import { getDb } from "../db/index.js";
 
 /** Ruoli ammessi per dashboard/API ufficio (Policy 4.1) */
 export const DASHBOARD_ROLES = ["ADMIN", "HR"];
@@ -8,6 +9,48 @@ export function normalizeRole(role, fallback = null) {
   if (typeof role !== "string") return fallback;
   const normalized = role.trim().toUpperCase();
   return normalized || fallback;
+}
+
+const ROLE_ALIASES = Object.freeze({
+  OPERAIO: "WORKER",
+  WORKER: "WORKER",
+  ADMIN: "ADMIN",
+  HR: "HR",
+  PROJECT_MANAGER: "PROJECT_MANAGER",
+  PM: "PROJECT_MANAGER",
+  WAREHOUSEMAN: "WAREHOUSEMAN",
+  MAGAZZINIERE: "WAREHOUSEMAN",
+});
+
+function normalizeRoleForConsistency(role, fallback = null) {
+  const normalized = normalizeRole(role, fallback);
+  if (!normalized) return fallback;
+  return ROLE_ALIASES[normalized] ?? normalized;
+}
+
+function isSensitiveMutation(req) {
+  return !["GET", "HEAD", "OPTIONS"].includes(String(req.method ?? "").toUpperCase());
+}
+
+async function hasRoleMismatch(req) {
+  if (!isSensitiveMutation(req) || !req.user?.id) return false;
+
+  const prisma = getDb();
+  const userId = Number(req.user.id);
+  if (!Number.isInteger(userId) || userId <= 0) return false;
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      role: true,
+      employee: { select: { ruolo: true } },
+    },
+  });
+
+  const userRole = normalizeRoleForConsistency(user?.role, null);
+  const employeeRole = normalizeRoleForConsistency(user?.employee?.ruolo, null);
+
+  return Boolean(userRole && employeeRole && userRole !== employeeRole);
 }
 
 /**
@@ -33,7 +76,7 @@ export function authorizeRoles(...allowedRoles) {
     .map((role) => normalizeRole(role, null))
     .filter(Boolean);
 
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const normalizedUserRole = normalizeRole(req.user?.role, null);
 
     if (!normalizedUserRole) {
@@ -43,6 +86,16 @@ export function authorizeRoles(...allowedRoles) {
     }
 
     req.user = { ...req.user, role: normalizedUserRole };
+
+    try {
+      if (await hasRoleMismatch(req)) {
+        return res.status(403).json({
+          error: "Accesso negato: ruolo utente e ruolo dipendente non allineati.",
+        });
+      }
+    } catch (err) {
+      return next(err);
+    }
 
     if (
       normalizedAllowedRoles.length > 0 &&

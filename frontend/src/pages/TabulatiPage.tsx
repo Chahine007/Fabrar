@@ -774,7 +774,7 @@ export default function TabulatiPage() {
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-md border-b border-border px-8 h-20 flex items-center justify-between gap-4">
+      <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-md border-b border-border px-4 md:px-8 h-20 flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-text-primary flex items-center gap-2"><ClipboardList size={22} className="text-accent"/> Tabulati</h1>
           <p className="text-sm text-text-secondary">Ore, spese e timbrature — tutti i canali</p>
@@ -795,7 +795,7 @@ export default function TabulatiPage() {
         </div>
       </div>
 
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         {/* KPI strip */}
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
           {[

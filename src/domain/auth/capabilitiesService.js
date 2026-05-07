@@ -3,6 +3,7 @@ import { normalizeRole } from "../../middleware/auth.js";
 
 export const CAPABILITIES = Object.freeze({
   DASHBOARD_READ: "dashboard:read",
+  DATA_ENTRY_READ: "data_entry:read",
   PROJECT_READ: "projects:read",
   PROJECT_WRITE: "projects:write",
   TASK_READ: "tasks:read",
@@ -31,6 +32,7 @@ const ROLE_CAPABILITIES = Object.freeze({
   [AppRole.ADMIN]: Object.values(CAPABILITIES),
   [AppRole.HR]: [
     CAPABILITIES.PROJECT_READ,
+    CAPABILITIES.DATA_ENTRY_READ,
     CAPABILITIES.TASK_READ,
     CAPABILITIES.TASK_WRITE,
     CAPABILITIES.MESSAGES_READ,
@@ -49,6 +51,7 @@ const ROLE_CAPABILITIES = Object.freeze({
   ],
   [AppRole.PROJECT_MANAGER]: [
     CAPABILITIES.PROJECT_READ,
+    CAPABILITIES.DATA_ENTRY_READ,
     CAPABILITIES.PROJECT_WRITE,
     CAPABILITIES.TASK_READ,
     CAPABILITIES.TASK_WRITE,
@@ -64,6 +67,7 @@ const ROLE_CAPABILITIES = Object.freeze({
   ],
   [AppRole.WAREHOUSEMAN]: [
     CAPABILITIES.PROJECT_READ,
+    CAPABILITIES.DATA_ENTRY_READ,
     CAPABILITIES.TASK_READ,
     CAPABILITIES.MESSAGES_READ,
     CAPABILITIES.WAREHOUSE_READ,
@@ -78,6 +82,7 @@ const ROLE_CAPABILITIES = Object.freeze({
   ],
   [AppRole.WORKER]: [
     CAPABILITIES.PROJECT_READ,
+    CAPABILITIES.DATA_ENTRY_READ,
     CAPABILITIES.TASK_READ,
     CAPABILITIES.TASK_WRITE,
     CAPABILITIES.MESSAGES_READ,
@@ -108,6 +113,14 @@ export function normalizeAppRole(role, fallback = AppRole.WORKER) {
 export function getCapabilitiesForRole(role) {
   const normalizedRole = normalizeAppRole(role, AppRole.WORKER);
   return [...new Set(ROLE_CAPABILITIES[normalizedRole] ?? ROLE_CAPABILITIES[AppRole.WORKER])];
+}
+
+function removeSensitiveCapabilities(capabilities) {
+  return capabilities.filter((capability) => (
+    !capability.endsWith(":write") &&
+    capability !== CAPABILITIES.AUDIT_APPROVE &&
+    capability !== CAPABILITIES.WORKFLOW_TRANSITION
+  ));
 }
 
 export async function getEffectiveUserCapabilities(prisma, userPayload) {
@@ -148,6 +161,8 @@ export async function getEffectiveUserCapabilities(prisma, userPayload) {
     role,
     employee_role: employeeRole,
     role_mismatch: roleMismatch,
-    capabilities: getCapabilitiesForRole(role),
+    capabilities: roleMismatch
+      ? removeSensitiveCapabilities(getCapabilitiesForRole(role))
+      : getCapabilitiesForRole(role),
   };
 }

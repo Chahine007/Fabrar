@@ -48,6 +48,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     initializeAuth();
   }, []);
 
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      clearToken();
+      setUser(null);
+    };
+
+    window.addEventListener('auth:expired', handleAuthExpired);
+    return () => window.removeEventListener('auth:expired', handleAuthExpired);
+  }, []);
+
   const login = (token: string, userData: UserData) => {
     saveToken(token);
     setUser(userData);

@@ -330,11 +330,11 @@ export default function WarehousePage() {
     });
   }, [giacenze, search]);
 
-  if (isLoading) return <div className="p-8"><TableSkeleton rows={8} columns={6} /></div>;
-  if (error) return <div className="p-8"><ErrorMessage error={(error as Error).message} /></div>;
+  if (isLoading) return <div className="p-4 md:p-8"><TableSkeleton rows={8} columns={6} /></div>;
+  if (error) return <div className="p-4 md:p-8"><ErrorMessage error={(error as Error).message} /></div>;
 
   return (
-    <div className="min-h-screen bg-background p-6 lg:p-8 font-sans pb-24">
+    <div className="min-h-screen bg-background p-4 md:p-8 font-sans pb-24">
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-extrabold text-text-primary tracking-tight">Magazzino e Logistica</h1>

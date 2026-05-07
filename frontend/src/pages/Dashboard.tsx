@@ -6,7 +6,7 @@ import {
 import {
   ChevronRight, Settings2, X, Briefcase, CheckCircle2,
   Clock, AlertCircle, Euro, Package, Users, Activity,
-  Plus,
+  Plus, ShieldCheck,
 } from 'lucide-react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -36,6 +36,7 @@ import FinanceTab from '../components/dashboard/FinanceTab';
 import WarehouseTab from '../components/dashboard/WarehouseTab';
 import HrTab from '../components/dashboard/HrTab';
 import OperationsTab from '../components/dashboard/OperationsTab';
+import GovernanceTab from '../components/dashboard/GovernanceTab';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ const TABS: { id: DashboardTabId; label: string; icon: typeof Euro }[] = [
   { id: 'magazzino',  label: 'Magazzino',    icon: Package },
   { id: 'hr',         label: 'HR',           icon: Users },
   { id: 'operazioni', label: 'Operazioni',   icon: CheckCircle2 },
+  { id: 'governance', label: 'Governance',   icon: ShieldCheck },
 ];
 
 const StatusBadge = ({ status }: { status: string }) => {
@@ -262,6 +264,7 @@ export default function Dashboard() {
       {activeTab === 'magazzino'  && <WarehouseTab kpiControls={getKpiControls('magazzino')} />}
       {activeTab === 'hr'         && <HrTab kpiControls={getKpiControls('hr')} />}
       {activeTab === 'operazioni' && <OperationsTab kpiControls={getKpiControls('operazioni')} />}
+      {activeTab === 'governance' && <GovernanceTab kpiControls={getKpiControls('governance')} />}
 
       {/* ═══ PANORAMICA (tab default) ═══ */}
       {activeTab === 'panoramica' && (

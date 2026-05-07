@@ -117,7 +117,7 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-background/50 overflow-hidden transition-colors duration-300">
-      <header className="bg-card border-b border-border px-8 pt-6 shrink-0 z-10 shadow-sm">
+      <header className="bg-card border-b border-border px-4 pt-5 md:px-8 md:pt-6 shrink-0 z-10 shadow-sm">
         <div className="flex items-center gap-2 text-sm text-text-secondary mb-4">
           <button
             onClick={() => navigate('/projects')}
@@ -237,7 +237,7 @@ export default function ProjectDetailPage() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-8 no-scrollbar">
+      <main className="flex-1 overflow-y-auto p-4 md:p-8 no-scrollbar">
         <div className="max-w-6xl mx-auto">
           <AnimatePresence mode="wait">
             {renderTab()}

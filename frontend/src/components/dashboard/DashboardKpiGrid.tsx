@@ -4,7 +4,7 @@ import { Activity, Plus, RotateCcw, X, type LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Button, Dialog, Field, IconButton, Input, Textarea } from '../ui';
 
-export type DashboardTabId = 'panoramica' | 'finanza' | 'magazzino' | 'hr' | 'operazioni';
+export type DashboardTabId = 'panoramica' | 'finanza' | 'magazzino' | 'hr' | 'operazioni' | 'governance';
 
 export interface CustomDashboardKpi {
   id: string;
@@ -48,6 +48,7 @@ export const DASHBOARD_TAB_LABELS: Record<DashboardTabId, string> = {
   magazzino: 'Magazzino',
   hr: 'HR',
   operazioni: 'Operazioni',
+  governance: 'Governance',
 };
 
 export const DASHBOARD_KPI_CATALOG: Record<DashboardTabId, { id: string; label: string }[]> = {
@@ -79,6 +80,12 @@ export const DASHBOARD_KPI_CATALOG: Record<DashboardTabId, { id: string; label: 
     { id: 'ops-rejection-rate', label: 'Tasso Rifiuto' },
     { id: 'ops-approved', label: 'Entry Approvate' },
     { id: 'ops-total', label: 'Entry Totali' },
+  ],
+  governance: [
+    { id: 'governance-data-issues', label: 'Anomalie Data Quality' },
+    { id: 'governance-pending-ocr', label: 'OCR Da Revisionare' },
+    { id: 'governance-overdue-payables', label: 'Pagamenti Scaduti' },
+    { id: 'governance-outbox-failed', label: 'Eventi Falliti' },
   ],
 };
 

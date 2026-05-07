@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuthContext } from '../../context/AuthContext';
 import { useCapabilities } from '../../hooks/api/useAuth';
+import { FullPageLoader } from '../ui';
 
 interface RoleGuardProps {
   allowedRoles?: string[];
@@ -17,11 +18,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { isAuthenticated, isLoading } = useAuthContext();
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500" />
-      </div>
-    );
+    return <FullPageLoader label="Caricamento sessione..." />;
   }
 
   if (!isAuthenticated) {
@@ -65,11 +62,7 @@ export function RoleRoute({ allowedRoles = [], allowedCapabilities = [], childre
   const capabilities = capabilitiesQuery.data?.capabilities ?? [];
 
   if (isLoading || (allowedCapabilities.length > 0 && capabilitiesQuery.isLoading)) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500" />
-      </div>
-    );
+    return <FullPageLoader label="Verifica permessi..." />;
   }
 
   if (!isAuthenticated) {
