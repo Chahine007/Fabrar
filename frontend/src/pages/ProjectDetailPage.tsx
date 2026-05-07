@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent } from 'react';
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -6,8 +6,6 @@ import {
   Building2,
   CheckSquare,
   ChevronDown,
-  Clock,
-  Download,
   Euro,
   FileText,
   Users,
@@ -15,17 +13,14 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import CantiereSettingsTab from '../components/CantiereSettingsTab';
-import ShareModal from '../components/ShareModal';
 import Spinner from '../components/Spinner';
 import OverviewTab from '../components/projects/detail/OverviewTab';
 import DocumentsTab from '../components/projects/detail/DocumentsTab';
 import ProjectOperationsTab from '../components/projects/detail/ProjectOperationsTab';
 import ProjectResourcesTab from '../components/projects/detail/ProjectResourcesTab';
 import ProjectFinanceTab from '../components/projects/detail/ProjectFinanceTab';
-import { useCantieri, useCantiereDetail, useGenyaImport } from '../hooks/api/useCantieri';
-import { UI_LABELS } from '../lib/labels';
-import { useToast } from '../components/ui';
-import type { ProjectDetailTabId, ProjectShareItem, ProjectTabDefinition } from '../types/project-detail';
+import { useCantieri, useCantiereDetail } from '../hooks/api/useCantieri';
+import type { ProjectDetailTabId, ProjectTabDefinition } from '../types/project-detail';
 
 const TABS: ProjectTabDefinition[] = [
   { id: 'overview', label: 'Panoramica' },
@@ -39,48 +34,20 @@ const TABS: ProjectTabDefinition[] = [
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const toast = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const cantiereId = id ? parseInt(id, 10) : null;
   const detailCantiereId = Number.isInteger(cantiereId) ? cantiereId : null;
-  const genyaImport = useGenyaImport(detailCantiereId);
 
   const { data: cantieri, isLoading: loadingList } = useCantieri();
   const { data: projectDetail } = useCantiereDetail(detailCantiereId);
 
   const [activeTab, setActiveTab] = useState<ProjectDetailTabId>('overview');
   const [projectActionsOpen, setProjectActionsOpen] = useState(false);
-  const [shareModalOpen, setShareModalOpen] = useState(false);
-  const [itemToShare, setItemToShare] = useState<ProjectShareItem | null>(null);
 
   const cantiere = cantieri?.find((item) => item.id === cantiereId) ?? null;
   const headerContractValue = projectDetail?.cantiere?.valore_contratto ?? cantiere?.valore_contratto ?? cantiere?.budget ?? 0;
   const headerRealCost = projectDetail?.kpi?.costoTotale ?? cantiere?.costo_reale ?? 0;
   const headerInvoiced = projectDetail?.kpi?.totaleFatturato ?? 0;
   const headerCollected = projectDetail?.kpi?.totaleIncassato ?? 0;
-
-  const handleShare = (item: ProjectShareItem) => {
-    setItemToShare(item);
-    setShareModalOpen(true);
-  };
-
-  const handleGenyaImport = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const result = await genyaImport.mutateAsync(file);
-      toast.success('Import Genya completato', `Importate ${result.inserted ?? '?'} spese da ${file.name}`);
-    } catch (error: unknown) {
-      toast.error('Import Genya non riuscito', error instanceof Error ? error.message : 'Errore import');
-    }
-
-    event.target.value = '';
-  };
 
   if (loadingList && !cantiere) {
     return <Spinner fullScreen label="Caricamento progetto..." />;
@@ -108,7 +75,6 @@ export default function ProjectDetailPage() {
           <ProjectOperationsTab
             cantiereId={cantiereId}
             cantiereName={cantiere?.nome ?? ''}
-            onShare={handleShare}
             initialTab={
               activeTab === 'wbs'
                 ? 'wbs'
@@ -151,7 +117,7 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-background/50 overflow-hidden transition-colors duration-300">
-      <header className="bg-card border-b border-border px-8 pt-6 shrink-0 z-10 shadow-sm">
+      <header className="bg-card border-b border-border px-4 pt-5 md:px-8 md:pt-6 shrink-0 z-10 shadow-sm">
         <div className="flex items-center gap-2 text-sm text-text-secondary mb-4">
           <button
             onClick={() => navigate('/projects')}
@@ -196,29 +162,11 @@ export default function ProjectDetailPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {genyaImport.data && (
-              <span className="text-xs font-medium text-text-secondary bg-card border border-border px-3 py-2 rounded-xl">
-                ✅ Importate {genyaImport.data.inserted} spese
-              </span>
-            )}
-            {genyaImport.error && (
-              <span className="text-xs font-medium text-danger-text bg-danger-bg border border-danger-border px-3 py-2 rounded-xl">
-                ❌ {genyaImport.error.message}
-              </span>
-            )}
-
-            <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileSelected} />
             <button
               onClick={() => setActiveTab('activities')}
               className="flex items-center gap-2 px-4 py-2.5 bg-accent hover:bg-accent/90 text-white rounded-xl text-sm font-bold transition-all border border-accent shadow-lg shadow-accent/20"
             >
               <CheckSquare size={16} /> Nuovo Task
-            </button>
-            <button
-              onClick={() => setActiveTab('hours')}
-              className="flex items-center gap-2 px-4 py-2.5 bg-success-bg hover:opacity-80 text-success-text rounded-xl text-sm font-bold transition-all border border-success-border shadow-sm"
-            >
-              <Clock size={16} /> Log Ore
             </button>
 
             <div className="relative">
@@ -243,20 +191,6 @@ export default function ProjectDetailPage() {
                     transition={{ duration: 0.14 }}
                     className="absolute right-0 top-full mt-2 w-64 rounded-2xl border border-border bg-card p-2 shadow-xl z-30"
                   >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProjectActionsOpen(false);
-                        handleGenyaImport();
-                      }}
-                      disabled={genyaImport.isPending}
-                      className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-primary hover:bg-background transition-colors disabled:opacity-50"
-                    >
-                      {genyaImport.isPending
-                        ? <div className="w-4 h-4 border-2 border-border border-t-accent rounded-full animate-spin" />
-                        : <Download size={16} />}
-                      {UI_LABELS.module.genya.ui}
-                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -303,7 +237,7 @@ export default function ProjectDetailPage() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-8 no-scrollbar">
+      <main className="flex-1 overflow-y-auto p-4 md:p-8 no-scrollbar">
         <div className="max-w-6xl mx-auto">
           <AnimatePresence mode="wait">
             {renderTab()}
@@ -311,14 +245,6 @@ export default function ProjectDetailPage() {
         </div>
       </main>
 
-      {shareModalOpen && (
-        <ShareModal
-          isOpen={shareModalOpen}
-          onClose={() => setShareModalOpen(false)}
-          itemToShare={itemToShare}
-          onShare={() => setShareModalOpen(false)}
-        />
-      )}
     </div>
   );
 }

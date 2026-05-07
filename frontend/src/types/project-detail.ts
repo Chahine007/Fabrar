@@ -27,13 +27,6 @@ export interface ProjectTabDefinition {
   label: string;
 }
 
-export interface ProjectShareItem {
-  title?: string;
-  name?: string;
-  value?: string | number;
-  description?: string | null;
-}
-
 export interface ProjectDocument {
   id: number;
   name: string;

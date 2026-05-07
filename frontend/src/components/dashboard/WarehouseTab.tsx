@@ -1,33 +1,25 @@
-import React from 'react';
-import { motion } from 'motion/react';
 import { Package, AlertTriangle, TrendingUp, Layers } from 'lucide-react';
-import { cn } from '../../lib/utils';
 import { useWarehouseKPIs } from '../../hooks/api/useDashboard';
 import Spinner from '../Spinner';
+import { DashboardKpiGrid, type DashboardKpiDefinition, type DashboardKpiSectionProps } from './DashboardKpiGrid';
 
 const fmt = (v: number) => `€${v.toLocaleString('it-IT', { maximumFractionDigits: 0 })}`;
 
-export default function WarehouseTab() {
+export default function WarehouseTab({ kpiControls }: { kpiControls: DashboardKpiSectionProps }) {
   const { data, isLoading, error } = useWarehouseKPIs();
 
   if (isLoading) return <Spinner label="Caricamento dati magazzino..." />;
   if (error || !data) return <p className="text-danger-text text-sm">Errore caricamento dati magazzino.</p>;
 
+  const kpiDefinitions: DashboardKpiDefinition[] = [
+    { id: 'warehouse-capital', label: 'Capitale Immobilizzato', value: fmt(data.capitaleImmobilizzato), icon: Package, tone: 'text-indigo-500', bg: 'bg-indigo-500/10' },
+    { id: 'warehouse-items', label: 'Articoli a Giacenza', value: String(data.totalArticoli), icon: Layers, tone: 'text-accent', bg: 'bg-accent/10' },
+    { id: 'warehouse-movements', label: 'Movimenti Totali', value: String(data.totalMovimenti), icon: TrendingUp, tone: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+  ];
+
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {[
-          { label: 'Capitale Immobilizzato', value: fmt(data.capitaleImmobilizzato), icon: Package,    color: 'text-indigo-500', bg: 'bg-indigo-500/10' },
-          { label: 'Articoli a Giacenza',    value: String(data.totalArticoli),      icon: Layers,     color: 'text-accent',     bg: 'bg-accent/10' },
-          { label: 'Movimenti Totali',       value: String(data.totalMovimenti),     icon: TrendingUp, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
-        ].map(({ label, value, icon: Icon, color, bg }) => (
-          <motion.div key={label} whileHover={{ y: -2 }} className="bg-card border border-border rounded-2xl p-5 flex items-center gap-4">
-            <div className={cn('p-2.5 rounded-xl', bg, color)}><Icon size={20} /></div>
-            <div><p className="text-xl font-bold text-text-primary">{value}</p><p className="text-xs text-text-secondary font-medium mt-0.5">{label}</p></div>
-          </motion.div>
-        ))}
-      </div>
+      <DashboardKpiGrid definitions={[...kpiDefinitions, ...kpiControls.customKpis]} controls={kpiControls} className="xl:grid-cols-3" />
 
       {/* Dead Stock */}
       <div className="bg-card border border-border rounded-2xl p-6">

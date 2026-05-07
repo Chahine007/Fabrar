@@ -2,6 +2,7 @@ import { getDb } from "../db/index.js";
 import { employeeRoom } from "../sockets/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { parsePagination } from "../utils/pagination.js";
+import { canAccessCantiere } from "../domain/shared/accessControl.js";
 
 function formatMessageTime(dateStr) {
     if (!dateStr) return "";
@@ -34,6 +35,34 @@ function buildAvatar(name, type) {
     return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || "U")}&background=random`;
 }
 
+function getMessagePreview(message) {
+    const content = typeof message?.content === "string" ? message.content.trim() : "";
+    return content || "Nessun messaggio";
+}
+
+function mapMessageResponse(message, currentEmployeeId) {
+    const senderName = message.sender
+        ? `${message.sender.nome || ""} ${message.sender.cognome || ""}`.trim() || `Utente ${message.sender_id}`
+        : "Sistema";
+    const senderAvatar = message.sender
+        ? `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=random`
+        : "";
+    const content = typeof message.content === "string" ? message.content : "";
+
+    return {
+        id: message.id,
+        conversation_id: message.conversation_id,
+        sender_id: message.sender_id,
+        sender_name: senderName,
+        sender_avatar: senderAvatar,
+        type: message.type,
+        content,
+        created_at: message.created_at,
+        metadata: null,
+        is_me: currentEmployeeId != null && message.sender_id === currentEmployeeId,
+    };
+}
+
 function mapConversationSummary(conversation, currentEmployeeId) {
     const conversationType = String(conversation.type || "system").toLowerCase();
     const lastMessage = conversation.messages?.[0] ?? null;
@@ -51,13 +80,14 @@ function mapConversationSummary(conversation, currentEmployeeId) {
     return {
         id: conversation.id,
         name: displayName,
-        preview: lastMessage ? lastMessage.content : "Nessun messaggio",
+        preview: lastMessage ? getMessagePreview(lastMessage) : "Nessun messaggio",
         timestamp: lastMessage ? formatMessageTime(lastMessage.created_at) : "",
+        lastActivityAt: lastMessage?.created_at ?? conversation.created_at,
         unreadCount: currentParticipant?.unread_count || 0,
         type: conversationType,
         avatar: buildAvatar(displayName, conversationType),
         isPinned: !!conversation.isPinned,
-        projectContext: conversation.cantiere_id ? { status: "In Corso", team: "Staff Progetto" } : undefined,
+        cantiereId: conversation.cantiere_id ?? null,
         participants: (conversation.participants || []).map((participant) => ({
             employee_id: participant.employee_id,
             unread_count: participant.unread_count,
@@ -234,6 +264,87 @@ export const findOrCreateDirectConversation = asyncHandler(async (req, res) => {
     res.status(201).json(summary);
 });
 
+export const ensureProjectConversation = asyncHandler(async (req, res) => {
+    const prisma = getDb();
+    const currentEmployeeId = getCurrentEmployeeId(req, res);
+    if (currentEmployeeId == null) return;
+
+    const cantiereId = Number(req.params.cantiereId);
+    if (!Number.isInteger(cantiereId) || cantiereId <= 0) {
+        return res.status(400).json({ error: "ID cantiere non valido." });
+    }
+
+    if (!(await canAccessCantiere(prisma, req.user, cantiereId, {
+        globalRoles: ["ADMIN", "HR"],
+        warehouseRoles: ["WAREHOUSEMAN"],
+        ownerRoles: ["PROJECT_MANAGER"],
+        allowWorkerTasks: true,
+    }))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
+
+    const cantiere = await prisma.cantiere.findUnique({
+        where: { id: cantiereId },
+        select: {
+            id: true,
+            nome: true,
+            pm_user: { select: { employee: { select: { id: true } } } },
+            sm_user: { select: { employee: { select: { id: true } } } },
+        },
+    });
+    if (!cantiere) {
+        return res.status(404).json({ error: "Cantiere non trovato." });
+    }
+
+    const participantIds = [
+        currentEmployeeId,
+        cantiere.pm_user?.employee?.id,
+        cantiere.sm_user?.employee?.id,
+    ].filter((id, index, values) => Number.isInteger(id) && id > 0 && values.indexOf(id) === index);
+
+    const conversation = await prisma.$transaction(async (tx) => {
+        let projectConversation = await tx.conversation.findFirst({
+            where: {
+                cantiere_id: cantiereId,
+                type: { in: ["PROJECT", "project"] },
+            },
+            select: { id: true },
+        });
+
+        if (!projectConversation) {
+            projectConversation = await tx.conversation.create({
+                data: {
+                    name: cantiere.nome,
+                    type: "PROJECT",
+                    cantiere_id: cantiereId,
+                },
+                select: { id: true },
+            });
+        }
+
+        for (const employeeId of participantIds) {
+            await tx.conversationParticipant.upsert({
+                where: {
+                    conversation_id_employee_id: {
+                        conversation_id: projectConversation.id,
+                        employee_id: employeeId,
+                    },
+                },
+                update: {},
+                create: {
+                    conversation_id: projectConversation.id,
+                    employee_id: employeeId,
+                },
+            });
+        }
+
+        return projectConversation;
+    });
+
+    const summary = await loadConversationSummary(prisma, conversation.id, currentEmployeeId);
+    res.status(200).json(summary);
+});
+
 export const getConversationMessages = asyncHandler(async (req, res) => {
     const { id } = req.params;
     const prisma = getDb();
@@ -285,24 +396,18 @@ export const getConversationMessages = asyncHandler(async (req, res) => {
     });
 
     const mapped = messages.map((message) => {
-        const senderName = message.sender
-            ? `${message.sender.nome || ""} ${message.sender.cognome || ""}`.trim() || `Utente ${message.sender_id}`
-            : "Sistema";
-        const senderAvatar = message.sender
-            ? `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=random`
-            : "";
-
+        const response = mapMessageResponse(message, currentUserId);
         return {
-            id: message.id,
-            senderId: message.sender_id ? String(message.sender_id) : "system",
-            senderName,
-            senderAvatar,
-            type: message.type,
-            content: message.content,
-            timestamp: formatMessageTime(message.created_at),
-            isMe: currentUserId && message.sender_id === currentUserId,
+            id: response.id,
+            senderId: response.sender_id ? String(response.sender_id) : "system",
+            senderName: response.sender_name,
+            senderAvatar: response.sender_avatar,
+            type: response.type,
+            content: response.content,
+            timestamp: formatMessageTime(response.created_at),
+            isMe: !!response.is_me,
             status: "read",
-            metadata: null,
+            metadata: response.metadata,
         };
     });
 
@@ -315,6 +420,12 @@ export const createMessage = asyncHandler(async (req, res) => {
     const prisma = getDb();
     const currentUserId = getCurrentEmployeeId(req, res);
     if (currentUserId == null) return;
+    const normalizedType = typeof type === "string" && type.trim() ? type.trim() : "text";
+    const normalizedContent = typeof content === "string" ? content.trim() : "";
+
+    if (normalizedType !== "text") {
+        return res.status(400).json({ error: "Tipo messaggio non supportato." });
+    }
 
     const participant = await prisma.conversationParticipant.findUnique({
         where: {
@@ -329,13 +440,25 @@ export const createMessage = asyncHandler(async (req, res) => {
         return res.status(403).json({ error: "Accesso negato: non partecipi a questa conversazione." });
     }
 
+    if (!normalizedContent) {
+        return res.status(400).json({ error: "Il contenuto del messaggio è obbligatorio." });
+    }
+
     const { newMessage, participants } = await prisma.$transaction(async (tx) => {
         const createdMessage = await tx.message.create({
             data: {
                 conversation_id: id,
                 sender_id: currentUserId,
-                type,
-                content,
+                type: "text",
+                content: normalizedContent,
+            },
+            include: {
+                sender: {
+                    select: {
+                        nome: true,
+                        cognome: true,
+                    },
+                },
             },
         });
 
@@ -362,13 +485,14 @@ export const createMessage = asyncHandler(async (req, res) => {
             participants: updatedParticipants,
         };
     });
+    const mappedMessage = mapMessageResponse(newMessage, currentUserId);
 
     const io = req.app.get("io");
     if (io) {
         for (const conversationParticipant of participants) {
             io.to(employeeRoom(conversationParticipant.employee_id)).emit("new_message", {
                 conversationId: id,
-                message: newMessage,
+                message: mappedMessage,
             });
 
             io.to(employeeRoom(conversationParticipant.employee_id)).emit("conversation_updated", {
@@ -378,5 +502,5 @@ export const createMessage = asyncHandler(async (req, res) => {
         }
     }
 
-    res.status(201).json(newMessage);
+    res.status(201).json(mappedMessage);
 });

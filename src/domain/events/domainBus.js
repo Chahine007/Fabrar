@@ -14,8 +14,21 @@ export const domainBus = new EventEmitter();
 domainBus.setMaxListeners(20);
 
 export const EVENTS = Object.freeze({
-    REPORT_ENTRY_VERIFIED:   'report_entry.verified',
-    WAREHOUSE_DISCHARGED:    'warehouse.discharged',
+    REPORT_ENTRY_VERIFIED:   'report_entry.approved',
+    REPORT_ENTRY_APPROVED:   'report_entry.approved',
+    WAREHOUSE_DISCHARGED:    'stock.issued',
+    STOCK_ISSUED:            'stock.issued',
+    STOCK_LOADED:            'stock.loaded',
     SPESA_CREATED:           'spesa.created',
     CANTIERE_BUDGET_CHANGED: 'cantiere.budget_changed',
+    SPESA_VERIFIED:          'expense.approved',
+    EXPENSE_APPROVED:        'expense.approved',
+    INVOICE_PAID:            'invoice.paid',
+    PAYMENT_DUE_PAID:        'payment_due.paid',
+    PURCHASE_INVOICE_CONFIRMED: 'purchase_invoice.confirmed',
+    MATERIAL_REQUEST_STATUS_CHANGED: 'material_request.status_changed',
+    MATERIAL_REQUEST_FULFILLED: 'material_request.fulfilled',
+    DOCUMENT_LINKED:         'document.linked',
+    TASK_UPDATED:            'task.updated',
+    MESSAGE_SENT:            'message.sent',
 });

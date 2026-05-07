@@ -7,24 +7,66 @@ function cleanNullableString(value) {
   return text.length > 0 ? text : null;
 }
 
+function compactAlnum(value) {
+  return String(value ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "");
+}
+
+function normalizeVat(value) {
+  const text = compactAlnum(value);
+  return text ? text.replace(/^IT/, "") : null;
+}
+
+function normalizeIban(value) {
+  const text = cleanNullableString(value);
+  return text ? text.replace(/\s+/g, "").toUpperCase() : null;
+}
+
 function supplierPayload(body) {
+  const partitaIva = cleanNullableString(body.partita_iva);
   return {
     ragione_sociale: cleanNullableString(body.ragione_sociale),
-    partita_iva: cleanNullableString(body.partita_iva),
+    partita_iva: partitaIva,
+    partita_iva_normalizzata: cleanNullableString(body.partita_iva_normalizzata) ?? normalizeVat(partitaIva),
+    codice_fiscale: cleanNullableString(body.codice_fiscale),
     email: cleanNullableString(body.email),
     telefono: cleanNullableString(body.telefono),
     indirizzo: cleanNullableString(body.indirizzo),
+    comune: cleanNullableString(body.comune),
+    provincia: cleanNullableString(body.provincia),
+    cap: cleanNullableString(body.cap),
+    paese: cleanNullableString(body.paese) ?? "IT",
+    iban_default: normalizeIban(body.iban_default),
     note: cleanNullableString(body.note),
   };
 }
 
 function supplierPatchPayload(body) {
-  const allowedFields = ["ragione_sociale", "partita_iva", "email", "telefono", "indirizzo", "note"];
-  return Object.fromEntries(
+  const allowedFields = [
+    "ragione_sociale",
+    "partita_iva",
+    "partita_iva_normalizzata",
+    "codice_fiscale",
+    "email",
+    "telefono",
+    "indirizzo",
+    "comune",
+    "provincia",
+    "cap",
+    "paese",
+    "iban_default",
+    "note",
+  ];
+  const data = Object.fromEntries(
     allowedFields
       .filter((field) => Object.prototype.hasOwnProperty.call(body, field))
-      .map((field) => [field, cleanNullableString(body[field])])
+      .map((field) => [field, field === "iban_default" ? normalizeIban(body[field]) : cleanNullableString(body[field])])
   );
+  if (Object.prototype.hasOwnProperty.call(data, "partita_iva") && !data.partita_iva_normalizzata) {
+    data.partita_iva_normalizzata = normalizeVat(data.partita_iva);
+  }
+  return data;
 }
 
 export const getAllSuppliers = asyncHandler(async (req, res) => {
@@ -37,7 +79,10 @@ export const getAllSuppliers = asyncHandler(async (req, res) => {
           OR: [
             { ragione_sociale: { contains: q, mode: "insensitive" } },
             { partita_iva: { contains: q, mode: "insensitive" } },
+            { partita_iva_normalizzata: { contains: normalizeVat(q) ?? q, mode: "insensitive" } },
+            { codice_fiscale: { contains: q, mode: "insensitive" } },
             { email: { contains: q, mode: "insensitive" } },
+            { comune: { contains: q, mode: "insensitive" } },
           ],
         }
       : undefined,
@@ -63,6 +108,11 @@ export const getSupplierById = asyncHandler(async (req, res) => {
         orderBy: { data_movimento: "desc" },
         take: 20,
         include: { articolo: true, documento: true },
+      },
+      fatture_acquisto: {
+        orderBy: { data_documento: "desc" },
+        take: 20,
+        include: { documento: true, spesa: true },
       },
     },
   });

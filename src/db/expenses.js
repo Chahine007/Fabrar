@@ -1,4 +1,4 @@
-import { ValidationStatus } from '../constants.js';
+import { CostAllocationScope, CostCategory, LogisticaStatus, ValidationStatus } from '../constants.js';
 import { getDb } from './client.js';
 import { decimalOrNull } from './shared.js';
 import { cantiereExists } from './cantieri.js';
@@ -15,15 +15,23 @@ export async function insertSpesa(employeeId, cantiereId, importo, fornitore, de
   let wbs_node_id = extra?.wbs_node_id ?? null;
   let task_id = extra?.task_id ?? null;
   let documento_id = extra?.documento_id ?? null;
+  let cost_category = extra?.cost_category ?? CostCategory.OTHER;
+  let allocation_scope = extra?.allocation_scope ?? (cantiereId ? CostAllocationScope.PROJECT : CostAllocationScope.OVERHEAD);
+  let logistica_status = extra?.logistica_status ?? LogisticaStatus.NOT_REQUIRED;
+  let input_method = extra?.input_method;
+  let ocr_payload = extra?.ocr_payload ?? null;
+  let fornitore_id = extra?.fornitore_id ?? null;
 
   if (pricebook_id != null && quantita == null) {
     quantita = 1;
   }
 
-  const isValidCantiere = await cantiereExists(cantiereId);
-  if (!isValidCantiere) throw new Error("Cantiere non valido o inattivo.");
+  if (cantiereId != null) {
+    const isValidCantiere = await cantiereExists(cantiereId);
+    if (!isValidCantiere) throw new Error("Cantiere non valido o inattivo.");
+  }
 
-  if (wbs_node_id == null) {
+  if (cantiereId != null && wbs_node_id == null) {
     const rootWbs = await prisma.wbsNode.findFirst({
       where: { cantiere_id: cantiereId, parent_id: null },
     });
@@ -39,13 +47,19 @@ export async function insertSpesa(employeeId, cantiereId, importo, fornitore, de
       task_id,
       importo: decimalOrNull(importo),
       fornitore,
+      fornitore_id,
       descrizione,
       fonte,
+      input_method,
       fattura_rif,
       documento_id,
       pricebook_id,
       quantita: decimalOrNull(quantita),
       stato_validazione,
+      logistica_status,
+      cost_category,
+      allocation_scope,
+      ocr_payload,
     },
   });
 
@@ -58,7 +72,7 @@ export async function getSpesaById(id) {
 
 export async function updateSpesa(id, fields) {
   const prisma = getDb();
-  const allowed = ["timestamp_utc", "employee_id", "cantiere_id", "importo", "fornitore", "descrizione", "fonte", "fattura_rif", "pricebook_id", "quantita", "stato_validazione", "input_method", "admin_note", "modified_by_admin_at", "wbs_node_id", "task_id", "documento_id"];
+  const allowed = ["timestamp_utc", "employee_id", "cantiere_id", "importo", "fornitore", "fornitore_id", "descrizione", "fonte", "fattura_rif", "pricebook_id", "quantita", "stato_validazione", "input_method", "admin_note", "modified_by_admin_at", "wbs_node_id", "task_id", "documento_id", "logistica_status", "cost_category", "allocation_scope", "ocr_payload", "ocr_reviewed_at"];
   const data = {};
 
   for (const key of allowed) {

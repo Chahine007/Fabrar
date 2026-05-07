@@ -48,6 +48,27 @@ export interface MeResponse {
   };
 }
 
+export interface CapabilitiesResponse {
+  user: {
+    id: number;
+    username: string;
+    email: string;
+    role: string;
+    employee_id: number | null;
+    employee: {
+      id: number;
+      nome: string | null;
+      cognome: string | null;
+      ruolo: string | null;
+      attivo: number | null;
+    } | null;
+  };
+  role: string;
+  employee_role: string | null;
+  role_mismatch: boolean;
+  capabilities: string[];
+}
+
 export interface TelegramCodeResponse {
   telegram_pairing_code: string;
 }
@@ -96,6 +117,20 @@ export const useMe = () => {
       const res = await api.get('/api/user/me');
       if (!res.ok) {
         throw new Error('Errore nel recupero del profilo');
+      }
+      return res.json();
+    },
+  });
+};
+
+export const useCapabilities = () => {
+  return useQuery<CapabilitiesResponse, Error>({
+    queryKey: ['me', 'capabilities'],
+    queryFn: async () => {
+      const res = await api.get('/api/me/capabilities');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Errore nel recupero dei permessi');
       }
       return res.json();
     },

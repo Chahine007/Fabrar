@@ -4,6 +4,7 @@ import { createDischargeInTransaction } from "../domain/magazzino/warehouseServi
 import { domainBus, EVENTS } from "../domain/events/domainBus.js";
 import { parsePagination, positiveCursor } from "../utils/pagination.js";
 import { canAccessCantiere } from "../domain/shared/accessControl.js";
+import { writeAuditLog } from "../domain/audit/auditLogService.js";
 
 const REQUEST_STATUSES = ["PENDING", "APPROVED", "REJECTED", "FULFILLED"];
 
@@ -117,6 +118,83 @@ async function ensureRequestInput(prisma, body) {
   return { cantiereId, taskId, task, righe };
 }
 
+async function reserveStockForRequest(tx, richiesta) {
+  for (const line of richiesta.righe) {
+    let remaining = Number(line.quantita);
+    const giacenze = await tx.giacenza.findMany({
+      where: {
+        articolo_id: line.articolo_id,
+        quantita_disponibile: { gt: 0 },
+      },
+      orderBy: { id: "asc" },
+    });
+
+    const totalAvailable = giacenze.reduce(
+      (sum, giacenza) => sum + Number(giacenza.quantita_disponibile),
+      0
+    );
+    if (totalAvailable < remaining) {
+      throw httpError(
+        `Giacenza insufficiente per ${line.articolo.codice_sku}: richiesta ${line.quantita}, disponibile ${totalAvailable}.`,
+        409
+      );
+    }
+
+    for (const giacenza of giacenze) {
+      if (remaining <= 0) break;
+
+      const available = Number(giacenza.quantita_disponibile);
+      const reserved = Math.min(available, remaining);
+      const updated = await tx.giacenza.updateMany({
+        where: {
+          id: giacenza.id,
+          quantita_disponibile: { gte: reserved },
+        },
+        data: {
+          quantita_disponibile: { decrement: reserved },
+          quantita_riservata: { increment: reserved },
+        },
+      });
+      if (updated.count !== 1) {
+        throw httpError(`Giacenza concorrente insufficiente per ${line.articolo.codice_sku}.`, 409);
+      }
+
+      await tx.stockReservation.create({
+        data: {
+          richiesta_id: richiesta.id,
+          riga_richiesta_id: line.id,
+          giacenza_id: giacenza.id,
+          articolo_id: line.articolo_id,
+          quantita: reserved,
+          status: "ACTIVE",
+        },
+      });
+      remaining -= reserved;
+    }
+  }
+}
+
+async function releaseActiveReservations(tx, requestId) {
+  const reservations = await tx.stockReservation.findMany({
+    where: { richiesta_id: requestId, status: "ACTIVE" },
+  });
+
+  for (const reservation of reservations) {
+    const qty = Number(reservation.quantita);
+    await tx.giacenza.update({
+      where: { id: reservation.giacenza_id },
+      data: {
+        quantita_disponibile: { increment: qty },
+        quantita_riservata: { decrement: qty },
+      },
+    });
+    await tx.stockReservation.update({
+      where: { id: reservation.id },
+      data: { status: "RELEASED", released_at: new Date() },
+    });
+  }
+}
+
 export const createRequest = asyncHandler(async (req, res) => {
   const prisma = getDb();
   const richiedenteId = parsePositiveInt(req.user?.employee_id);
@@ -222,11 +300,11 @@ export const updateRequestStatus = asyncHandler(async (req, res) => {
 
   const existing = await prisma.richiestaMateriale.findUnique({
     where: { id: requestId },
-    select: {
-      id: true,
-      cantiere_id: true,
-      richiedente_id: true,
-      status: true,
+    include: {
+      righe: {
+        include: { articolo: true },
+        orderBy: { id: "asc" },
+      },
     },
   });
 
@@ -242,23 +320,53 @@ export const updateRequestStatus = asyncHandler(async (req, res) => {
   if (existing.richiedente_id === parsePositiveInt(req.user?.employee_id) && req.user?.role !== "ADMIN") {
     return res.status(403).json({ error: "Non puoi approvare o respingere una richiesta creata da te." });
   }
-  if (existing.status !== "PENDING") {
-    return res.status(409).json({ error: "Solo le richieste PENDING possono cambiare stato da questo endpoint." });
+  const canTransition =
+    existing.status === "PENDING" ||
+    (existing.status === "APPROVED" && nextStatus === "REJECTED");
+  if (!canTransition) {
+    return res.status(409).json({ error: "Transizione stato richiesta non consentita." });
   }
 
-  const updated = await prisma.richiestaMateriale.updateMany({
-    where: { id: requestId, status: "PENDING" },
-    data: { status: nextStatus },
+  const events = [];
+  const richiesta = await prisma.$transaction(async (tx) => {
+    if (existing.status === "PENDING" && nextStatus === "APPROVED") {
+      await reserveStockForRequest(tx, existing);
+    }
+    if (existing.status === "APPROVED" && nextStatus === "REJECTED") {
+      await releaseActiveReservations(tx, requestId);
+    }
+
+    const updated = await tx.richiestaMateriale.updateMany({
+      where: { id: requestId, status: existing.status },
+      data: { status: nextStatus },
+    });
+
+    if (updated.count !== 1) {
+      throw httpError("La richiesta è già stata aggiornata da un'altra operazione.", 409);
+    }
+
+    await writeAuditLog(tx, req.user, {
+      entityType: "RichiestaMateriale",
+      entityId: requestId,
+      action: "MATERIAL_REQUEST_STATUS_CHANGED",
+      previousState: { status: existing.status },
+      nextState: { status: nextStatus },
+    });
+
+    events.push({
+      type: EVENTS.MATERIAL_REQUEST_STATUS_CHANGED,
+      payload: { requestId, cantiereId: existing.cantiere_id, status: nextStatus },
+    });
+
+    return tx.richiestaMateriale.findUnique({
+      where: { id: requestId },
+      include: materialRequestInclude(),
+    });
   });
 
-  if (updated.count !== 1) {
-    return res.status(409).json({ error: "La richiesta è già stata aggiornata da un'altra operazione." });
+  for (const event of events) {
+    domainBus.emit(event.type, event.payload);
   }
-
-  const richiesta = await prisma.richiestaMateriale.findUnique({
-    where: { id: requestId },
-    include: materialRequestInclude(),
-  });
 
   res.json(richiesta);
 });
@@ -308,55 +416,73 @@ export const fulfillRequest = asyncHandler(async (req, res) => {
     const createdExpenses = [];
     const expenseEmployeeId = executorEmployeeId ?? richiesta.richiedente_id;
 
-    for (const line of richiesta.righe) {
-      let remaining = Number(line.quantita);
+    let reservations = await tx.stockReservation.findMany({
+      where: { richiesta_id: requestId, status: "ACTIVE" },
+      include: {
+        giacenza: true,
+        articolo: true,
+      },
+      orderBy: { id: "asc" },
+    });
 
-      const giacenze = await tx.giacenza.findMany({
-        where: {
-          articolo_id: line.articolo_id,
-          quantita_disponibile: { gt: 0 },
+    if (reservations.length === 0) {
+      await reserveStockForRequest(tx, richiesta);
+      reservations = await tx.stockReservation.findMany({
+        where: { richiesta_id: requestId, status: "ACTIVE" },
+        include: {
+          giacenza: true,
+          articolo: true,
         },
         orderBy: { id: "asc" },
       });
+    }
 
-      const totalAvailable = giacenze.reduce(
-        (sum, giacenza) => sum + Number(giacenza.quantita_disponibile),
-        0
-      );
+    for (const reservation of reservations) {
+      const consumed = Number(reservation.quantita);
+      await tx.giacenza.update({
+        where: { id: reservation.giacenza_id },
+        data: {
+          quantita_disponibile: { increment: consumed },
+          quantita_riservata: { decrement: consumed },
+        },
+      });
 
-      if (totalAvailable < remaining) {
-        throw httpError(
-          `Giacenza insufficiente per ${line.articolo.codice_sku}: richiesta ${line.quantita}, disponibile ${totalAvailable}.`,
-          409
-        );
-      }
+      const discharge = await createDischargeInTransaction(tx, {
+        articolo_id: reservation.articolo_id,
+        quantita: consumed,
+        ubicazione_da_id: reservation.giacenza.ubicazione_id,
+        cantiere_id: richiesta.cantiere_id,
+        task_id: richiesta.task_id ?? null,
+      }, userId, expenseEmployeeId, {
+        description: `Evasione richiesta materiale #${richiesta.id}: ${reservation.articolo.descrizione} (${reservation.articolo.codice_sku})`,
+      });
 
-      for (const giacenza of giacenze) {
-        if (remaining <= 0) break;
+      await tx.stockReservation.update({
+        where: { id: reservation.id },
+        data: { status: "CONSUMED", consumed_at: new Date() },
+      });
 
-        const available = Number(giacenza.quantita_disponibile);
-        const consumed = Math.min(available, remaining);
-        const discharge = await createDischargeInTransaction(tx, {
-          articolo_id: line.articolo_id,
-          quantita: consumed,
-          ubicazione_da_id: giacenza.ubicazione_id,
-          cantiere_id: richiesta.cantiere_id,
-          task_id: richiesta.task_id ?? null,
-        }, userId, expenseEmployeeId, {
-          description: `Evasione richiesta materiale #${richiesta.id}: ${line.articolo.descrizione} (${line.articolo.codice_sku})`,
-        });
-
-        createdMovements.push(discharge.movimento);
-        createdExpenses.push(discharge.spesa);
-        events.push({ type: EVENTS.WAREHOUSE_DISCHARGED, payload: discharge.eventPayload });
-        remaining -= consumed;
-      }
+      createdMovements.push(discharge.movimento);
+      createdExpenses.push(discharge.spesa);
+      events.push({ type: EVENTS.WAREHOUSE_DISCHARGED, payload: discharge.eventPayload });
     }
 
     const updatedRequest = await tx.richiestaMateriale.update({
       where: { id: requestId },
       data: { status: "FULFILLED" },
       include: materialRequestInclude(),
+    });
+
+    await writeAuditLog(tx, req.user, {
+      entityType: "RichiestaMateriale",
+      entityId: requestId,
+      action: "MATERIAL_REQUEST_STATUS_CHANGED",
+      previousState: { status: "APPROVED" },
+      nextState: { status: "FULFILLED" },
+    });
+    events.push({
+      type: EVENTS.MATERIAL_REQUEST_STATUS_CHANGED,
+      payload: { requestId, cantiereId: richiesta.cantiere_id, status: "FULFILLED" },
     });
 
     return {

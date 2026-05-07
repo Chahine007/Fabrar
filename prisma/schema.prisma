@@ -55,6 +55,7 @@ model Employee {
   conversation_participants ConversationParticipant[]
   bot_sessions              BotSession[]
   assigned_tasks            Task[]
+  uploaded_documents        Document[]                @relation("DocumentUploader")
 }
 
 model User {
@@ -114,6 +115,8 @@ model Cantiere {
   richieste_materiali RichiestaMateriale[]
   fatture             Fattura[]
   rate                Rata[]
+  fatture_acquisto    FatturaAcquisto[]
+  conversations        Conversation[]
 }
 
 // NEW ERP TABLE: WBS Nodes
@@ -200,38 +203,51 @@ model ReportEntry {
 }
 
 model Spesa {
-  id                   Int              @id @default(autoincrement())
-  timestamp_utc        DateTime         @default(now())
+  id                   Int                 @id @default(autoincrement())
+  timestamp_utc        DateTime            @default(now())
   employee_id          Int
-  cantiere_id          Int
+  cantiere_id          Int?
   wbs_node_id          Int? // NEW: link to WBS per il Job Costing dettagliato
   task_id              Int?
-  importo              Decimal          @db.Decimal(10, 2)
+  importo              Decimal             @db.Decimal(10, 2)
   fornitore            String?
+  fornitore_id         Int?
   descrizione          String?
   pricebook_id         Int?
-  quantita             Decimal?         @db.Decimal(10, 2)
-  stato_validazione    ValidationStatus @default(PENDING)
-  fonte                String?          @default("TELEGRAM")
-  input_method         String?          @default("telegram_ocr")
+  quantita             Decimal?            @db.Decimal(10, 2)
+  stato_validazione    ValidationStatus    @default(PENDING)
+  fonte                String?             @default("TELEGRAM")
+  input_method         String?             @default("telegram_ocr")
   fattura_rif          String?
   documento_id         Int? // Link opzionale al Documento (es. fattura)
+  logistica_status     LogisticaStatus     @default(NOT_REQUIRED)
+  cost_category        CostCategory        @default(OTHER)
+  allocation_scope     CostAllocationScope @default(PROJECT)
+  ocr_payload          Json?
+  ocr_reviewed_at      DateTime?
   admin_note           String?
   modified_by_admin_at DateTime?
 
-  employee  Employee   @relation(fields: [employee_id], references: [id])
-  cantiere  Cantiere   @relation(fields: [cantiere_id], references: [id])
-  pricebook Pricebook? @relation(fields: [pricebook_id], references: [id])
-  wbs_node  WbsNode?   @relation(fields: [wbs_node_id], references: [id])
-  task      Task?      @relation(fields: [task_id], references: [id])
-  documento Document?  @relation(fields: [documento_id], references: [id])
+  employee             Employee         @relation(fields: [employee_id], references: [id])
+  cantiere             Cantiere?        @relation(fields: [cantiere_id], references: [id])
+  fornitore_anagrafica Fornitore?       @relation(fields: [fornitore_id], references: [id])
+  pricebook            Pricebook?       @relation(fields: [pricebook_id], references: [id])
+  wbs_node             WbsNode?         @relation(fields: [wbs_node_id], references: [id])
+  task                 Task?            @relation(fields: [task_id], references: [id])
+  documento            Document?        @relation(fields: [documento_id], references: [id])
+  fattura_acquisto     FatturaAcquisto?
+  scadenze_pagamento   ScadenzaPagamento[]
 
   @@index([employee_id])
   @@index([cantiere_id])
+  @@index([fornitore_id])
   @@index([wbs_node_id])
   @@index([task_id])
   @@index([pricebook_id])
   @@index([documento_id])
+  @@index([logistica_status])
+  @@index([cost_category])
+  @@index([allocation_scope])
 }
 
 model Tariffa {
@@ -310,13 +326,73 @@ enum ValidationStatus {
   REJECTED
 }
 
+enum LogisticaStatus {
+  NOT_REQUIRED
+  PENDING_OCR
+  OCR_REVIEW
+  LOADED_TO_WAREHOUSE
+  RECONCILIATION_REQUIRED
+}
+
+enum CostCategory {
+  INVENTORY_MATERIAL
+  CONSUMABLE_SUPPLY
+  SERVICE
+  LEASING_RENTAL
+  UTILITY
+  INSURANCE
+  TAX_FEE
+  PROFESSIONAL_SERVICE
+  TRAVEL_VEHICLE
+  OTHER
+  UNKNOWN
+}
+
+enum CostAllocationScope {
+  PROJECT
+  OVERHEAD
+  REVIEW
+}
+
+enum PaymentDueStatus {
+  OPEN
+  PAID
+  CANCELLED
+}
+
+enum PaymentDueSource {
+  OCR
+  GENYA
+  MANUAL
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+enum LedgerEntryStatus {
+  POSTED
+  VOIDED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+  FAILED
+}
+
 model Document {
   id          Int      @id @default(autoincrement())
-  cantiere_id Int
+  cantiere_id Int?
   name        String // Nome originale del file (display)
   file_path   String? // Percorso relativo su disco: cantieri/{id}/{filename}
   type        String
   size        String
+  mime_type   String?
+  dimensione  Int?
+  employee_id Int?
   uploader    String
   created_at  DateTime @default(now())
 
@@ -326,12 +402,15 @@ model Document {
   data_emissione DateTime? @db.Date
   importo        Decimal?  @db.Decimal(10, 2)
 
-  cantiere            Cantiere             @relation(fields: [cantiere_id], references: [id])
+  cantiere            Cantiere?            @relation(fields: [cantiere_id], references: [id])
+  uploaded_by         Employee?            @relation("DocumentUploader", fields: [employee_id], references: [id])
   spese_collegate     Spesa[]
   movimenti_magazzino MovimentoMagazzino[]
   fatture             Fattura[]
+  fattura_acquisto    FatturaAcquisto?
 
   @@index([cantiere_id])
+  @@index([employee_id])
   @@index([tag])
 }
 
@@ -348,16 +427,19 @@ enum InvoiceStatus {
 }
 
 model Fattura {
-  id              Int           @id @default(autoincrement())
-  cantiere_id     Int
-  numero_fattura  String?
-  data_emissione  DateTime?     @db.Date
-  importo_totale  Decimal       @db.Decimal(10, 2)
-  stato           InvoiceStatus @default(DRAFT)
-  documento_id    Int?
-  note            String?
-  created_at      DateTime      @default(now())
-  updated_at      DateTime      @updatedAt
+  id             Int           @id @default(autoincrement())
+  cantiere_id    Int
+  numero_fattura String?
+  data_emissione DateTime?     @db.Date
+  importo_totale Decimal       @db.Decimal(10, 2)
+  stato          InvoiceStatus @default(DRAFT)
+  documento_id   Int?
+  note           String?
+  paid_at        DateTime?
+  paid_amount    Decimal?      @db.Decimal(10, 2)
+  payment_note   String?
+  created_at     DateTime      @default(now())
+  updated_at     DateTime      @updatedAt
 
   cantiere  Cantiere  @relation(fields: [cantiere_id], references: [id])
   documento Document? @relation(fields: [documento_id], references: [id])
@@ -368,17 +450,17 @@ model Fattura {
 }
 
 model Rata {
-  id                     Int                @id @default(autoincrement())
+  id                     Int               @id @default(autoincrement())
   cantiere_id            Int
   wbs_node_id            Int?
   nome                   String
-  percentuale            Decimal?           @db.Decimal(5, 2)
-  importo_previsto       Decimal            @db.Decimal(10, 2)
-  data_scadenza_prevista DateTime?          @db.Date
-  stato                  InstallmentStatus  @default(PENDING)
+  percentuale            Decimal?          @db.Decimal(5, 2)
+  importo_previsto       Decimal           @db.Decimal(10, 2)
+  data_scadenza_prevista DateTime?         @db.Date
+  stato                  InstallmentStatus @default(PENDING)
   fattura_id             Int?
-  created_at             DateTime           @default(now())
-  updated_at             DateTime           @updatedAt
+  created_at             DateTime          @default(now())
+  updated_at             DateTime          @updatedAt
 
   cantiere Cantiere @relation(fields: [cantiere_id], references: [id])
   wbs_node WbsNode? @relation(fields: [wbs_node_id], references: [id])
@@ -397,6 +479,7 @@ model Conversation {
   cantiere_id Int?
   created_at  DateTime @default(now())
 
+  cantiere     Cantiere? @relation(fields: [cantiere_id], references: [id])
   messages     Message[]
   participants ConversationParticipant[]
 
@@ -437,18 +520,31 @@ model ConversationParticipant {
 // ==========================================
 
 model Fornitore {
-  id              Int      @id @default(autoincrement())
-  ragione_sociale String
-  partita_iva     String?
-  email           String?
-  telefono        String?
-  indirizzo       String?
-  note            String?
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+  id                       Int      @id @default(autoincrement())
+  ragione_sociale          String
+  partita_iva              String?
+  partita_iva_normalizzata String?
+  codice_fiscale           String?
+  email                    String?
+  telefono                 String?
+  indirizzo                String?
+  comune                   String?
+  provincia                String?
+  cap                      String?
+  paese                    String?  @default("IT")
+  iban_default             String?
+  note                     String?
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
 
   articoli_default    Articolo[]
   movimenti_magazzino MovimentoMagazzino[]
+  spese               Spesa[]
+  fatture_acquisto    FatturaAcquisto[]
+  scadenze_pagamento  ScadenzaPagamento[]
+
+  @@index([partita_iva_normalizzata])
+  @@index([ragione_sociale])
 }
 
 model Articolo {
@@ -465,6 +561,8 @@ model Articolo {
   movimenti         MovimentoMagazzino[]
   fornitore_default Fornitore?               @relation(fields: [fornitore_default_id], references: [id])
   righe_richieste   RigaRichiestaMateriale[]
+  righe_fatture     RigaFatturaAcquisto[]
+  prenotazioni      StockReservation[]
 
   @@index([fornitore_default_id])
 }
@@ -488,6 +586,7 @@ model Giacenza {
 
   articolo   Articolo   @relation(fields: [articolo_id], references: [id])
   ubicazione Ubicazione @relation(fields: [ubicazione_id], references: [id])
+  prenotazioni StockReservation[]
 
   @@unique([articolo_id, ubicazione_id])
   @@index([articolo_id])
@@ -505,6 +604,12 @@ enum RequestStatus {
   APPROVED
   REJECTED
   FULFILLED
+}
+
+enum StockReservationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
 }
 
 model MovimentoMagazzino {
@@ -532,15 +637,16 @@ model MovimentoMagazzino {
   documento_id   Int?
   fornitore_id   Int?
 
-  articolo      Articolo    @relation(fields: [articolo_id], references: [id])
-  ubicazione_da Ubicazione? @relation("MovimentiDa", fields: [ubicazione_da_id], references: [id])
-  ubicazione_a  Ubicazione? @relation("MovimentiA", fields: [ubicazione_a_id], references: [id])
-  cantiere      Cantiere?   @relation(fields: [cantiere_id], references: [id])
-  wbs_node      WbsNode?    @relation(fields: [wbs_node_id], references: [id])
-  task          Task?       @relation(fields: [task_id], references: [id])
-  esecutore     User        @relation(fields: [esecutore_id], references: [id])
-  documento     Document?   @relation(fields: [documento_id], references: [id])
-  fornitore     Fornitore?  @relation(fields: [fornitore_id], references: [id])
+  articolo      Articolo             @relation(fields: [articolo_id], references: [id])
+  ubicazione_da Ubicazione?          @relation("MovimentiDa", fields: [ubicazione_da_id], references: [id])
+  ubicazione_a  Ubicazione?          @relation("MovimentiA", fields: [ubicazione_a_id], references: [id])
+  cantiere      Cantiere?            @relation(fields: [cantiere_id], references: [id])
+  wbs_node      WbsNode?             @relation(fields: [wbs_node_id], references: [id])
+  task          Task?                @relation(fields: [task_id], references: [id])
+  esecutore     User                 @relation(fields: [esecutore_id], references: [id])
+  documento     Document?            @relation(fields: [documento_id], references: [id])
+  fornitore     Fornitore?           @relation(fields: [fornitore_id], references: [id])
+  riga_fattura  RigaFatturaAcquisto?
 
   @@index([articolo_id])
   @@index([cantiere_id])
@@ -552,6 +658,119 @@ model MovimentoMagazzino {
   @@index([documento_id])
   @@index([fornitore_id])
   @@index([articolo_id, data_movimento])
+}
+
+model FatturaAcquisto {
+  id                  Int       @id @default(autoincrement())
+  document_id         Int?      @unique
+  spesa_id            Int?      @unique
+  fornitore_id        Int?
+  cantiere_id         Int?
+  document_type       String?
+  tipo_documento      String?
+  numero_documento    String?
+  data_documento      DateTime? @db.Date
+  codice_destinatario String?
+
+  // Snapshot del blocco cliente della fattura. In V1 rappresenta Fabdar, non una nuova anagrafica cliente.
+  cliente_partita_iva     String?
+  cliente_ragione_sociale String?
+  cliente_codice_fiscale  String?
+  cliente_indirizzo       String?
+  cliente_comune          String?
+  cliente_provincia       String?
+  cliente_cap             String?
+
+  totale_imponibile Decimal? @db.Decimal(10, 2)
+  totale_imposta    Decimal? @db.Decimal(10, 2)
+  totale_documento  Decimal? @db.Decimal(10, 2)
+
+  pagamento_modalita String?
+  pagamento_iban     String?
+  pagamento_scadenza DateTime? @db.Date
+  pagamento_importo  Decimal?  @db.Decimal(10, 2)
+
+  cost_category      CostCategory        @default(UNKNOWN)
+  allocation_scope   CostAllocationScope @default(REVIEW)
+  logistica_required Boolean             @default(false)
+  ocr_payload        Json?
+  created_at         DateTime            @default(now())
+  updated_at         DateTime            @updatedAt
+
+  documento Document?             @relation(fields: [document_id], references: [id])
+  spesa     Spesa?                @relation(fields: [spesa_id], references: [id])
+  fornitore Fornitore?            @relation(fields: [fornitore_id], references: [id])
+  cantiere  Cantiere?             @relation(fields: [cantiere_id], references: [id])
+  righe     RigaFatturaAcquisto[]
+  scadenze  ScadenzaPagamento[]
+
+  @@index([fornitore_id, numero_documento, data_documento])
+  @@index([spesa_id])
+  @@index([cantiere_id])
+  @@index([cost_category])
+  @@index([allocation_scope])
+}
+
+model RigaFatturaAcquisto {
+  id                        Int                 @id @default(autoincrement())
+  fattura_acquisto_id       Int
+  articolo_id               Int?
+  movimento_id              Int?                @unique
+  codice_articolo_originale String?
+  codice_sku_normalizzato   String?
+  descrizione               String?
+  quantita                  Decimal?            @db.Decimal(10, 2)
+  unita_misura              String?
+  prezzo_unitario           Decimal?            @db.Decimal(10, 2)
+  iva_percentuale           Decimal?            @db.Decimal(5, 2)
+  imponibile_riga           Decimal?            @db.Decimal(10, 2)
+  imposta_riga              Decimal?            @db.Decimal(10, 2)
+  prezzo_totale             Decimal?            @db.Decimal(10, 2)
+  cost_category             CostCategory        @default(UNKNOWN)
+  allocation_scope          CostAllocationScope @default(REVIEW)
+  is_stockable              Boolean             @default(false)
+  reconciliation_status     String              @default("OK")
+  raw_payload               Json?
+  created_at                DateTime            @default(now())
+  updated_at                DateTime            @updatedAt
+
+  fattura_acquisto FatturaAcquisto     @relation(fields: [fattura_acquisto_id], references: [id], onDelete: Cascade)
+  articolo         Articolo?           @relation(fields: [articolo_id], references: [id])
+  movimento        MovimentoMagazzino? @relation(fields: [movimento_id], references: [id])
+
+  @@index([fattura_acquisto_id])
+  @@index([articolo_id])
+  @@index([codice_sku_normalizzato])
+  @@index([cost_category])
+}
+
+model ScadenzaPagamento {
+  id                  Int              @id @default(autoincrement())
+  fattura_acquisto_id Int
+  spesa_id            Int?
+  fornitore_id        Int?
+  data_scadenza       DateTime         @db.Date
+  importo             Decimal          @db.Decimal(10, 2)
+  modalita_pagamento  String?
+  iban                String?
+  status              PaymentDueStatus @default(OPEN)
+  source              PaymentDueSource @default(MANUAL)
+  source_key          String?          @unique
+  paid_at             DateTime?
+  paid_amount         Decimal?         @db.Decimal(10, 2)
+  note                String?
+  created_at          DateTime         @default(now())
+  updated_at          DateTime         @updatedAt
+
+  fattura_acquisto FatturaAcquisto @relation(fields: [fattura_acquisto_id], references: [id], onDelete: Cascade)
+  spesa            Spesa?          @relation(fields: [spesa_id], references: [id])
+  fornitore        Fornitore?      @relation(fields: [fornitore_id], references: [id])
+
+  @@index([fattura_acquisto_id])
+  @@index([spesa_id])
+  @@index([fornitore_id])
+  @@index([data_scadenza, status])
+  @@index([source])
 }
 
 model RichiestaMateriale {
@@ -569,6 +788,7 @@ model RichiestaMateriale {
   task        Task?                    @relation(fields: [task_id], references: [id])
   richiedente Employee                 @relation(fields: [richiedente_id], references: [id])
   righe       RigaRichiestaMateriale[]
+  prenotazioni StockReservation[]
 
   @@index([cantiere_id, task_id])
   @@index([richiedente_id])
@@ -584,9 +804,150 @@ model RigaRichiestaMateriale {
 
   richiesta RichiestaMateriale @relation(fields: [richiesta_id], references: [id], onDelete: Cascade)
   articolo  Articolo           @relation(fields: [articolo_id], references: [id])
+  prenotazioni StockReservation[]
 
   @@index([richiesta_id])
   @@index([articolo_id])
+}
+
+model StockReservation {
+  id                 Int                    @id @default(autoincrement())
+  richiesta_id       Int
+  riga_richiesta_id  Int
+  giacenza_id        Int
+  articolo_id        Int
+  quantita           Decimal                @db.Decimal(10, 2)
+  status             StockReservationStatus @default(ACTIVE)
+  created_at         DateTime               @default(now())
+  consumed_at        DateTime?
+  released_at        DateTime?
+
+  richiesta      RichiestaMateriale     @relation(fields: [richiesta_id], references: [id], onDelete: Cascade)
+  riga_richiesta RigaRichiestaMateriale @relation(fields: [riga_richiesta_id], references: [id], onDelete: Cascade)
+  giacenza       Giacenza               @relation(fields: [giacenza_id], references: [id])
+  articolo       Articolo               @relation(fields: [articolo_id], references: [id])
+
+  @@index([richiesta_id, status])
+  @@index([riga_richiesta_id])
+  @@index([giacenza_id])
+  @@index([articolo_id])
+}
+
+model AuditLog {
+  id                Int      @id @default(autoincrement())
+  actor_user_id     Int?
+  actor_employee_id Int?
+  entity_type       String
+  entity_id         String
+  action            String
+  previous_state    Json?
+  next_state        Json?
+  note              String?
+  source            String?
+  request_id        String?
+  correlation_id    String?
+  created_at        DateTime @default(now())
+
+  @@index([entity_type, entity_id])
+  @@index([actor_user_id])
+  @@index([actor_employee_id])
+  @@index([correlation_id])
+  @@index([created_at])
+}
+
+model LedgerEntry {
+  id                      Int                  @id @default(autoincrement())
+  source_type             String
+  source_id               String
+  source_line_key         String               @default("main")
+  event_type              String
+  entry_type              String
+  direction               LedgerDirection
+  amount                  Decimal              @db.Decimal(12, 2)
+  currency                String               @default("EUR")
+  description             String?
+  entry_date              DateTime             @default(now())
+  status                  LedgerEntryStatus    @default(POSTED)
+  cantiere_id             Int?
+  task_id                 Int?
+  wbs_node_id             Int?
+  employee_id             Int?
+  fornitore_id            Int?
+  document_id             Int?
+  spesa_id                Int?
+  report_entry_id         Int?
+  movimento_id            Int?
+  fattura_acquisto_id     Int?
+  scadenza_pagamento_id   Int?
+  fattura_id              Int?
+  rata_id                 Int?
+  cost_category           CostCategory?
+  allocation_scope        CostAllocationScope?
+  vat_rate                Decimal?             @db.Decimal(5, 2)
+  taxable_amount          Decimal?             @db.Decimal(12, 2)
+  tax_amount              Decimal?             @db.Decimal(12, 2)
+  metadata                Json?
+  correlation_id          String?
+  created_at              DateTime             @default(now())
+  updated_at              DateTime             @updatedAt
+
+  @@unique([source_type, source_id, source_line_key, event_type], name: "ledger_entry_source_unique")
+  @@index([event_type, entry_date])
+  @@index([entry_type, entry_date])
+  @@index([cantiere_id, task_id])
+  @@index([wbs_node_id])
+  @@index([employee_id])
+  @@index([fornitore_id])
+  @@index([document_id])
+  @@index([spesa_id])
+  @@index([report_entry_id])
+  @@index([movimento_id])
+  @@index([fattura_acquisto_id])
+  @@index([scadenza_pagamento_id])
+  @@index([fattura_id])
+  @@index([cost_category, allocation_scope])
+  @@index([correlation_id])
+}
+
+model OutboxEvent {
+  id             Int          @id @default(autoincrement())
+  event_type     String
+  aggregate_type String
+  aggregate_id   String
+  payload        Json
+  status         OutboxStatus @default(PENDING)
+  attempts       Int          @default(0)
+  last_error     String?
+  correlation_id String?
+  published_at   DateTime?
+  created_at     DateTime     @default(now())
+  updated_at     DateTime     @updatedAt
+
+  @@index([status, created_at])
+  @@index([event_type])
+  @@index([aggregate_type, aggregate_id])
+  @@index([correlation_id])
+}
+
+model WorkflowTransition {
+  id                Int      @id @default(autoincrement())
+  entity_type       String
+  entity_id         String
+  action            String
+  from_state        String?
+  to_state          String?
+  actor_user_id     Int?
+  actor_employee_id Int?
+  payload           Json?
+  correlation_id    String?
+  created_at        DateTime @default(now())
+
+  @@index([entity_type, entity_id])
+  @@index([action])
+  @@index([actor_user_id])
+  @@index([actor_employee_id])
+  @@index([correlation_id])
+  @@index([created_at])
 }
 
 // ==========================================

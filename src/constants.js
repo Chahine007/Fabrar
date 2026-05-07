@@ -11,6 +11,73 @@ export const ValidationStatus = Object.freeze({
     REJECTED: 'REJECTED',
 });
 
+export const LogisticaStatus = Object.freeze({
+    NOT_REQUIRED: 'NOT_REQUIRED',
+    PENDING_OCR: 'PENDING_OCR',
+    OCR_REVIEW: 'OCR_REVIEW',
+    LOADED_TO_WAREHOUSE: 'LOADED_TO_WAREHOUSE',
+    RECONCILIATION_REQUIRED: 'RECONCILIATION_REQUIRED',
+});
+
+export const CostCategory = Object.freeze({
+    INVENTORY_MATERIAL: 'INVENTORY_MATERIAL',
+    CONSUMABLE_SUPPLY: 'CONSUMABLE_SUPPLY',
+    SERVICE: 'SERVICE',
+    LEASING_RENTAL: 'LEASING_RENTAL',
+    UTILITY: 'UTILITY',
+    INSURANCE: 'INSURANCE',
+    TAX_FEE: 'TAX_FEE',
+    PROFESSIONAL_SERVICE: 'PROFESSIONAL_SERVICE',
+    TRAVEL_VEHICLE: 'TRAVEL_VEHICLE',
+    OTHER: 'OTHER',
+    UNKNOWN: 'UNKNOWN',
+});
+
+export const CostAllocationScope = Object.freeze({
+    PROJECT: 'PROJECT',
+    OVERHEAD: 'OVERHEAD',
+    REVIEW: 'REVIEW',
+});
+
+export const PaymentDueStatus = Object.freeze({
+    OPEN: 'OPEN',
+    PAID: 'PAID',
+    CANCELLED: 'CANCELLED',
+});
+
+export const PaymentDueSource = Object.freeze({
+    OCR: 'OCR',
+    GENYA: 'GENYA',
+    MANUAL: 'MANUAL',
+});
+
+export const LedgerDirection = Object.freeze({
+    DEBIT: 'DEBIT',
+    CREDIT: 'CREDIT',
+});
+
+export const LedgerEntryStatus = Object.freeze({
+    POSTED: 'POSTED',
+    VOIDED: 'VOIDED',
+});
+
+export const OutboxStatus = Object.freeze({
+    PENDING: 'PENDING',
+    PROCESSING: 'PROCESSING',
+    PUBLISHED: 'PUBLISHED',
+    FAILED: 'FAILED',
+});
+
+export const AppRole = Object.freeze({
+    ADMIN: 'ADMIN',
+    HR: 'HR',
+    PROJECT_MANAGER: 'PROJECT_MANAGER',
+    WAREHOUSEMAN: 'WAREHOUSEMAN',
+    WORKER: 'WORKER',
+});
+
+export const APP_ROLES = Object.freeze(Object.values(AppRole));
+
 export const AUDIT_TYPE = Object.freeze({
     ORE:       'ore',
     SPESE:     'spese',

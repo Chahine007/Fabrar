@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const employeeRoles = ["WORKER", "ADMIN", "PROJECT_MANAGER", "HR"];
+const employeeRoles = ["WORKER", "ADMIN", "PROJECT_MANAGER", "HR", "WAREHOUSEMAN"];
 
 export const employeeIdSchema = z.object({
     params: z.object({

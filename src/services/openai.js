@@ -201,11 +201,30 @@ export async function extractReport(text, currentState = null) {
 const SPESA_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["importo", "fornitore", "descrizione"],
+  required: ["document_type", "importo", "fornitore", "descrizione", "righe_materiali"],
   properties: {
+    document_type: {
+      type: "string",
+      enum: ["RECEIPT", "DDT", "ACCOMPANYING_INVOICE", "UNKNOWN"],
+    },
     importo: { type: ["number", "null"] },
     fornitore: { type: ["string", "null"] },
     descrizione: { type: ["string", "null"] },
+    righe_materiali: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["codice_sku", "descrizione", "quantita", "unita_misura", "costo_unitario"],
+        properties: {
+          codice_sku: { type: ["string", "null"] },
+          descrizione: { type: ["string", "null"] },
+          quantita: { type: ["number", "null"] },
+          unita_misura: { type: ["string", "null"] },
+          costo_unitario: { type: ["number", "null"] },
+        },
+      },
+    },
   },
 };
 
@@ -218,7 +237,15 @@ export async function extractSpesaFromImage(base64Image) {
           messages: [
             {
               role: "system",
-              content: "Sei un assistente esperto nell'estrazione dati da scontrini e fatture. Estrarre in formato JSON l'importo totale (come numero libero da valute, es. 15.50), il fornitore (nome negozio) e una generica e breve descrizione degli articoli. Se l'immagine è illeggibile, non è uno scontrino o manca l'importo totale, RESTITUISCI importo: null.",
+              content: [
+                "Sei un assistente esperto nell'estrazione dati da scontrini, DDT e fatture accompagnatorie.",
+                "Classifica il documento in document_type: RECEIPT, DDT, ACCOMPANYING_INVOICE oppure UNKNOWN.",
+                "Estrai sempre importo totale, fornitore e una descrizione breve quando presenti.",
+                "Se il documento contiene righe materiali, estrai righe_materiali con codice_sku, descrizione, quantita, unita_misura e costo_unitario.",
+                "Compila codice_sku solo quando il codice articolo e' chiaramente leggibile; non inventare SKU.",
+                "Per scontrini semplici senza codici articolo, righe_materiali deve essere [].",
+                "Se l'immagine e' illeggibile o non contiene importo totale, restituisci importo: null.",
+              ].join(" "),
             },
             {
               role: "user",
@@ -241,8 +268,10 @@ export async function extractSpesaFromImage(base64Image) {
 
     const raw = completion.choices?.[0]?.message?.content || "{}";
     const parsed = JSON.parse(raw);
+    parsed.righe_materiali = Array.isArray(parsed.righe_materiali) ? parsed.righe_materiali : [];
+    const hasMaterialRows = parsed.righe_materiali.length > 0;
     
-    if (parsed.importo === null || typeof parsed.importo !== "number" || parsed.importo <= 0) {
+    if (!hasMaterialRows && (parsed.importo === null || typeof parsed.importo !== "number" || parsed.importo <= 0)) {
       throw new Error("L'immagine non sembra contenere un importo valido o chiaro.");
     }
     
@@ -251,6 +280,268 @@ export async function extractSpesaFromImage(base64Image) {
     logger.error({ err: serializeOpenAIError(err), event: "extract_spesa_failed" }, "extract_spesa_failed");
     throw err;
   }
+}
+
+const INVOICE_OCR_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "document_type",
+    "cost_category",
+    "allocation_scope",
+    "logistica_required",
+    "tipo_documento",
+    "numero_documento",
+    "data_documento",
+    "codice_destinatario",
+    "fornitore",
+    "cliente",
+    "totale_imponibile",
+    "totale_imposta",
+    "totale_documento",
+    "pagamento",
+    "righe_materiali",
+    "righe_costo",
+  ],
+  properties: {
+    document_type: {
+      type: "string",
+      enum: ["INVOICE", "DDT", "ACCOMPANYING_INVOICE", "CREDIT_NOTE", "RECEIPT", "UNKNOWN"],
+    },
+    cost_category: {
+      type: "string",
+      enum: [
+        "INVENTORY_MATERIAL",
+        "CONSUMABLE_SUPPLY",
+        "SERVICE",
+        "LEASING_RENTAL",
+        "UTILITY",
+        "INSURANCE",
+        "TAX_FEE",
+        "PROFESSIONAL_SERVICE",
+        "TRAVEL_VEHICLE",
+        "OTHER",
+        "UNKNOWN",
+      ],
+    },
+    allocation_scope: {
+      type: "string",
+      enum: ["PROJECT", "OVERHEAD", "REVIEW"],
+    },
+    logistica_required: { type: "boolean" },
+    tipo_documento: { type: ["string", "null"] },
+    numero_documento: { type: ["string", "null"] },
+    data_documento: { type: ["string", "null"] },
+    codice_destinatario: { type: ["string", "null"] },
+    fornitore: {
+      type: "object",
+      additionalProperties: false,
+      required: ["ragione_sociale", "partita_iva", "codice_fiscale", "indirizzo", "comune", "provincia", "cap"],
+      properties: {
+        ragione_sociale: { type: ["string", "null"] },
+        partita_iva: { type: ["string", "null"] },
+        codice_fiscale: { type: ["string", "null"] },
+        indirizzo: { type: ["string", "null"] },
+        comune: { type: ["string", "null"] },
+        provincia: { type: ["string", "null"] },
+        cap: { type: ["string", "null"] },
+      },
+    },
+    cliente: {
+      type: "object",
+      additionalProperties: false,
+      required: ["ragione_sociale", "partita_iva", "codice_fiscale", "indirizzo", "comune", "provincia", "cap"],
+      properties: {
+        ragione_sociale: { type: ["string", "null"] },
+        partita_iva: { type: ["string", "null"] },
+        codice_fiscale: { type: ["string", "null"] },
+        indirizzo: { type: ["string", "null"] },
+        comune: { type: ["string", "null"] },
+        provincia: { type: ["string", "null"] },
+        cap: { type: ["string", "null"] },
+      },
+    },
+    totale_imponibile: { type: ["number", "null"] },
+    totale_imposta: { type: ["number", "null"] },
+    totale_documento: { type: ["number", "null"] },
+    pagamento: {
+      type: "object",
+      additionalProperties: false,
+      required: ["modalita_pagamento", "iban", "scadenza", "importo_scadenza"],
+      properties: {
+        modalita_pagamento: { type: ["string", "null"] },
+        iban: { type: ["string", "null"] },
+        scadenza: { type: ["string", "null"] },
+        importo_scadenza: { type: ["number", "null"] },
+      },
+    },
+    righe_materiali: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "codice_articolo",
+          "descrizione",
+          "quantita",
+          "unita_misura",
+          "prezzo_unitario",
+          "iva_percentuale",
+          "prezzo_totale",
+          "cost_category",
+          "stockable",
+        ],
+        properties: {
+          codice_articolo: { type: ["string", "null"] },
+          descrizione: { type: ["string", "null"] },
+          quantita: { type: ["number", "null"] },
+          unita_misura: { type: ["string", "null"] },
+          prezzo_unitario: { type: ["number", "null"] },
+          iva_percentuale: { type: ["number", "null"] },
+          prezzo_totale: { type: ["number", "null"] },
+          cost_category: {
+            type: "string",
+            enum: [
+              "INVENTORY_MATERIAL",
+              "CONSUMABLE_SUPPLY",
+              "SERVICE",
+              "LEASING_RENTAL",
+              "UTILITY",
+              "INSURANCE",
+              "TAX_FEE",
+              "PROFESSIONAL_SERVICE",
+              "TRAVEL_VEHICLE",
+              "OTHER",
+              "UNKNOWN",
+            ],
+          },
+          stockable: { type: "boolean" },
+        },
+      },
+    },
+    righe_costo: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "descrizione",
+          "cost_category",
+          "allocation_scope",
+          "importo",
+          "iva_percentuale",
+          "quantita",
+          "unita_misura",
+          "prezzo_unitario",
+        ],
+        properties: {
+          descrizione: { type: ["string", "null"] },
+          cost_category: {
+            type: "string",
+            enum: [
+              "INVENTORY_MATERIAL",
+              "CONSUMABLE_SUPPLY",
+              "SERVICE",
+              "LEASING_RENTAL",
+              "UTILITY",
+              "INSURANCE",
+              "TAX_FEE",
+              "PROFESSIONAL_SERVICE",
+              "TRAVEL_VEHICLE",
+              "OTHER",
+              "UNKNOWN",
+            ],
+          },
+          allocation_scope: {
+            type: "string",
+            enum: ["PROJECT", "OVERHEAD", "REVIEW"],
+          },
+          importo: { type: ["number", "null"] },
+          iva_percentuale: { type: ["number", "null"] },
+          quantita: { type: ["number", "null"] },
+          unita_misura: { type: ["string", "null"] },
+          prezzo_unitario: { type: ["number", "null"] },
+        },
+      },
+    },
+  },
+};
+
+function buildInvoiceOcrUserContent(base64File, mimeType, filename = "documento") {
+  const prompt = { type: "text", text: "Estrai i dati strutturati da questa fattura/DDT." };
+  if (mimeType === "application/pdf") {
+    return [
+      prompt,
+      {
+        type: "file",
+        file: {
+          filename: filename || "documento.pdf",
+          file_data: `data:${mimeType};base64,${base64File}`,
+        },
+      },
+    ];
+  }
+
+  return [
+    prompt,
+    {
+      type: "image_url",
+      image_url: { url: `data:${mimeType};base64,${base64File}` },
+    },
+  ];
+}
+
+export async function extractInvoiceOcrFromFile(base64File, mimeType = "image/jpeg", filename = "documento") {
+  try {
+    const completion = await withRetry(
+      () =>
+        openai.chat.completions.create({
+          model: process.env.OPENAI_VISION_MODEL || "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: [
+                "Sei un assistente OCR per fatture, DDT e fatture accompagnatorie italiane.",
+                "Estrai i dati leggibili senza inventare campi mancanti.",
+                "Estrai tipo_documento come testo leggibile dalla tabella, ad esempio 'TD01 fattura'.",
+                "Usa numero_documento dal campo Numero documento e data_documento dal campo Data documento.",
+                "Estrai codice_destinatario se presente.",
+                "Classifica il costo contabile: INVENTORY_MATERIAL per materiali fisici stockabili; CONSUMABLE_SUPPLY per forniture consumabili; SERVICE per servizi generici; LEASING_RENTAL per leasing, noleggi, canoni auto o locazioni operative; UTILITY per utenze; INSURANCE per assicurazioni; TAX_FEE per tasse/diritti; PROFESSIONAL_SERVICE per consulenze; TRAVEL_VEHICLE per carburante, pedaggi, manutenzione veicoli; OTHER o UNKNOWN se non chiaro.",
+                "allocation_scope deve essere OVERHEAD per leasing, noleggi auto, utenze, assicurazioni, tasse, servizi aziendali e costi generali; PROJECT solo per costi chiaramente imputabili a un cantiere; REVIEW se serve decisione manuale.",
+                "logistica_required deve essere true solo quando il documento contiene materiali fisici da caricare in magazzino.",
+                "Nelle righe_materiali inserisci solo articoli fisici stockabili. codice_articolo deve essere compilato solo se la colonna Cod. articolo e' leggibile; non usare numeri pratica, targa, modello auto, numero rata o codici servizio come SKU.",
+                "Le righe di servizi, leasing, spese di incasso, canoni, rimborsi e costi non stockabili vanno in righe_costo, non in righe_materiali.",
+                "Per fatture di leasing/noleggio auto: cost_category LEASING_RENTAL, allocation_scope OVERHEAD, logistica_required false, righe_materiali vuoto.",
+                "I totali devono essere numeri senza simbolo valuta e con punto decimale.",
+                "Estrai anche modalita_pagamento, IBAN, scadenza e importo_scadenza quando sono presenti.",
+              ].join(" "),
+            },
+            {
+              role: "user",
+              content: buildInvoiceOcrUserContent(base64File, mimeType, filename),
+            },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "invoice_ocr_schema", schema: INVOICE_OCR_SCHEMA, strict: true },
+          },
+        }),
+      { name: "openai.extractInvoiceOcr" }
+    );
+
+    const raw = completion.choices?.[0]?.message?.content || "{}";
+    const parsed = JSON.parse(raw);
+    parsed.righe_materiali = Array.isArray(parsed.righe_materiali) ? parsed.righe_materiali : [];
+    parsed.righe_costo = Array.isArray(parsed.righe_costo) ? parsed.righe_costo : [];
+    return parsed;
+  } catch (err) {
+    logger.error({ err: serializeOpenAIError(err), event: "extract_invoice_ocr_failed" }, "extract_invoice_ocr_failed");
+    throw err;
+  }
+}
+
+export async function extractInvoiceOcrFromImage(base64Image, mimeType = "image/jpeg") {
+  return extractInvoiceOcrFromFile(base64Image, mimeType, "immagine-fattura");
 }
 
 // ─── CV TEXT PARSING ──────────────────────────────────────────

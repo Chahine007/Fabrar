@@ -30,6 +30,7 @@ import { AUDIT_TYPE, LIMITS, ValidationStatus } from "../constants.js";
 import { bulkUpdateItems } from "../domain/hr/auditService.js";
 import { domainBus, EVENTS } from "../domain/events/domainBus.js";
 import { parsePagination } from "../utils/pagination.js";
+import { writeAuditLog } from "../domain/audit/auditLogService.js";
 
 const { Prisma } = pkg;
 const MAX_DAILY_HOURS_ALERT = LIMITS.MAX_DAILY_HOURS_ALERT;
@@ -77,13 +78,25 @@ function mapAuditOreRow(entry) {
     };
 }
 
+function resolveSpesaInputMethod(spesa) {
+    const fonte = normalizeOptionalText(spesa.fonte);
+    const inputMethod = normalizeOptionalText(spesa.input_method);
+    const normalizedFonte = String(fonte ?? "").toLowerCase();
+
+    if (normalizedFonte.includes("genya") || normalizedFonte.includes("genia") || normalizedFonte.includes("import")) {
+        return fonte;
+    }
+
+    return inputMethod || fonte || "manual";
+}
+
 function mapAuditSpesaRow(spesa) {
     return {
         id: spesa.id,
         type: AUDIT_TYPE.SPESE,
         // Lowercase per uniformità col frontend (AuditStatus type)
         status: resolveSpesaStatus(spesa).toLowerCase(),
-        input_method: normalizeOptionalText(spesa.input_method) || normalizeOptionalText(spesa.fonte) || "manual",
+        input_method: resolveSpesaInputMethod(spesa),
         date: spesa.timestamp_utc,
         value: toNumber(spesa.importo),
         employee_id: spesa.employee_id,
@@ -95,6 +108,30 @@ function mapAuditSpesaRow(spesa) {
         cantiere_id:   spesa.cantiere_id || null,
         task_id: spesa.task_id ?? null,
         task_title: spesa.task?.title ?? null,
+        documento_id: spesa.documento_id ?? null,
+        documento_nome: spesa.documento?.name ?? null,
+        logistica_status: spesa.logistica_status ?? null,
+        cost_category: spesa.cost_category ?? null,
+        allocation_scope: spesa.allocation_scope ?? null,
+        fornitore_id: spesa.fornitore_id ?? null,
+        ocr_payload: spesa.ocr_payload ?? null,
+        ocr_reviewed_at: spesa.ocr_reviewed_at ?? null,
+        movimenti_magazzino_count: spesa.documento?._count?.movimenti_magazzino ?? 0,
+        fattura_acquisto_id: spesa.fattura_acquisto?.id ?? null,
+        fattura_acquisto: spesa.fattura_acquisto
+            ? {
+                id: spesa.fattura_acquisto.id,
+                numero_documento: spesa.fattura_acquisto.numero_documento,
+                data_documento: spesa.fattura_acquisto.data_documento,
+                tipo_documento: spesa.fattura_acquisto.tipo_documento,
+                totale_imponibile: toNumber(spesa.fattura_acquisto.totale_imponibile),
+                totale_imposta: toNumber(spesa.fattura_acquisto.totale_imposta),
+                totale_documento: toNumber(spesa.fattura_acquisto.totale_documento),
+                pagamento_modalita: spesa.fattura_acquisto.pagamento_modalita,
+                pagamento_scadenza: spesa.fattura_acquisto.pagamento_scadenza,
+                righe_count: spesa.fattura_acquisto._count?.righe ?? 0,
+            }
+            : null,
     };
 }
 
@@ -393,7 +430,24 @@ export const updateEmployeeCtrl = asyncHandler(async (req, res) => {
         return res.status(400).json({ error: 'Nessun campo valido fornito.' });
     }
 
-    await prisma.employee.update({ where: { id }, data });
+    await prisma.$transaction(async (tx) => {
+        await tx.employee.update({ where: { id }, data });
+        if (data.ruolo && existing.user_id) {
+            await tx.user.update({
+                where: { id: existing.user_id },
+                data: { role: data.ruolo },
+            });
+        }
+        if (data.ruolo && data.ruolo !== existing.ruolo) {
+            await writeAuditLog(tx, req.user, {
+                entityType: "Employee",
+                entityId: id,
+                action: "EMPLOYEE_ROLE_CHANGED",
+                previousState: { ruolo: existing.ruolo, user_id: existing.user_id ?? null },
+                nextState: { ruolo: data.ruolo, user_id: existing.user_id ?? null },
+            });
+        }
+    });
 
     res.json({ ok: true, updated: Object.keys(data) });
 });
@@ -445,7 +499,7 @@ export const getUserKpi = asyncHandler(async (req, res) => {
 
 export const getAudit = asyncHandler(async (req, res) => {
     const prisma = getDb();
-    const { type, status, employee_id, cantiere_id, from, to } = req.query; // Validati da Zod
+    const { type, status, employee_id, cantiere_id, from, to, cost_category, allocation_scope } = req.query; // Validati da Zod
     const { limit, offset } = parsePagination(req.query, { defaultLimit: 200, maxLimit: 500 });
     const pageWindow = limit + offset;
 
@@ -502,6 +556,8 @@ export const getAudit = asyncHandler(async (req, res) => {
                 ...(employeeId  ? { employee_id: employeeId }  : {}),
                 ...(cantiereId  ? { cantiere_id: cantiereId }  : {}),
                 ...(statusValue ? { stato_validazione: statusValue } : {}),
+                ...(cost_category ? { cost_category: String(cost_category).toUpperCase() } : {}),
+                ...(allocation_scope ? { allocation_scope: String(allocation_scope).toUpperCase() } : {}),
                 ...((fromDate || toDate) ? {
                     timestamp_utc: {
                         ...(fromDate ? { gte: fromDate } : {}),
@@ -513,6 +569,27 @@ export const getAudit = asyncHandler(async (req, res) => {
                 employee: { select: { nome: true, cognome: true } },
                 cantiere: { select: { nome: true } },
                 task: { select: { id: true, title: true } },
+                documento: {
+                    select: {
+                        id: true,
+                        name: true,
+                        _count: { select: { movimenti_magazzino: true } },
+                    },
+                },
+                fattura_acquisto: {
+                    select: {
+                        id: true,
+                        numero_documento: true,
+                        data_documento: true,
+                        tipo_documento: true,
+                        totale_imponibile: true,
+                        totale_imposta: true,
+                        totale_documento: true,
+                        pagamento_modalita: true,
+                        pagamento_scadenza: true,
+                        _count: { select: { righe: true } },
+                    },
+                },
             },
             orderBy: [{ timestamp_utc: "desc" }, { id: "desc" }],
             take: pageWindow,
@@ -527,7 +604,7 @@ export const getAudit = asyncHandler(async (req, res) => {
 
 export const bulkUpdateAudit = asyncHandler(async (req, res) => {
     const prisma = getDb();
-    const count  = await bulkUpdateItems(prisma, req.body);
+    const count  = await bulkUpdateItems(prisma, req.body, req.user);
     res.json({ success: true, count });
 });
 
@@ -610,7 +687,22 @@ export const updateSpesaCtrl = asyncHandler(async (req, res) => {
         data.stato_validazione = normalizeStatus(data.status);
         delete data.status; // status column removed from schema
     }
+    const prisma = getDb();
+    const existing = await prisma.spesa.findUnique({
+        where: { id: spesaId },
+        select: { stato_validazione: true, cantiere_id: true },
+    });
     await dbUpdateSpesa(spesaId, data);
+    await writeAuditLog(prisma, req.user, {
+        entityType: "Spesa",
+        entityId: spesaId,
+        action: "SPESA_UPDATED",
+        previousState: existing,
+        nextState: data,
+    });
+    if (data.stato_validazione === ValidationStatus.APPROVED) {
+        domainBus.emit(EVENTS.SPESA_VERIFIED, { spesaId, cantiereId: existing?.cantiere_id ?? null });
+    }
     res.json({ success: true });
 });
 
@@ -626,7 +718,7 @@ export const listReportsCtrl = asyncHandler(async (req, res) => {
 });
 
 export const getAuditLogsCtrl = asyncHandler(async (req, res) => {
-    const rows = await dbGetAuditLogs();
+    const rows = await dbGetAuditLogs(req.query);
     res.json(rows);
 });
 

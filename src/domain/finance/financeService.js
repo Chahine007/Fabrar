@@ -1,7 +1,8 @@
 import pkg from "@prisma/client";
 import { getDb } from "../../db/index.js";
-import { ValidationStatus } from "../../constants.js";
-import { round2, toNumber } from "../../utils/helpers.js";
+import { CostAllocationScope, LogisticaStatus, ValidationStatus } from "../../constants.js";
+import { getMonthKey, round2, toNumber } from "../../utils/helpers.js";
+import { calculateLedgerTrueCost } from "./ledgerService.js";
 
 const { Prisma } = pkg;
 
@@ -34,6 +35,18 @@ function buildMoneyMap(rows, getAmount) {
   return map;
 }
 
+function buildSummedMoneyMap(rows, getKey, getAmount) {
+  const map = new Map();
+
+  for (const row of rows ?? []) {
+    const key = parseOptionalId(getKey(row));
+    if (!key) continue;
+    map.set(key, round2((map.get(key) ?? 0) + toNumber(getAmount(row))));
+  }
+
+  return map;
+}
+
 function buildKeyedMoneyMap(rows, keyName, getAmount) {
   const map = new Map();
 
@@ -50,6 +63,21 @@ function buildContractTotal(cantiere) {
   return round2(toNumber(cantiere?.valore_contratto ?? cantiere?.budget));
 }
 
+function buildApprovedExpenseCostWhere(baseWhere = {}) {
+  return {
+    ...baseWhere,
+    stato_validazione: ValidationStatus.APPROVED,
+    allocation_scope: CostAllocationScope.PROJECT,
+    OR: [{ fonte: null }, { fonte: { not: "MAGAZZINO" } }],
+    NOT: {
+      AND: [
+        { fonte: "IMPORT_GENYA" },
+        { logistica_status: LogisticaStatus.LOADED_TO_WAREHOUSE },
+      ],
+    },
+  };
+}
+
 export function buildMultiProjectFinancialsMap(
   cantieri,
   {
@@ -64,7 +92,11 @@ export function buildMultiProjectFinancialsMap(
   const materialMap = buildMoneyMap(materialRows, (row) => row._sum?.valore_totale);
   const expenseMap = buildMoneyMap(expenseRows, (row) => row._sum?.importo);
   const billedMap = buildMoneyMap(billedRows, (row) => row._sum?.importo_totale);
-  const collectedMap = buildMoneyMap(collectedRows, (row) => row._sum?.importo_totale);
+  const collectedMap = buildSummedMoneyMap(
+    collectedRows,
+    (row) => row.cantiere_id,
+    (row) => row.paid_amount ?? row.importo_totale ?? row._sum?.importo_totale
+  );
 
   return Object.fromEntries(
     (cantieri ?? []).map((cantiere) => {
@@ -139,6 +171,30 @@ async function getMultiProjectLaborCosts(prismaClient, cantiereIds) {
   );
 }
 
+async function getPaidInvoiceRows(prismaClient, cantiereIds) {
+  const where = {
+    cantiere_id: { in: cantiereIds },
+    stato: "PAID",
+  };
+
+  if (typeof prismaClient.fattura.findMany === "function") {
+    return prismaClient.fattura.findMany({
+      where,
+      select: {
+        cantiere_id: true,
+        importo_totale: true,
+        paid_amount: true,
+      },
+    });
+  }
+
+  return prismaClient.fattura.groupBy({
+    by: ["cantiere_id"],
+    where,
+    _sum: { importo_totale: true },
+  });
+}
+
 export async function getMultiProjectFinancials(prismaClient, cantiereIds, baseCantieri = null) {
   const normalizedIds = [...new Set((cantiereIds ?? []).map(parseOptionalId).filter(Boolean))];
   if (normalizedIds.length === 0) return {};
@@ -165,11 +221,9 @@ export async function getMultiProjectFinancials(prismaClient, cantiereIds, baseC
     }),
     prismaClient.spesa.groupBy({
       by: ["cantiere_id"],
-      where: {
+      where: buildApprovedExpenseCostWhere({
         cantiere_id: { in: normalizedIds },
-        stato_validazione: ValidationStatus.APPROVED,
-        OR: [{ fonte: null }, { fonte: { not: "MAGAZZINO" } }],
-      },
+      }),
       _sum: { importo: true },
     }),
     prismaClient.fattura.groupBy({
@@ -180,14 +234,7 @@ export async function getMultiProjectFinancials(prismaClient, cantiereIds, baseC
       },
       _sum: { importo_totale: true },
     }),
-    prismaClient.fattura.groupBy({
-      by: ["cantiere_id"],
-      where: {
-        cantiere_id: { in: normalizedIds },
-        stato: "PAID",
-      },
-      _sum: { importo_totale: true },
-    }),
+    getPaidInvoiceRows(prismaClient, normalizedIds),
   ]);
 
   return buildMultiProjectFinancialsMap(cantieri, {
@@ -216,18 +263,35 @@ async function getProjectBillingSummary(prisma, cantiereId) {
       },
       _sum: { importo_totale: true },
     }),
-    prisma.fattura.aggregate({
-      where: {
-        cantiere_id: cantiereId,
-        stato: "PAID",
-      },
-      _sum: { importo_totale: true },
-    }),
+    typeof prisma.fattura.findMany === "function"
+      ? prisma.fattura.findMany({
+          where: {
+            cantiere_id: cantiereId,
+            stato: "PAID",
+          },
+          select: {
+            importo_totale: true,
+            paid_amount: true,
+          },
+        })
+      : prisma.fattura.groupBy({
+          by: ["cantiere_id"],
+          where: {
+            cantiere_id: cantiereId,
+            stato: "PAID",
+          },
+          _sum: { importo_totale: true },
+        }),
   ]);
 
   const totaleContratto = round2(toNumber(cantiere?.valore_contratto ?? cantiere?.budget));
   const totaleFatturato = round2(toNumber(billedAgg._sum.importo_totale));
-  const totaleIncassato = round2(toNumber(collectedAgg._sum.importo_totale));
+  const totaleIncassato = round2(
+    collectedAgg.reduce(
+      (sum, invoice) => sum + toNumber(invoice.paid_amount ?? invoice.importo_totale ?? invoice._sum?.importo_totale),
+      0
+    )
+  );
 
   return {
     totaleContratto,
@@ -236,6 +300,102 @@ async function getProjectBillingSummary(prisma, cantiereId) {
     ricaviFatturati: totaleFatturato,
     ricaviReali: totaleIncassato,
     daFatturare: round2(totaleContratto - totaleFatturato),
+  };
+}
+
+export async function getProjectFinancialTimeline(cantiere_id, prisma = getDb()) {
+  const cantiereId = parseOptionalId(cantiere_id);
+  if (!cantiereId) {
+    throw new Error("cantiere_id non valido per la timeline finanziaria.");
+  }
+
+  const [cantiere, entries, movements, spese] = await Promise.all([
+    prisma.cantiere.findUnique({
+      where: { id: cantiereId },
+      select: {
+        id: true,
+        nome: true,
+        budget: true,
+        valore_contratto: true,
+        raggio_tolleranza: true,
+      },
+    }),
+    prisma.reportEntry.findMany({
+      where: {
+        cantiere_id: cantiereId,
+        stato_validazione: ValidationStatus.APPROVED,
+      },
+      select: {
+        ore_lavorate: true,
+        report: {
+          select: {
+            report_date: true,
+            employee: {
+              select: {
+                tariffe: {
+                  orderBy: { valido_dal: "desc" },
+                  take: 1,
+                  select: { costo_orario: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+    prisma.movimentoMagazzino.findMany({
+      where: {
+        cantiere_id: cantiereId,
+        tipo_movimento: "SCARICO_CANTIERE",
+      },
+      select: {
+        data_movimento: true,
+        valore_totale: true,
+      },
+    }),
+    prisma.spesa.findMany({
+      where: buildApprovedExpenseCostWhere({ cantiere_id: cantiereId }),
+      select: {
+        timestamp_utc: true,
+        importo: true,
+      },
+    }),
+  ]);
+
+  if (!cantiere) return null;
+
+  const costsByMonth = new Map();
+  const addCost = (date, value) => {
+    const month = getMonthKey(date);
+    if (!month) return;
+    costsByMonth.set(month, round2((costsByMonth.get(month) ?? 0) + toNumber(value)));
+  };
+
+  for (const entry of entries) {
+    addCost(entry.report?.report_date, toNumber(entry.ore_lavorate) * getEntryHourlyCost(entry));
+  }
+  for (const movement of movements) {
+    addCost(movement.data_movimento, movement.valore_totale);
+  }
+  for (const spesa of spese) {
+    addCost(spesa.timestamp_utc, spesa.importo);
+  }
+
+  const months = [...costsByMonth.keys()].sort();
+  const costoPerMese = months.map((month) => round2(costsByMonth.get(month) ?? 0));
+  let running = 0;
+  const costoReale = costoPerMese.map((value) => {
+    running = round2(running + value);
+    return running;
+  });
+
+  return {
+    nome: cantiere.nome,
+    budget: buildContractTotal(cantiere),
+    raggio_tolleranza: cantiere.raggio_tolleranza || 300,
+    months,
+    costoReale,
+    costoPerMese,
   };
 }
 
@@ -252,6 +412,11 @@ export async function calculateTrueCost(cantiere_id, task_id = null) {
 
   if (!cantiereId) {
     throw new Error("cantiere_id non valido per il calcolo costi.");
+  }
+
+  if (process.env.FINANCE_USE_LEDGER === "true") {
+    const ledgerCosts = await calculateLedgerTrueCost(prisma, cantiereId, taskId);
+    if (ledgerCosts) return ledgerCosts;
   }
 
   const baseWhere = buildCostWhere(cantiereId, taskId);
@@ -287,11 +452,9 @@ export async function calculateTrueCost(cantiere_id, task_id = null) {
       _sum: { valore_totale: true },
     }),
     prisma.spesa.aggregate({
-      where: {
+      where: buildApprovedExpenseCostWhere({
         ...baseWhere,
-        stato_validazione: ValidationStatus.APPROVED,
-        OR: [{ fonte: null }, { fonte: { not: "MAGAZZINO" } }],
-      },
+      }),
       _sum: { importo: true },
     }),
   ]);
@@ -363,12 +526,10 @@ export async function getTaskCostsMap(cantiere_id, taskIds, prismaClient = getDb
     }),
     prismaClient.spesa.groupBy({
       by: ["task_id"],
-      where: {
+      where: buildApprovedExpenseCostWhere({
         cantiere_id: cantiereId,
         task_id: { in: normalizedTaskIds },
-        stato_validazione: ValidationStatus.APPROVED,
-        OR: [{ fonte: null }, { fonte: { not: "MAGAZZINO" } }],
-      },
+      }),
       _sum: { importo: true },
     }),
   ]);

@@ -90,7 +90,7 @@ export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Re
 
   if (res.status === 401) {
     clearToken();
-    window.location.reload();
+    window.dispatchEvent(new CustomEvent('auth:expired'));
   }
 
   return res;

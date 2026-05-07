@@ -5,7 +5,9 @@ import crypto from "crypto";
 import { DateTime } from "luxon";
 import logger from "../logger.js";
 import {
+  getDb,
   findEmployeeByTelegramId,
+  findReportForDate,
   updateEmployee,
   insertMessageLog,
   cantiereExists,
@@ -19,13 +21,14 @@ import {
   updateReportHeader,
 } from "../db/index.js";
 import { tgSendMessage, tgGetFile, tgDownloadFile, tgEditMessageText, tgAnswerCallbackQuery } from "./telegram.js";
-import { transcribeAudio, extractReport, extractSpesaFromImage, getOpenAIUserFacingMessage } from "./openai.js";
+import { transcribeAudio, extractReport, getOpenAIUserFacingMessage } from "./openai.js";
 import { maybeConvertToWav } from "./audio.js";
 import { calculateDistance } from "../utils/geo.js";
 import { handleGdprAccept, sendGdprNotice } from "./registration.js";
 import { handleReport, saveManualReportRows, buildConfirmMessage, calcOreFromOrari, buildWbsKeyboard } from "./reportHandler.js";
 
-import { handleExpensePhoto, consumePendingExpense } from "./expenseHandler.js";
+import { handleExpensePhoto, consumePendingExpense, consumePendingWarehouseLoad } from "./expenseHandler.js";
+import { confirmSpesaOcr } from "../domain/logistica/speseOcrService.js";
 import { SECURITY, ValidationStatus } from "../constants.js";
 
 const log = logger.child({ module: "bot" });
@@ -120,6 +123,17 @@ function localReportDate(offsetDays = 0) {
   return DateTime.now().setZone(TIMEZONE).plus({ days: offsetDays }).toFormat("yyyy-LL-dd");
 }
 
+async function deleteReportForDate(employeeId, reportDate) {
+  if (!employeeId || !reportDate) return false;
+
+  const report = await findReportForDate(employeeId, reportDate);
+  if (!report) return false;
+
+  const prisma = await getDb();
+  await prisma.report.delete({ where: { id: report.id } });
+  return true;
+}
+
 async function writeStreamToFile(stream, filePath) {
   await new Promise((resolve, reject) => {
     const writer = fs.createWriteStream(filePath);
@@ -184,6 +198,61 @@ export async function handleCallbackQuery(cq) {
     } catch (err) {
       log.error({ err, event: "insert_spesa_failed" }, "insert_spesa_failed");
       await tgAnswerCallbackQuery(cq.id, "Errore durante il salvataggio.");
+    }
+    return;
+  }
+
+  if (data.startsWith("carico:")) {
+    const [, sessionId, action] = data.split(":");
+    if (!sessionId || !action) return;
+
+    const warehouseData = await consumePendingWarehouseLoad(sessionId);
+    if (!warehouseData) {
+      await tgAnswerCallbackQuery(cq.id, "Sessione scaduta o già gestita.");
+      await tgEditMessageText(chatId, messageId, "⌛ Carico magazzino: sessione scaduta.");
+      return;
+    }
+
+    if (action === "no") {
+      await tgEditMessageText(chatId, messageId, "Carico annullato. Nessuna spesa o movimento di magazzino è stato creato.");
+      await tgAnswerCallbackQuery(cq.id, "Carico annullato.");
+      return;
+    }
+
+    if (action !== "ok") return;
+    if (!employee.user_id) {
+      await tgAnswerCallbackQuery(cq.id, "Utente web non collegato.");
+      await tgEditMessageText(chatId, messageId, "Impossibile registrare il carico: il dipendente non è collegato a un utente web.");
+      return;
+    }
+
+    try {
+      const prisma = getDb();
+      const linkedUser = await prisma.user.findUnique({
+        where: { id: employee.user_id },
+        select: { role: true },
+      });
+      const result = await confirmSpesaOcr(prisma, {
+        spesaId: warehouseData.spesa_id,
+        documentId: warehouseData.document_id ?? null,
+        lines: warehouseData.righe_materiali ?? warehouseData.ocr_payload?.righe_materiali ?? [],
+        user: {
+          id: employee.user_id,
+          employee_id: employee.id,
+          role: linkedUser?.role ?? employee.ruolo,
+        },
+      });
+
+      await tgEditMessageText(
+        chatId,
+        messageId,
+        `✅ Carico magazzino registrato.\nRighe caricate: ${result.movimentiCaricoCreati}\nArticoli creati: ${result.articoliCreati}\nDa riconciliare: ${result.righeDaRiconciliare}`
+      );
+      await tgAnswerCallbackQuery(cq.id, "Carico registrato.");
+    } catch (err) {
+      log.error({ err, event: "telegram_warehouse_load_failed" }, "telegram_warehouse_load_failed");
+      await tgAnswerCallbackQuery(cq.id, "Errore carico magazzino.");
+      await tgEditMessageText(chatId, messageId, "Errore durante la registrazione del carico magazzino.");
     }
     return;
   }
@@ -253,8 +322,10 @@ export async function handleCallbackQuery(cq) {
     await tgEditMessageText(chatId, messageId, msg);
     await tgAnswerCallbackQuery(cq.id, "Salvato con successo!");
   } else if (data === "cancel") {
+    const reportDate = employee.pending_report_date || localReportDate();
+    await deleteReportForDate(employee.id, reportDate);
     await updateEmployee(employee.id, { pending_json: null, pending_text: null, pending_date: null, pending_report_date: null });
-    await tgEditMessageText(chatId, messageId, "❌ Bozza annullata. Invia un nuovo messaggio per ricominciare.");
+    await tgEditMessageText(chatId, messageId, "❌ Bozza annullata. Report eliminato. Invia un nuovo messaggio per ricominciare.");
     await tgAnswerCallbackQuery(cq.id, "Annullato.");
   }
 }
@@ -276,8 +347,12 @@ export async function handleTelegramUpdate(update) {
     await tgSendMessage(chatId, "⛔ Questo tipo di messaggio non è supportato. Inviami testo, nota vocale o la foto di uno scontrino.");
     return;
   }
-  if (message.document && !message.voice) {
-    await tgSendMessage(chatId, "⛔ I documenti non sono supportati. Inviami testo o nota vocale.");
+  const isOcrDocument = Boolean(message.document && (
+    String(message.document.mime_type ?? "").startsWith("image/")
+    || message.document.mime_type === "application/pdf"
+  ));
+  if (message.document && !message.voice && !isOcrDocument) {
+    await tgSendMessage(chatId, "⛔ Documento non supportato. Inviami testo, nota vocale, foto o una fattura/DDT immagine.");
     return;
   }
 
@@ -341,8 +416,10 @@ export async function handleTelegramUpdate(update) {
   await updateEmployee(employee.id, { chat_id: chatId });
 
   if (isCancel(text)) {
+    const reportDate = employee.pending_report_date || localReportDate();
+    await deleteReportForDate(employee.id, reportDate);
     await updateEmployee(employee.id, { pending_json: null, pending_text: null, pending_date: null, pending_report_date: null });
-    await tgSendMessage(chatId, "ℹ️ Operazione annullata. Sono pronto a ricevere il report di oggi.");
+    await tgSendMessage(chatId, "ℹ️ Operazione annullata. Report eliminato. Sono pronto a ricevere il report di oggi.");
     return;
   }
 
@@ -381,14 +458,17 @@ export async function handleTelegramUpdate(update) {
   // ── F9: Comando /imposta_gps — solo admin/PM verificati via tabella User ──
   if (text.toLowerCase() === '/imposta_gps') {
     const { getDb } = await import('../db/index.js');
-    const adminUser = await getDb().user.findFirst({
+    const authorizedEmployee = await getDb().employee.findFirst({
       where: {
-        employee_id: employee.id,
-        is_active:   1,
-        role:        { in: ['ADMIN', 'EXTERNAL_PM'] },
+        id: employee.id,
+        user: {
+          is_active: 1,
+          role: { in: ['ADMIN', 'PROJECT_MANAGER'] },
+        },
       },
+      select: { id: true },
     });
-    if (!adminUser) {
+    if (!authorizedEmployee) {
       await tgSendMessage(chatId, '\u26d4 Comando riservato agli amministratori e ai Project Manager.');
       return;
     }
@@ -553,6 +633,12 @@ export async function handleTelegramUpdate(update) {
     await sendStatus("🖼️ Foto ricevuta. Elaborazione in corso...");
     await handleExpensePhoto(message, employee, sendStatus, statusMsgId);
 
+    return;
+  }
+
+  if (isOcrDocument) {
+    await sendStatus("📎 Documento ricevuto. Elaborazione in corso...");
+    await handleExpensePhoto(message, employee, sendStatus, statusMsgId);
     return;
   }
 }

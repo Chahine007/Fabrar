@@ -7,47 +7,142 @@
  *   - Tabella Audit unificata (ore + spese da bot) con filtri e azioni inline
  *   - Tab "Log Grezzi" per vedere i raw text ricevuti dal bot
  */
-import React, { useState, useMemo } from 'react';
+import React, { useDeferredValue, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
-  Bot, Clock, Banknote, MapPin, RefreshCw, Download,
-  CheckCircle2, XCircle, Search, Filter, Mic, Camera, MessageCircle,
-  ChevronDown, ChevronUp, Eye, Loader2,
+  AlertTriangle,
+  Banknote,
+  Bot,
+  Braces,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Download,
+  Eye,
+  Filter,
+  Loader2,
+  MapPin,
+  MessageCircle,
+  RefreshCw,
+  Search,
+  Users,
+  XCircle,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { useTelegramFeed, useApproveTelegramEntry } from '../hooks/api/useTelegramAudit';
+import {
+  useTelegramFeed,
+  useApproveTelegramEntry,
+  type MessageLogEntry,
+} from '../hooks/api/useTelegramAudit';
 import { useExportCsv } from '../hooks/api/useHr';
-import type { AuditEntry, AuditStatus } from '../hooks/api/useHr';
+import type { AuditEntry, AuditStatus, AuditType } from '../hooks/api/useHr';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import { useToast } from '../components/ui';
-
-// ─── Types & helpers ──────────────────────────────────────────────────────────
+import MethodBadge from '../components/ui/MethodBadge';
 
 type TypeFilter = 'tutti' | 'ore' | 'spese';
-type StatusFilter = 'tutti' | 'pending' | 'verified' | 'rejected';
+type StatusFilter = 'tutti' | 'pending' | 'approved' | 'rejected';
 
-function getMethodBadge(method: string): { label: string; icon: React.ElementType; cls: string } {
-  const m = (method ?? '').toLowerCase();
-  if (m.includes('audio') || m.includes('voice'))
-    return { label: 'Vocale',  icon: Mic,     cls: 'bg-warning-bg text-warning-text border-warning-border' };
-  if (m.includes('ocr') || m.includes('foto') || m.includes('photo'))
-    return { label: 'Foto OCR', icon: Camera,  cls: 'bg-indigo-900/30 text-indigo-400 border-indigo-700/40' };
-  if (m.includes('gps'))
-    return { label: 'GPS',     icon: MapPin,   cls: 'bg-info-bg text-info-text border-info-border' };
-  if (m.includes('testo') || m.includes('text'))
-    return { label: 'Testo',   icon: MessageCircle, cls: 'bg-success-bg text-success-text border-success-border' };
-  return { label: method || 'N/D', icon: Bot, cls: 'bg-background text-text-secondary border-border' };
+type EnrichedLogEntry = MessageLogEntry & {
+  parsedJson: unknown | null;
+  hasInvalidJson: boolean;
+  previewTruncated: boolean;
+  isUnknownEmployee: boolean;
+};
+
+type EmployeeLogGroup = {
+  key: string;
+  employeeId: number;
+  employeeLabel: string;
+  employeeName: string | null;
+  latestTime: number;
+  logs: EnrichedLogEntry[];
+  anomalyCount: number;
+};
+
+type DayLogGroup = {
+  dayKey: string;
+  dayLabel: string;
+  latestTime: number;
+  totalLogs: number;
+  groups: EmployeeLogGroup[];
+};
+
+function safeNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
-// ─── KPI Strip ────────────────────────────────────────────────────────────────
+function safeTime(value: unknown) {
+  const parsed = new Date(String(value ?? '')).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatAuditDate(value: unknown) {
+  const time = safeTime(value);
+  return time ? new Date(time).toLocaleDateString('it-IT') : '—';
+}
+
+function formatAuditValue(entry: AuditEntry) {
+  const value = safeNumber(entry.value);
+  return entry.type === 'ore' ? `${value}h` : `€${value.toLocaleString('it-IT')}`;
+}
+
+function auditKey(entry: Pick<AuditEntry, 'type' | 'id'>) {
+  return `${entry.type}:${entry.id}`;
+}
+
+function toAuditMutationItem(entry: Pick<AuditEntry, 'id' | 'type'>, newStatus: 'APPROVED' | 'REJECTED') {
+  return { id: entry.id, type: entry.type as AuditType, newStatus };
+}
+
+function formatDayLabel(dayKey: string) {
+  const time = safeTime(`${dayKey}T00:00:00`);
+  return time
+    ? new Date(time).toLocaleDateString('it-IT', {
+        weekday: 'long',
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric',
+      })
+    : dayKey;
+}
+
+function formatLogTime(value: string) {
+  const time = safeTime(value);
+  return time
+    ? new Date(time).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+    : '—';
+}
+
+function safeParseLogJson(rawJson: string | null) {
+  if (!rawJson || !rawJson.trim()) {
+    return { parsedJson: null, hasInvalidJson: false };
+  }
+
+  try {
+    return { parsedJson: JSON.parse(rawJson), hasInvalidJson: false };
+  } catch {
+    return { parsedJson: rawJson, hasInvalidJson: true };
+  }
+}
+
+function getLogAnomalyCount(log: EnrichedLogEntry) {
+  let count = 0;
+  if (log.isUnknownEmployee) count += 1;
+  if (log.hasInvalidJson) count += 1;
+  if (log.previewTruncated) count += 1;
+  return count;
+}
 
 const KpiStrip = ({ feed, isLoading }: { feed: AuditEntry[]; isLoading: boolean }) => {
   const today = new Date().toISOString().slice(0, 10);
 
   const todayFeed   = feed.filter(e => e.date?.startsWith(today));
-  const oreTotal    = feed.filter(e => e.type === 'ore').reduce((s, e) => s + e.value, 0);
-  const speseTotal  = feed.filter(e => e.type === 'spese').reduce((s, e) => s + e.value, 0);
+  const oreTotal    = feed.filter(e => e.type === 'ore').reduce((s, e) => s + safeNumber(e.value), 0);
+  const speseTotal  = feed.filter(e => e.type === 'spese').reduce((s, e) => s + safeNumber(e.value), 0);
   const gpsCount    = feed.filter(e => (e.input_method ?? '').toLowerCase().includes('gps')).length;
 
   const items = [
@@ -78,19 +173,16 @@ const KpiStrip = ({ feed, isLoading }: { feed: AuditEntry[]; isLoading: boolean 
   );
 };
 
-// ─── Status Badge ─────────────────────────────────────────────────────────────
-
 const StatusBadge = ({ status }: { status: AuditStatus }) => {
   const map: Record<AuditStatus, { label: string; cls: string }> = {
     pending:  { label: '⏳ In Attesa', cls: 'bg-warning-bg text-warning-text border border-warning-border' },
+    approved: { label: '✅ Approvato', cls: 'bg-success-bg text-success-text border border-success-border' },
     verified: { label: '✅ Approvato', cls: 'bg-success-bg text-success-text border border-success-border' },
     rejected: { label: '❌ Rifiutato', cls: 'bg-danger-bg text-danger-text border border-danger-border' },
   };
   const s = map[status] ?? { label: status, cls: 'bg-background text-text-secondary' };
   return <span className={cn('px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap', s.cls)}>{s.label}</span>;
 };
-
-// ─── Table Section ────────────────────────────────────────────────────────────
 
 const AuditTable = ({
   feed, isLoading, error, refetch,
@@ -105,7 +197,7 @@ const AuditTable = ({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('tutti');
   const [sortField, setSortField]    = useState<'date' | 'value'>('date');
   const [sortDir, setSortDir]        = useState<'asc' | 'desc'>('desc');
-  const [selected, setSelected]      = useState<Set<number>>(new Set());
+  const [selected, setSelected]      = useState<Set<string>>(new Set());
 
   const approveMut = useApproveTelegramEntry();
 
@@ -122,13 +214,16 @@ const AuditTable = ({
       );
     }
     return [...data].sort((a, b) => {
-      const av = sortField === 'date' ? new Date(a.date).getTime() : a.value;
-      const bv = sortField === 'date' ? new Date(b.date).getTime() : b.value;
+      const av = sortField === 'date' ? safeTime(a.date) : safeNumber(a.value);
+      const bv = sortField === 'date' ? safeTime(b.date) : safeNumber(b.value);
       return sortDir === 'asc' ? av - bv : bv - av;
     });
   }, [feed, typeFilter, statusFilter, search, sortField, sortDir]);
 
   const pendingFiltered = filtered.filter(e => e.status === 'pending');
+  const pendingKeys = pendingFiltered.map(auditKey);
+  const selectedEntries = filtered.filter(entry => selected.has(auditKey(entry)));
+  const allPendingSelected = pendingKeys.length > 0 && pendingKeys.every(key => selected.has(key));
 
   const toggleSort = (field: 'date' | 'value') => {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -140,26 +235,32 @@ const AuditTable = ({
     return sortDir === 'asc' ? <ChevronUp size={13} /> : <ChevronDown size={13} />;
   };
 
-  const handleBulkAction = async (action: 'verify' | 'reject') => {
-    if (selected.size === 0) return;
-    await approveMut.mutateAsync({ ids: Array.from(selected), action });
+  const handleBulkAction = async (newStatus: 'APPROVED' | 'REJECTED') => {
+    if (selectedEntries.length === 0) return;
+    await approveMut.mutateAsync({ items: selectedEntries.map(entry => toAuditMutationItem(entry, newStatus)) });
     setSelected(new Set());
   };
 
-  const toggleSelect = (id: number) => {
+  const toggleSelect = (entry: AuditEntry) => {
     setSelected(prev => {
       const s = new Set(prev);
-      s.has(id) ? s.delete(id) : s.add(id);
+      const key = auditKey(entry);
+      s.has(key) ? s.delete(key) : s.add(key);
       return s;
+    });
+  };
+
+  const toggleAllPending = () => {
+    setSelected(prev => {
+      if (allPendingSelected) return new Set([...prev].filter(key => !pendingKeys.includes(key)));
+      return new Set([...prev, ...pendingKeys]);
     });
   };
 
   return (
     <div className="bg-card border border-border rounded-2xl overflow-hidden">
-      {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-5 border-b border-border">
         <div className="flex items-center gap-3 flex-wrap">
-          {/* Search */}
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
             <input
@@ -171,7 +272,6 @@ const AuditTable = ({
             />
           </div>
 
-          {/* Type Filter */}
           <div className="flex items-center gap-1 bg-background border border-border rounded-xl p-1">
             {(['tutti', 'ore', 'spese'] as TypeFilter[]).map(f => (
               <button
@@ -186,9 +286,8 @@ const AuditTable = ({
             ))}
           </div>
 
-          {/* Status Filter */}
           <div className="flex items-center gap-1 bg-background border border-border rounded-xl p-1">
-            {(['tutti', 'pending', 'verified', 'rejected'] as StatusFilter[]).map(f => (
+            {(['tutti', 'pending', 'approved', 'rejected'] as StatusFilter[]).map(f => (
               <button
                 key={f}
                 onClick={() => setStatusFilter(f)}
@@ -196,31 +295,30 @@ const AuditTable = ({
                   statusFilter === f ? 'bg-card text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary'
                 )}
               >
-                {f === 'pending' ? 'In Attesa' : f === 'verified' ? 'Approvati' : f === 'rejected' ? 'Rifiutati' : 'Tutti'}
+                {f === 'pending' ? 'In Attesa' : f === 'approved' ? 'Approvati' : f === 'rejected' ? 'Rifiutati' : 'Tutti'}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Bulk Actions */}
         <div className="flex items-center gap-2">
-          {selected.size > 0 && (
+          {selectedEntries.length > 0 && (
             <>
               <motion.button
                 initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
-                onClick={() => handleBulkAction('verify')}
+                onClick={() => handleBulkAction('APPROVED')}
                 disabled={approveMut.isPending}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-white text-sm font-bold shadow-lg shadow-accent/20 hover:bg-accent/90 transition-all disabled:opacity-50"
               >
-                <CheckCircle2 size={14} /> Approva {selected.size}{approveMut.isPending && ' …'}
+                <CheckCircle2 size={14} /> Approva {selectedEntries.length}{approveMut.isPending && ' …'}
               </motion.button>
               <motion.button
                 initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
-                onClick={() => handleBulkAction('reject')}
+                onClick={() => handleBulkAction('REJECTED')}
                 disabled={approveMut.isPending}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-danger-bg text-danger-text border border-danger-border text-sm font-bold hover:opacity-80 transition-all disabled:opacity-50"
               >
-                <XCircle size={14} /> Rifiuta {selected.size}
+                <XCircle size={14} /> Rifiuta {selectedEntries.length}
               </motion.button>
             </>
           )}
@@ -230,7 +328,6 @@ const AuditTable = ({
         </div>
       </div>
 
-      {/* Table */}
       <div className="overflow-x-auto">
         {isLoading ? (
           <div className="py-16 flex justify-center">
@@ -246,11 +343,8 @@ const AuditTable = ({
                   <input
                     type="checkbox"
                     className="accent-accent"
-                    checked={selected.size === pendingFiltered.length && pendingFiltered.length > 0}
-                    onChange={() => {
-                      if (selected.size === pendingFiltered.length) setSelected(new Set());
-                      else setSelected(new Set(pendingFiltered.map(e => e.id)));
-                    }}
+                    checked={allPendingSelected}
+                    onChange={toggleAllPending}
                   />
                 </th>
                 <th className="px-5 py-3 text-left">Tipo</th>
@@ -275,14 +369,12 @@ const AuditTable = ({
                   </td>
                 </tr>
               ) : filtered.map(entry => {
-                const methodBadge = getMethodBadge(entry.input_method);
-                const MethodIcon = methodBadge.icon;
                 return (
                   <tr
                     key={`${entry.type}-${entry.id}`}
                     className={cn(
                       'border-b border-border/50 hover:bg-background/60 transition-colors',
-                      selected.has(entry.id) && 'bg-accent/5'
+                      selected.has(auditKey(entry)) && 'bg-accent/5'
                     )}
                   >
                     <td className="px-5 py-3.5">
@@ -290,8 +382,8 @@ const AuditTable = ({
                         <input
                           type="checkbox"
                           className="accent-accent"
-                          checked={selected.has(entry.id)}
-                          onChange={() => toggleSelect(entry.id)}
+                          checked={selected.has(auditKey(entry))}
+                          onChange={() => toggleSelect(entry)}
                         />
                       )}
                     </td>
@@ -307,15 +399,13 @@ const AuditTable = ({
                     </td>
                     <td className="px-5 py-3.5 text-text-secondary">{entry.cantiere_nome ?? '—'}</td>
                     <td className="px-5 py-3.5 text-text-secondary">
-                      {new Date(entry.date).toLocaleDateString('it-IT')}
+                      {formatAuditDate(entry.date)}
                     </td>
                     <td className="px-5 py-3.5 font-bold text-text-primary">
-                      {entry.type === 'ore' ? `${entry.value}h` : `€${Number(entry.value).toLocaleString('it-IT')}`}
+                      {formatAuditValue(entry)}
                     </td>
                     <td className="px-5 py-3.5">
-                      <span className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border w-fit', methodBadge.cls)}>
-                        <MethodIcon size={11} /> {methodBadge.label}
-                      </span>
+                      <MethodBadge method={entry.input_method} />
                     </td>
                     <td className="px-5 py-3.5">
                       <StatusBadge status={entry.status} />
@@ -324,7 +414,7 @@ const AuditTable = ({
                       {entry.status === 'pending' && (
                         <div className="flex items-center gap-1">
                           <button
-                            onClick={() => approveMut.mutate({ ids: [entry.id], action: 'verify' })}
+                            onClick={() => approveMut.mutate({ items: [toAuditMutationItem(entry, 'APPROVED')] })}
                             disabled={approveMut.isPending}
                             className="p-1.5 rounded-lg bg-success-bg text-success-text hover:opacity-80 transition-all disabled:opacity-40"
                             title="Approva"
@@ -332,7 +422,7 @@ const AuditTable = ({
                             <CheckCircle2 size={14} />
                           </button>
                           <button
-                            onClick={() => approveMut.mutate({ ids: [entry.id], action: 'reject' })}
+                            onClick={() => approveMut.mutate({ items: [toAuditMutationItem(entry, 'REJECTED')] })}
                             disabled={approveMut.isPending}
                             className="p-1.5 rounded-lg bg-danger-bg text-danger-text hover:opacity-80 transition-all disabled:opacity-40"
                             title="Rifiuta"
@@ -353,16 +443,414 @@ const AuditTable = ({
   );
 };
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+function RawLogsPanel({
+  logs,
+  isLoading,
+  error,
+  refetch,
+  search,
+  onSearchChange,
+  selectedEmployeeId,
+  onEmployeeChange,
+  selectedMessageType,
+  onMessageTypeChange,
+  onlyWithJson,
+  onOnlyWithJsonChange,
+}: {
+  logs: MessageLogEntry[];
+  isLoading: boolean;
+  error: string | null;
+  refetch: () => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+  selectedEmployeeId: string;
+  onEmployeeChange: (value: string) => void;
+  selectedMessageType: string;
+  onMessageTypeChange: (value: string) => void;
+  onlyWithJson: boolean;
+  onOnlyWithJsonChange: (value: boolean) => void;
+}) {
+  const [collapsedDays, setCollapsedDays] = useState<Set<string>>(new Set());
+  const [collapsedEmployees, setCollapsedEmployees] = useState<Set<string>>(new Set());
+  const [expandedTextIds, setExpandedTextIds] = useState<Set<number>>(new Set());
+  const [expandedJsonIds, setExpandedJsonIds] = useState<Set<number>>(new Set());
+
+  const enrichedLogs = useMemo<EnrichedLogEntry[]>(() => {
+    return logs.map((log) => {
+      const { parsedJson, hasInvalidJson } = safeParseLogJson(log.extracted_json);
+      const rawText = String(log.raw_text ?? '').trim();
+      const rawPreview = String(log.raw_preview ?? '').trim();
+      const previewTruncated = Boolean(rawText && rawPreview && rawText !== rawPreview && rawPreview.endsWith('…'));
+      return {
+        ...log,
+        parsedJson,
+        hasInvalidJson,
+        previewTruncated,
+        isUnknownEmployee: !log.employee_name,
+      };
+    });
+  }, [logs]);
+
+  const employeeOptions = useMemo(() => {
+    return [...new Map(
+      enrichedLogs.map(log => [
+        log.employee_id,
+        { id: String(log.employee_id), label: log.employee_label },
+      ])
+    ).values()].sort((a, b) => a.label.localeCompare(b.label, 'it-IT'));
+  }, [enrichedLogs]);
+
+  const messageTypeOptions = useMemo(() => {
+    return [...new Set(
+      enrichedLogs
+        .map(log => log.message_type?.trim())
+        .filter((value): value is string => Boolean(value))
+    )].sort((a, b) => a.localeCompare(b, 'it-IT'));
+  }, [enrichedLogs]);
+
+  const groupedLogs = useMemo<DayLogGroup[]>(() => {
+    const dayMap = new Map<string, {
+      dayKey: string;
+      dayLabel: string;
+      latestTime: number;
+      groups: Map<string, EmployeeLogGroup>;
+    }>();
+
+    for (const log of enrichedLogs) {
+      const dayKey = log.day_key || String(log.timestamp_utc).slice(0, 10);
+      const groupKey = `${dayKey}:${log.employee_id}`;
+      const logTime = safeTime(log.timestamp_utc);
+
+      if (!dayMap.has(dayKey)) {
+        dayMap.set(dayKey, {
+          dayKey,
+          dayLabel: formatDayLabel(dayKey),
+          latestTime: logTime,
+          groups: new Map(),
+        });
+      }
+
+      const dayGroup = dayMap.get(dayKey)!;
+      dayGroup.latestTime = Math.max(dayGroup.latestTime, logTime);
+
+      if (!dayGroup.groups.has(groupKey)) {
+        dayGroup.groups.set(groupKey, {
+          key: groupKey,
+          employeeId: log.employee_id,
+          employeeLabel: log.employee_label,
+          employeeName: log.employee_name,
+          latestTime: logTime,
+          logs: [],
+          anomalyCount: 0,
+        });
+      }
+
+      const employeeGroup = dayGroup.groups.get(groupKey)!;
+      employeeGroup.latestTime = Math.max(employeeGroup.latestTime, logTime);
+      employeeGroup.logs.push(log);
+      employeeGroup.anomalyCount += getLogAnomalyCount(log);
+    }
+
+    return [...dayMap.values()]
+      .sort((a, b) => b.latestTime - a.latestTime)
+      .map(dayGroup => ({
+        dayKey: dayGroup.dayKey,
+        dayLabel: dayGroup.dayLabel,
+        latestTime: dayGroup.latestTime,
+        totalLogs: [...dayGroup.groups.values()].reduce((sum, group) => sum + group.logs.length, 0),
+        groups: [...dayGroup.groups.values()].sort((a, b) => b.latestTime - a.latestTime),
+      }));
+  }, [enrichedLogs]);
+
+  const toggleCollapsed = (key: string, setter: React.Dispatch<React.SetStateAction<Set<string>>>) => {
+    setter(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleExpandedItem = (id: number, setter: React.Dispatch<React.SetStateAction<Set<number>>>) => {
+    setter(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const resetFilters = () => {
+    onSearchChange('');
+    onEmployeeChange('all');
+    onMessageTypeChange('all');
+    onOnlyWithJsonChange(false);
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-2xl overflow-hidden">
+      <div className="border-b border-border p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
+              <input
+                type="text"
+                value={search}
+                onChange={e => onSearchChange(e.target.value)}
+                placeholder="Cerca nel raw_text..."
+                className="pl-8 pr-3 py-2 text-sm rounded-xl border border-border bg-background text-text-primary outline-none focus:ring-2 focus:ring-accent/20 w-60 transition-all"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm text-text-secondary">
+              <Users size={14} />
+              <select
+                value={selectedEmployeeId}
+                onChange={e => onEmployeeChange(e.target.value)}
+                className="bg-transparent text-text-primary outline-none"
+              >
+                <option value="all">Tutti i dipendenti</option>
+                {employeeOptions.map(option => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm text-text-secondary">
+              <Filter size={14} />
+              <select
+                value={selectedMessageType}
+                onChange={e => onMessageTypeChange(e.target.value)}
+                className="bg-transparent text-text-primary outline-none"
+              >
+                <option value="all">Tutti i tipi</option>
+                {messageTypeOptions.map(option => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={() => onOnlyWithJsonChange(!onlyWithJson)}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition-all',
+                onlyWithJson
+                  ? 'border-info-border bg-info-bg text-info-text'
+                  : 'border-border bg-background text-text-secondary hover:text-text-primary'
+              )}
+            >
+              <Braces size={14} />
+              Solo con JSON estratto
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-medium text-text-secondary">
+              {logs.length} log filtrati
+            </span>
+            <button
+              onClick={resetFilters}
+              className="rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:bg-background transition-all"
+            >
+              Reset filtri
+            </button>
+            <button
+              onClick={refetch}
+              className="rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:bg-background transition-all"
+            >
+              Aggiorna
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="py-16 flex justify-center"><Spinner label="Caricamento log..." /></div>
+      ) : error ? (
+        <div className="py-16"><ErrorMessage error={error} onRetry={refetch} /></div>
+      ) : groupedLogs.length === 0 ? (
+        <div className="py-16 text-center text-text-secondary text-sm">Nessun log trovato con i filtri attuali.</div>
+      ) : (
+        <div className="divide-y divide-border">
+          {groupedLogs.map(day => {
+            const dayCollapsed = collapsedDays.has(day.dayKey);
+
+            return (
+              <section key={day.dayKey} className="p-4 md:p-5">
+                <button
+                  onClick={() => toggleCollapsed(day.dayKey, setCollapsedDays)}
+                  className="flex w-full items-center justify-between gap-4 rounded-2xl border border-border bg-background px-4 py-3 text-left transition-all hover:border-accent/30"
+                >
+                  <div>
+                    <p className="text-sm font-bold capitalize text-text-primary">{day.dayLabel}</p>
+                    <p className="mt-1 text-xs text-text-secondary">{day.totalLogs} eventi · {day.groups.length} gruppi dipendente</p>
+                  </div>
+                  {dayCollapsed ? <ChevronDown size={16} className="text-text-secondary" /> : <ChevronUp size={16} className="text-text-secondary" />}
+                </button>
+
+                {!dayCollapsed && (
+                  <div className="mt-4 space-y-3">
+                    {day.groups.map(group => {
+                      const employeeCollapsed = collapsedEmployees.has(group.key);
+
+                      return (
+                        <div key={group.key} className="rounded-2xl border border-border overflow-hidden">
+                          <button
+                            onClick={() => toggleCollapsed(group.key, setCollapsedEmployees)}
+                            className="flex w-full items-center justify-between gap-4 bg-card px-4 py-3 text-left transition-all hover:bg-background/50"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-bold text-text-primary">{group.employeeLabel}</span>
+                                {group.employeeName == null && (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-warning-border bg-warning-bg px-2 py-0.5 text-[10px] font-bold text-warning-text">
+                                    <AlertTriangle size={10} /> Identità incompleta
+                                  </span>
+                                )}
+                                {group.anomalyCount > 0 && (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-danger-border bg-danger-bg px-2 py-0.5 text-[10px] font-bold text-danger-text">
+                                    <AlertTriangle size={10} /> {group.anomalyCount} anomalie
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-1 text-xs text-text-secondary">{group.logs.length} eventi nel giorno selezionato</p>
+                            </div>
+                            {employeeCollapsed ? <ChevronDown size={16} className="text-text-secondary" /> : <ChevronUp size={16} className="text-text-secondary" />}
+                          </button>
+
+                          {!employeeCollapsed && (
+                            <div className="space-y-3 border-t border-border bg-background/40 p-4">
+                              {group.logs.map(log => {
+                                const showFullText = expandedTextIds.has(log.id);
+                                const showJson = expandedJsonIds.has(log.id);
+
+                                return (
+                                  <article key={log.id} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+                                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-xs font-bold text-accent">{formatLogTime(log.timestamp_utc)}</span>
+                                          {log.message_type ? (
+                                            <MethodBadge method={log.message_type} className="min-w-0" />
+                                          ) : (
+                                            <span className="inline-flex h-7 items-center justify-center rounded-lg border border-border px-2.5 text-[11px] font-semibold text-text-secondary">
+                                              Altro
+                                            </span>
+                                          )}
+                                          {log.has_extracted_json && (
+                                            <span className="inline-flex items-center gap-1 rounded-full border border-info-border bg-info-bg px-2 py-0.5 text-[10px] font-bold text-info-text">
+                                              <Braces size={10} /> JSON estratto
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <div className="mt-3 rounded-xl border border-border bg-background p-3">
+                                          <p className="text-sm leading-relaxed text-text-primary whitespace-pre-wrap break-words font-mono">
+                                            {log.raw_preview}
+                                          </p>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex flex-wrap items-center gap-2 lg:max-w-[240px] lg:justify-end">
+                                        {log.previewTruncated && (
+                                          <span className="inline-flex items-center gap-1 rounded-full border border-warning-border bg-warning-bg px-2 py-1 text-[10px] font-bold text-warning-text">
+                                            <Eye size={10} /> Testo lungo troncato
+                                          </span>
+                                        )}
+                                        {log.hasInvalidJson && (
+                                          <span className="inline-flex items-center gap-1 rounded-full border border-danger-border bg-danger-bg px-2 py-1 text-[10px] font-bold text-danger-text">
+                                            <AlertTriangle size={10} /> JSON non valido
+                                          </span>
+                                        )}
+                                        {log.isUnknownEmployee && (
+                                          <span className="inline-flex items-center gap-1 rounded-full border border-warning-border bg-warning-bg px-2 py-1 text-[10px] font-bold text-warning-text">
+                                            <Users size={10} /> Dipendente sconosciuto
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      <button
+                                        onClick={() => toggleExpandedItem(log.id, setExpandedTextIds)}
+                                        className="inline-flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:bg-background transition-all"
+                                      >
+                                        <Eye size={12} />
+                                        {showFullText ? 'Nascondi testo completo' : 'Apri testo completo'}
+                                      </button>
+
+                                      {log.has_extracted_json && (
+                                        <button
+                                          onClick={() => toggleExpandedItem(log.id, setExpandedJsonIds)}
+                                          className="inline-flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:bg-background transition-all"
+                                        >
+                                          <Braces size={12} />
+                                          {showJson ? 'Nascondi JSON' : 'Apri JSON'}
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {showFullText && (
+                                      <div className="mt-3 rounded-xl border border-border bg-background p-3">
+                                        <p className="text-sm leading-relaxed text-text-primary whitespace-pre-wrap break-words font-mono">
+                                          {log.raw_text?.trim() || 'Nessun contenuto testuale'}
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    {showJson && log.has_extracted_json && (
+                                      <div className="mt-3 rounded-xl border border-border bg-background p-3">
+                                        {log.hasInvalidJson && (
+                                          <div className="mb-3 rounded-xl border border-danger-border bg-danger-bg px-3 py-2 text-xs font-semibold text-danger-text">
+                                            Il payload esiste ma non è un JSON valido. Mostro il contenuto raw senza parsing.
+                                          </div>
+                                        )}
+                                        <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-text-secondary">
+                                          {log.hasInvalidJson
+                                            ? String(log.extracted_json ?? '')
+                                            : JSON.stringify(log.parsedJson, null, 2)}
+                                        </pre>
+                                      </div>
+                                    )}
+                                  </article>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function TelegramAuditPage() {
   const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo]     = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [activeSection, setActiveSection] = useState<'audit' | 'logs'>('audit');
+  const [logSearchInput, setLogSearchInput] = useState('');
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('all');
+  const [selectedMessageType, setSelectedMessageType] = useState('all');
+  const [onlyWithJson, setOnlyWithJson] = useState(false);
+  const deferredLogSearch = useDeferredValue(logSearchInput.trim());
+
   const { feed, logs, isLoading, error, refetch } = useTelegramFeed({
     from: dateFrom || undefined,
-    to:   dateTo   || undefined,
+    to: dateTo || undefined,
+    employeeId: selectedEmployeeId !== 'all' ? Number(selectedEmployeeId) : undefined,
+    messageType: selectedMessageType !== 'all' ? selectedMessageType : undefined,
+    hasExtractedJson: onlyWithJson ? true : undefined,
+    search: deferredLogSearch || undefined,
   });
-  const [activeSection, setActiveSection] = useState<'audit' | 'logs'>('audit');
+
   const { downloadCsv } = useExportCsv();
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
@@ -381,7 +869,6 @@ export default function TelegramAuditPage() {
 
   return (
     <div className="flex-1 overflow-y-auto bg-background transition-colors duration-300">
-      {/* Header */}
       <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-md border-b border-border px-8 h-20 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-text-primary flex items-center gap-2">
@@ -392,7 +879,6 @@ export default function TelegramAuditPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Date range filter */}
           <div className="hidden md:flex items-center gap-2">
             <input
               type="date"
@@ -429,14 +915,12 @@ export default function TelegramAuditPage() {
       </div>
 
       <div className="p-8">
-        {/* KPI Strip */}
         <KpiStrip feed={feed} isLoading={isLoading} />
 
-        {/* Section Toggle */}
         <div className="flex items-center gap-1 bg-background border border-border rounded-xl p-1 mb-6 w-fit">
           {([
             { id: 'audit', label: 'Tabella Audit' },
-            { id: 'logs',  label: `Log Grezzi (${logs.length})` },
+            { id: 'logs', label: `Log Grezzi (${logs.length})` },
           ] as { id: 'audit' | 'logs'; label: string }[]).map(s => (
             <button
               key={s.id}
@@ -453,51 +937,20 @@ export default function TelegramAuditPage() {
         {activeSection === 'audit' ? (
           <AuditTable feed={feed} isLoading={isLoading} error={error} refetch={refetch} />
         ) : (
-          /* Log Grezzi */
-          <div className="bg-card border border-border rounded-2xl overflow-hidden">
-            {isLoading ? (
-              <div className="py-16 flex justify-center"><Spinner label="Caricamento log..." /></div>
-            ) : logs.length === 0 ? (
-              <div className="py-16 text-center text-text-secondary text-sm">Nessun log disponibile.</div>
-            ) : (
-              <div className="divide-y divide-border">
-                {logs.map(log => (
-                  <div key={log.id} className="p-5 hover:bg-background/50 transition-colors">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-bold text-accent">{log.employee_name ?? `Employee #${log.employee_id}`}</span>
-                          <span className="text-xs text-text-secondary">
-                            {new Date(log.timestamp_utc).toLocaleString('it-IT')}
-                          </span>
-                          {log.message_type && (
-                            <span className="px-2 py-0.5 bg-background text-text-secondary border border-border rounded text-[10px] font-bold uppercase">
-                              {log.message_type}
-                            </span>
-                          )}
-                        </div>
-                        {log.raw_text && (
-                          <p className="text-sm text-text-primary bg-background border border-border rounded-xl p-3 font-mono leading-relaxed">
-                            {log.raw_text}
-                          </p>
-                        )}
-                        {log.extracted_json && (
-                          <details className="mt-2">
-                            <summary className="text-xs text-accent cursor-pointer hover:underline flex items-center gap-1">
-                              <Eye size={11} /> JSON Estratto
-                            </summary>
-                            <pre className="text-[11px] text-text-secondary bg-background border border-border rounded-xl p-3 mt-1 overflow-x-auto">
-                              {JSON.stringify(JSON.parse(log.extracted_json), null, 2)}
-                            </pre>
-                          </details>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <RawLogsPanel
+            logs={logs}
+            isLoading={isLoading}
+            error={error}
+            refetch={refetch}
+            search={logSearchInput}
+            onSearchChange={setLogSearchInput}
+            selectedEmployeeId={selectedEmployeeId}
+            onEmployeeChange={setSelectedEmployeeId}
+            selectedMessageType={selectedMessageType}
+            onMessageTypeChange={setSelectedMessageType}
+            onlyWithJson={onlyWithJson}
+            onOnlyWithJsonChange={setOnlyWithJson}
+          />
         )}
       </div>
     </div>

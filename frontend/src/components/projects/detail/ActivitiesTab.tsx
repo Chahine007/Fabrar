@@ -10,10 +10,8 @@ import {
   useAllTasks,
   useDeleteTask,
 } from '../../../hooks/api/useTasks';
-import type { ProjectShareItem } from '../../../types/project-detail';
 import Spinner from '../../Spinner';
 import ErrorMessage from '../../ErrorMessage';
-import SmartActionMenu from '../../SmartActionMenu';
 import TaskModal from '../../tasks/TaskModal';
 import { ConfirmDialog, useToast } from '../../ui';
 
@@ -43,10 +41,8 @@ function formatProjectTaskDueDate(value: string | null) {
 
 export default function ActivitiesTab({
   cantiereId,
-  onShare,
 }: {
   cantiereId: number;
-  onShare: (item: ProjectShareItem) => void;
 }) {
   const { user } = useAuthContext();
   const { data: tasks = [], isLoading, error, refetch } = useAllTasks({ cantiere_id: cantiereId });
@@ -163,10 +159,6 @@ export default function ActivitiesTab({
                     </span>
                   </td>
                   <td className="p-4 text-right">
-                    <SmartActionMenu
-                      onShare={() => onShare(task)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity inline-block mr-2"
-                    />
                     {!isWorker && (
                       <button
                         type="button"

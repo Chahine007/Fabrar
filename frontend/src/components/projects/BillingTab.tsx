@@ -2,10 +2,12 @@ import React, { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarRange,
+  CheckCircle2,
   ChevronRight,
   FileText,
   Plus,
   ReceiptText,
+  RotateCcw,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
@@ -14,6 +16,7 @@ import {
   type InstallmentStatus,
   type InvoiceStatus,
   useProjectBilling,
+  useUpdateInvoicePayment,
 } from '../../hooks/api/useBilling';
 import InstallmentModal from './InstallmentModal';
 import InvoiceModal from './InvoiceModal';
@@ -126,7 +129,17 @@ function InstallmentRow({
   );
 }
 
-function InvoiceRow({ invoice }: { invoice: BillingInvoice }) {
+function InvoiceRow({
+  invoice,
+  onMarkPaid,
+  onReopen,
+  isBusy,
+}: {
+  invoice: BillingInvoice;
+  onMarkPaid: (invoice: BillingInvoice) => void;
+  onReopen: (invoice: BillingInvoice) => void;
+  isBusy: boolean;
+}) {
   return (
     <div className="flex items-start justify-between gap-4 px-5 py-4">
       <div className="min-w-0">
@@ -149,10 +162,37 @@ function InvoiceRow({ invoice }: { invoice: BillingInvoice }) {
         <p className="mt-1 text-xs text-text-secondary">
           {invoice.rate?.length ? `${invoice.rate.length} rate collegate` : 'Nessuna rata collegata'}
         </p>
+        {invoice.stato === 'PAID' && (
+          <p className="mt-1 text-xs text-success-text">
+            Incasso: {formatCurrency(invoice.paid_amount ?? invoice.importo_totale)}
+            {invoice.paid_at ? ` · ${formatDate(invoice.paid_at)}` : ''}
+          </p>
+        )}
       </div>
 
-      <div className="text-right">
+      <div className="shrink-0 text-right">
         <p className="font-semibold text-text-primary">{formatCurrency(invoice.importo_totale)}</p>
+        {invoice.stato === 'PAID' ? (
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={() => onReopen(invoice)}
+            className="mt-2 inline-flex items-center gap-1 rounded-xl border border-border px-2.5 py-1.5 text-xs font-semibold text-text-secondary transition hover:bg-background disabled:opacity-50"
+          >
+            <RotateCcw size={13} />
+            Riapri
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={isBusy || invoice.stato === 'DRAFT'}
+            onClick={() => onMarkPaid(invoice)}
+            className="mt-2 inline-flex items-center gap-1 rounded-xl border border-success-border bg-success-bg px-2.5 py-1.5 text-xs font-semibold text-success-text transition hover:brightness-95 disabled:opacity-50"
+          >
+            <CheckCircle2 size={13} />
+            Incassata
+          </button>
+        )}
       </div>
     </div>
   );
@@ -160,6 +200,7 @@ function InvoiceRow({ invoice }: { invoice: BillingInvoice }) {
 
 export default function BillingTab({ cantiereId }: { cantiereId: number }) {
   const { data, isLoading, error, refetch } = useProjectBilling(cantiereId);
+  const updateInvoicePayment = useUpdateInvoicePayment(cantiereId);
   const [isInstallmentModalOpen, setIsInstallmentModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [selectedInstallment, setSelectedInstallment] = useState<BillingInstallment | null>(null);
@@ -177,6 +218,24 @@ export default function BillingTab({ cantiereId }: { cantiereId: number }) {
   const openEditInstallment = (installment: BillingInstallment) => {
     setSelectedInstallment(installment);
     setIsInstallmentModalOpen(true);
+  };
+
+  const markInvoicePaid = async (invoice: BillingInvoice) => {
+    await updateInvoicePayment.mutateAsync({
+      invoiceId: invoice.id,
+      data: {
+        status: 'PAID',
+        paid_at: new Date().toISOString(),
+        paid_amount: invoice.importo_totale,
+      },
+    });
+  };
+
+  const reopenInvoice = async (invoice: BillingInvoice) => {
+    await updateInvoicePayment.mutateAsync({
+      invoiceId: invoice.id,
+      data: { status: 'ISSUED' },
+    });
   };
 
   if (isLoading) return <Spinner label="Caricamento dati di fatturazione..." />;
@@ -287,7 +346,13 @@ export default function BillingTab({ cantiereId }: { cantiereId: number }) {
           ) : (
             <div className="divide-y divide-border">
               {data.fatture.map((invoice) => (
-                <InvoiceRow key={invoice.id} invoice={invoice} />
+                <InvoiceRow
+                  key={invoice.id}
+                  invoice={invoice}
+                  onMarkPaid={markInvoicePaid}
+                  onReopen={reopenInvoice}
+                  isBusy={updateInvoicePayment.isPending}
+                />
               ))}
             </div>
           )}

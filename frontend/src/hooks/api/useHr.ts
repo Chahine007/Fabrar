@@ -4,7 +4,7 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, getApiErrorMessage } from '../../lib/api';
-import { hrKeys, employeeKeys } from './queryKeys';
+import { accountingKeys, billingKeys, cantierKeys, dashboardKeys, hrKeys, employeeKeys, magazzinoKeys } from './queryKeys';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ export type Employee = EmployeeWithKPI;
 export interface CreateEmployeePayload {
   firstName: string;
   lastName: string;
-  role: 'WORKER' | 'ADMIN' | 'PROJECT_MANAGER' | 'HR';
+  role: 'WORKER' | 'ADMIN' | 'PROJECT_MANAGER' | 'HR' | 'WAREHOUSEMAN';
   hourly_rate?: number;
   email?: string;
 }
@@ -114,6 +114,254 @@ export interface HrAlertsResponse {
 
 export type AuditType = 'ore' | 'spese';
 export type AuditStatus = 'pending' | 'verified' | 'approved' | 'rejected';
+export type AuditMutationStatus = 'APPROVED' | 'REJECTED';
+export type LogisticaStatus =
+  | 'NOT_REQUIRED'
+  | 'PENDING_OCR'
+  | 'OCR_REVIEW'
+  | 'LOADED_TO_WAREHOUSE'
+  | 'RECONCILIATION_REQUIRED';
+export type CostCategory =
+  | 'INVENTORY_MATERIAL'
+  | 'CONSUMABLE_SUPPLY'
+  | 'SERVICE'
+  | 'LEASING_RENTAL'
+  | 'UTILITY'
+  | 'INSURANCE'
+  | 'TAX_FEE'
+  | 'PROFESSIONAL_SERVICE'
+  | 'TRAVEL_VEHICLE'
+  | 'OTHER'
+  | 'UNKNOWN';
+export type CostAllocationScope = 'PROJECT' | 'OVERHEAD' | 'REVIEW';
+
+export interface InvoiceOcrLine {
+  codice_articolo?: string | null;
+  codice_articolo_raw?: string | null;
+  codice_sku?: string | null;
+  descrizione?: string | null;
+  quantita?: number | null;
+  unita_misura?: string | null;
+  prezzo_unitario?: number | null;
+  costo_unitario?: number | null;
+  prezzo_totale?: number | null;
+  importo_riga?: number | null;
+  iva_percentuale?: number | null;
+  imponibile_riga?: number | null;
+  imposta_riga?: number | null;
+  cost_category?: CostCategory | string | null;
+  stockable?: boolean | null;
+  magazzino_status?: 'new' | 'existing' | 'reconcile' | string;
+  reconcile_reason?: string | null;
+  articolo_id?: number | null;
+}
+
+export interface InvoiceOcrPayload {
+  document_type?: string | null;
+  cost_category?: CostCategory | string | null;
+  allocation_scope?: CostAllocationScope | string | null;
+  logistica_required?: boolean | null;
+  tipo_documento?: string | null;
+  numero_documento?: string | null;
+  data_documento?: string | null;
+  codice_destinatario?: string | null;
+  documento?: {
+    tipo_documento?: string | null;
+    numero_documento?: string | null;
+    data_documento?: string | null;
+    codice_destinatario?: string | null;
+  } | null;
+  fornitore?: {
+    ragione_sociale?: string | null;
+    partita_iva?: string | null;
+    codice_fiscale?: string | null;
+    indirizzo?: string | null;
+    comune?: string | null;
+    provincia?: string | null;
+    cap?: string | null;
+  } | null;
+  cliente?: {
+    ragione_sociale?: string | null;
+    partita_iva?: string | null;
+    codice_fiscale?: string | null;
+    indirizzo?: string | null;
+    comune?: string | null;
+    provincia?: string | null;
+    cap?: string | null;
+  } | null;
+  totale_imponibile?: number | null;
+  totale_imposta?: number | null;
+  totale_documento?: number | null;
+  totali?: {
+    totale_imponibile?: number | null;
+    totale_imposta?: number | null;
+    totale_documento?: number | null;
+  } | null;
+  pagamento?: {
+    modalita_pagamento?: string | null;
+    iban?: string | null;
+    scadenza?: string | null;
+    importo_scadenza?: number | null;
+  } | null;
+  righe_materiali?: InvoiceOcrLine[];
+  righe_costo?: Array<{
+    descrizione?: string | null;
+    cost_category?: CostCategory | string | null;
+    allocation_scope?: CostAllocationScope | string | null;
+    importo?: number | null;
+    iva_percentuale?: number | null;
+    quantita?: number | null;
+    unita_misura?: string | null;
+    prezzo_unitario?: number | null;
+  }>;
+}
+
+export interface PurchaseInvoiceLine {
+  id?: number;
+  codice_articolo_originale?: string | null;
+  codice_sku_normalizzato?: string | null;
+  descrizione?: string | null;
+  quantita?: number | string | null;
+  unita_misura?: string | null;
+  prezzo_unitario?: number | string | null;
+  iva_percentuale?: number | string | null;
+  imponibile_riga?: number | string | null;
+  imposta_riga?: number | string | null;
+  prezzo_totale?: number | string | null;
+  cost_category?: CostCategory | string | null;
+  allocation_scope?: CostAllocationScope | string | null;
+  is_stockable?: boolean | null;
+  reconciliation_status?: string | null;
+  articolo_id?: number | null;
+  movimento_id?: number | null;
+  articolo?: {
+    id: number;
+    codice_sku: string;
+    descrizione?: string | null;
+  } | null;
+  movimento?: {
+    id: number;
+    tipo_movimento: string;
+    quantita?: number | string | null;
+    valore_totale?: number | string | null;
+  } | null;
+}
+
+export interface PurchaseInvoiceDraft {
+  id?: number;
+  document_type?: string | null;
+  tipo_documento?: string | null;
+  numero_documento?: string | null;
+  data_documento?: string | null;
+  codice_destinatario?: string | null;
+  fornitore?: InvoiceOcrPayload['fornitore'] & {
+    id?: number;
+    partita_iva_normalizzata?: string | null;
+    paese?: string | null;
+    iban_default?: string | null;
+  };
+  cliente?: InvoiceOcrPayload['cliente'];
+  totali?: InvoiceOcrPayload['totali'];
+  pagamento?: InvoiceOcrPayload['pagamento'];
+  cost_category?: CostCategory | string | null;
+  allocation_scope?: CostAllocationScope | string | null;
+  logistica_required?: boolean | null;
+  righe?: PurchaseInvoiceLine[];
+  scadenze?: Array<{
+    id: number;
+    data_scadenza: string;
+    importo: number | string;
+    modalita_pagamento?: string | null;
+    iban?: string | null;
+    status?: string;
+  }>;
+}
+
+export interface PurchaseInvoiceSummary {
+  id: number;
+  numero_documento?: string | null;
+  data_documento?: string | null;
+  tipo_documento?: string | null;
+  totale_imponibile?: number | string | null;
+  totale_imposta?: number | string | null;
+  totale_documento?: number | string | null;
+  pagamento_modalita?: string | null;
+  pagamento_scadenza?: string | null;
+  pagamento_iban?: string | null;
+  pagamento_importo?: number | string | null;
+  righe_count?: number;
+}
+
+export interface SpesaOcrResponse {
+  spesa: AuditEntry & Record<string, unknown>;
+  document?: {
+    id: number;
+    name: string;
+    file_path?: string | null;
+    type?: string | null;
+  };
+  ocrPayload?: InvoiceOcrPayload;
+  fattura_acquisto_draft?: PurchaseInvoiceDraft;
+  fatturaAcquisto?: PurchaseInvoiceDraft;
+  suggestedLines?: InvoiceOcrLine[];
+  matchStatus?: {
+    score: number;
+    strength: 'strong' | 'weak' | 'none';
+    reasons: string[];
+    canConfirm?: boolean;
+  };
+  movimentiCaricoCreati?: number;
+  articoliCreati?: number;
+  fornitore?: {
+    id: number;
+    ragione_sociale: string;
+    partita_iva?: string | null;
+    partita_iva_normalizzata?: string | null;
+    codice_fiscale?: string | null;
+    indirizzo?: string | null;
+    comune?: string | null;
+    provincia?: string | null;
+    cap?: string | null;
+    paese?: string | null;
+    iban_default?: string | null;
+  } | null;
+  fornitoreAction?: 'created' | 'updated' | 'found' | string | null;
+  righeDaRiconciliare?: number;
+  righeDaRiconciliareDettaglio?: Array<{ reason: string; line: unknown }>;
+}
+
+export interface GenericInvoiceOcrCandidate {
+  spesa: AuditEntry & Record<string, unknown>;
+  score: number;
+  strength: 'strong' | 'weak' | 'none';
+  reasons: string[];
+}
+
+export interface GenericInvoiceOcrUpload {
+  token: string;
+  originalName?: string | null;
+  mimeType?: string | null;
+  size?: number | null;
+}
+
+export interface GenericInvoiceOcrResponse {
+  upload: GenericInvoiceOcrUpload;
+  ocrPayload: InvoiceOcrPayload;
+  fattura_acquisto_draft?: PurchaseInvoiceDraft;
+  suggestedLines: InvoiceOcrLine[];
+  candidates: GenericInvoiceOcrCandidate[];
+  matchStatus?: {
+    best?: GenericInvoiceOcrCandidate | null;
+    canConfirmExisting?: boolean;
+    canCreateNew?: boolean;
+  };
+}
+
+export interface AuditBulkItem {
+  id: number;
+  type: AuditType;
+  newStatus: AuditMutationStatus;
+}
 
 export interface AuditEntry {
   id: number;
@@ -133,6 +381,17 @@ export interface AuditEntry {
   task_title?: string | null;
   luogo_cantiere: string | null;
   report_id?: number;
+  documento_id?: number | null;
+  documento_nome?: string | null;
+  logistica_status?: LogisticaStatus | null;
+  cost_category?: CostCategory | string | null;
+  allocation_scope?: CostAllocationScope | string | null;
+  fornitore_id?: number | null;
+  ocr_payload?: InvoiceOcrPayload | null;
+  ocr_reviewed_at?: string | null;
+  movimenti_magazzino_count?: number;
+  fattura_acquisto_id?: number | null;
+  fattura_acquisto?: PurchaseInvoiceSummary | null;
 }
 
 
@@ -148,6 +407,8 @@ export interface AuditFilters {
   cantiere_id?: number;
   from?: string; // YYYY-MM-DD
   to?: string;   // YYYY-MM-DD
+  cost_category?: string;
+  allocation_scope?: string;
 }
 
 // ─── Fetch helpers ───────────────────────────────────────────────────────────
@@ -169,6 +430,8 @@ function buildQuery(filters: AuditFilters): string {
   if (filters.cantiere_id) params.set('cantiere_id', String(filters.cantiere_id));
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);
+  if (filters.cost_category) params.set('cost_category', filters.cost_category);
+  if (filters.allocation_scope) params.set('allocation_scope', filters.allocation_scope);
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }
@@ -324,20 +587,29 @@ export function usePendingSummary() {
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
 type BulkAction = 'verify' | 'reject';
+type BulkAuditPayload =
+  | { items: AuditBulkItem[] }
+  | { ids: number[]; action: BulkAction };
 
 export function useBulkAudit() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ ids, action }: { ids: number[]; action: BulkAction }) => {
+    mutationFn: async (payload: BulkAuditPayload) => {
       const res = await apiFetch('/api/hr/audit/bulk', {
         method: 'PUT',
-        body: JSON.stringify({ ids, action }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error('Errore approvazione bulk');
       return res.json();
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: hrKeys.all() });
+      qc.invalidateQueries({ queryKey: employeeKeys.all() });
+      qc.invalidateQueries({ queryKey: dashboardKeys.all() });
+      qc.invalidateQueries({ queryKey: cantierKeys.all() });
+      qc.invalidateQueries({ queryKey: billingKeys.all() });
+      qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
+      qc.invalidateQueries({ queryKey: accountingKeys.all() });
     },
   });
 }
@@ -384,9 +656,151 @@ export function useSingleAuditAction() {
   const bulk = useBulkAudit();
   return {
     ...bulk,
-    approve: (id: number) => bulk.mutateAsync({ ids: [id], action: 'verify' }),
-    reject:  (id: number) => bulk.mutateAsync({ ids: [id], action: 'reject' }),
+    approve: (id: number, type: AuditType) => bulk.mutateAsync({ items: [{ id, type, newStatus: 'APPROVED' }] }),
+    reject:  (id: number, type: AuditType) => bulk.mutateAsync({ items: [{ id, type, newStatus: 'REJECTED' }] }),
   };
+}
+
+export function useAnalyzeSpesaOcr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ spesaId, file }: { spesaId: number; file: File }) => {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await apiFetch(`/api/admin/spese/${spesaId}/ocr`, {
+        method: 'POST',
+        body: form,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
+      }
+      return res.json() as Promise<SpesaOcrResponse>;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: hrKeys.all() });
+    },
+  });
+}
+
+export function useAnalyzeGenericInvoiceOcr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ file, cantiereId }: { file: File; cantiereId?: number | null }) => {
+      const form = new FormData();
+      form.append('file', file);
+      if (cantiereId) form.append('cantiere_id', String(cantiereId));
+      const res = await apiFetch('/api/admin/spese/ocr/analyze', {
+        method: 'POST',
+        body: form,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
+      }
+      return res.json() as Promise<GenericInvoiceOcrResponse>;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: hrKeys.all() });
+    },
+  });
+}
+
+export function useConfirmGenericInvoiceOcr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      upload,
+      ocrPayload,
+      lines,
+      spesaId,
+      cantiereId,
+      ubicazioneId,
+      costCategory,
+      allocationScope,
+    }: {
+      upload: GenericInvoiceOcrUpload;
+      ocrPayload: InvoiceOcrPayload;
+      lines: InvoiceOcrLine[];
+      spesaId?: number | null;
+      cantiereId?: number | null;
+      ubicazioneId?: number | null;
+      costCategory?: CostCategory | string | null;
+      allocationScope?: CostAllocationScope | string | null;
+    }) => {
+      const res = await apiFetch('/api/admin/spese/ocr/confirm', {
+        method: 'POST',
+        body: JSON.stringify({
+          upload,
+          ocrPayload,
+          lines,
+          spesa_id: spesaId ?? null,
+          cantiere_id: cantiereId ?? null,
+          ubicazione_id: ubicazioneId ?? null,
+          cost_category: costCategory ?? null,
+          allocation_scope: allocationScope ?? null,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
+      }
+      return res.json() as Promise<SpesaOcrResponse>;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: hrKeys.all() });
+      qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
+      qc.invalidateQueries({ queryKey: accountingKeys.all() });
+      qc.invalidateQueries({ queryKey: dashboardKeys.all() });
+      qc.invalidateQueries({ queryKey: cantierKeys.all() });
+      qc.invalidateQueries({ queryKey: billingKeys.all() });
+    },
+  });
+}
+
+export function useConfirmSpesaOcr() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      spesaId,
+      documentId,
+      lines,
+      ubicazioneId,
+      costCategory,
+      allocationScope,
+    }: {
+      spesaId: number;
+      documentId?: number | null;
+      lines: InvoiceOcrLine[];
+      ubicazioneId?: number | null;
+      costCategory?: CostCategory | string | null;
+      allocationScope?: CostAllocationScope | string | null;
+    }) => {
+      const res = await apiFetch(`/api/admin/spese/${spesaId}/ocr/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({
+          document_id: documentId ?? null,
+          lines,
+          ubicazione_id: ubicazioneId ?? null,
+          cost_category: costCategory ?? null,
+          allocation_scope: allocationScope ?? null,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(body, `Errore ${res.status}`));
+      }
+      return res.json() as Promise<SpesaOcrResponse>;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: hrKeys.all() });
+      qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
+      qc.invalidateQueries({ queryKey: accountingKeys.all() });
+      qc.invalidateQueries({ queryKey: dashboardKeys.all() });
+      qc.invalidateQueries({ queryKey: cantierKeys.all() });
+      qc.invalidateQueries({ queryKey: billingKeys.all() });
+    },
+  });
 }
 
 /**

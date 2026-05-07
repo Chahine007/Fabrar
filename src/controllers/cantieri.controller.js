@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import {
-    getAllCantieri as dbGetAllCantieri,
     createCantiere as dbCreateCantiere,
     toggleCantiere as dbToggleCantiere,
     updateCantiere as dbUpdateCantiere,
@@ -27,9 +26,10 @@ import {
 } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ValidationStatus } from "../constants.js";
-import { syncCantiereBudget, computeFinancialTimeline, computeFinancialKpis } from "../domain/cantiere/cantiereService.js";
+import { syncCantiereBudget, computeFinancialKpis } from "../domain/cantiere/cantiereService.js";
 import { buildWbsTree, validateNodeDepth } from "../domain/cantiere/wbsService.js";
-import { getProjectFinancials } from "../domain/finance/financeService.js";
+import { getMultiProjectFinancials, getProjectFinancials, getProjectFinancialTimeline } from "../domain/finance/financeService.js";
+import { buildCantiereAccessWhere, canAccessCantiere } from "../domain/shared/accessControl.js";
 
 async function loadCantiereCostDataset(prisma, cantiereId) {
     const cantiere = await prisma.cantiere.findUnique({
@@ -65,9 +65,41 @@ async function loadCantiereCostDataset(prisma, cantiereId) {
     return { cantiere, verifiedEntries, activeSpese };
 }
 
+async function ensureCantiereAccess(req, cantiereId, { warehouse = false, worker = false } = {}) {
+    return canAccessCantiere(getDb(), req.user, cantiereId, {
+        globalRoles: ["ADMIN", "HR"],
+        warehouseRoles: warehouse ? ["WAREHOUSEMAN"] : [],
+        ownerRoles: ["PROJECT_MANAGER"],
+        allowWorkerTasks: worker,
+    });
+}
+
 export const listCantieri = asyncHandler(async (req, res) => {
-    const rows = await dbGetAllCantieri();
-    res.json(rows);
+    const prisma = getDb();
+    const cantieri = await prisma.cantiere.findMany({
+        where: buildCantiereAccessWhere(req.user, {
+            globalRoles: ["ADMIN", "HR"],
+            warehouseRoles: ["WAREHOUSEMAN"],
+            ownerRoles: ["PROJECT_MANAGER"],
+            allowWorkerTasks: true,
+            activeOnly: false,
+        }),
+        orderBy: [{ attivo: "desc" }, { id: "desc" }],
+    });
+
+    const financialMap = await getMultiProjectFinancials(prisma, cantieri.map((c) => c.id), cantieri);
+    res.json(cantieri.map((cantiere) => {
+        const financials = financialMap[cantiere.id] ?? {};
+        const budget = toNumber(cantiere.valore_contratto ?? cantiere.budget);
+        return {
+            ...cantiere,
+            budget,
+            valore_contratto: toNumber(cantiere.valore_contratto),
+            budget_spese: toNumber(cantiere.budget_spese),
+            costo_reale: financials.costoTotale ?? 0,
+            status: cantiere.attivo === 1 ? "Attivo" : "Completato",
+        };
+    }));
 });
 
 export const createCantiere = asyncHandler(async (req, res) => {
@@ -104,23 +136,21 @@ export const updateCantiere = asyncHandler(async (req, res) => {
 export const getFinancialTimeline = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId, { warehouse: true }))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
-    const dataset = await loadCantiereCostDataset(getDb(), cantiereId);
-    if (!dataset) return res.status(404).json({ error: "Cantiere non trovato." });
-
-    const { months, costoReale, costoPerMese } = computeFinancialTimeline(dataset);
-
-    res.json({
-        nome:             dataset.cantiere.nome,
-        budget:           toNumber(dataset.cantiere.valore_contratto ?? dataset.cantiere.budget),
-        raggio_tolleranza: dataset.cantiere.raggio_tolleranza || 300,
-        months, costoReale, costoPerMese,
-    });
+    const timeline = await getProjectFinancialTimeline(cantiereId);
+    if (!timeline) return res.status(404).json({ error: "Cantiere non trovato." });
+    res.json(timeline);
 });
 
 export const getDetails = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId, { warehouse: true }))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const dataset = await loadCantiereCostDataset(getDb(), cantiereId);
     if (!dataset) return res.status(404).json({ error: "Cantiere non trovato." });
@@ -164,6 +194,9 @@ export const getDetails = asyncHandler(async (req, res) => {
 export const getCantiereMaterials = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId, { warehouse: true }))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const prisma = getDb();
     const speseMateriali = await prisma.spesa.findMany({
@@ -185,6 +218,9 @@ export const getCantiereMaterials = asyncHandler(async (req, res) => {
 export const getDocuments = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId, { warehouse: true, worker: true }))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
     
     const tag = req.query.tag; // Optional filter
 
@@ -220,6 +256,9 @@ export const uploadDocument = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
     if (!req.file)   return res.status(400).json({ error: "Nessun file caricato." });
+    if (!(await ensureCantiereAccess(req, cantiereId, { warehouse: true, worker: true }))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const { tag = 'generic', numero_fattura } = req.body;
     const type      = detectDocType(req.file.mimetype, req.file.originalname);
@@ -246,6 +285,9 @@ export const downloadDocument = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     const docId      = parseIdParam(req.params.docId);
     if (!cantiereId || !docId) return res.status(400).json({ error: "Parametri non validi." });
+    if (!(await ensureCantiereAccess(req, cantiereId, { warehouse: true, worker: true }))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const prisma = getDb();
     const doc = await prisma.document.findFirst({
@@ -271,6 +313,9 @@ export const downloadDocument = asyncHandler(async (req, res) => {
 export const updateGps = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const { lat, lng } = req.body;
     if (lat == null || lng == null) return res.status(400).json({ error: "lat e lng sono obbligatori." });
@@ -287,6 +332,9 @@ export const updateGps = asyncHandler(async (req, res) => {
 export const getCantiereSettings = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const prisma = getDb();
     const cantiere = await prisma.cantiere.findUnique({
@@ -304,7 +352,7 @@ export const getCantiereSettings = asyncHandler(async (req, res) => {
 
     // Users with access to the dashboard for PM assignment
     const pms = await prisma.user.findMany({
-        where: { role: { in: ['ADMIN', 'EXTERNAL_PM', 'HR'] }, is_active: 1 },
+        where: { role: { in: ['ADMIN', 'PROJECT_MANAGER', 'HR'] }, is_active: 1 },
         select: { id: true, username: true, employee: { select: { nome: true, cognome: true } } }
     });
 
@@ -323,6 +371,9 @@ export const getCantiereSettings = asyncHandler(async (req, res) => {
 export const updateCantiereSettings = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const allowed = [
         "nome",
@@ -369,6 +420,9 @@ export const updateCantiereSettings = asyncHandler(async (req, res) => {
 export const getWbsTree = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const [nodes, burnMap] = await Promise.all([
         getWbsNodesByCantiere(cantiereId),
@@ -382,6 +436,9 @@ export const getWbsTree = asyncHandler(async (req, res) => {
 export const createWbsNode = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     if (!cantiereId) return res.status(400).json({ error: "ID cantiere non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const { nome, budget_preventivato, parent_id } = req.body;
     const prisma = getDb();
@@ -396,6 +453,9 @@ export const updateWbsNode = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     const nodeId     = parseIdParam(req.params.nodeId);
     if (!cantiereId || !nodeId) return res.status(400).json({ error: "ID non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const prisma = getDb();
     const node = await prisma.wbsNode.findFirst({ where: { id: nodeId, cantiere_id: cantiereId } });
@@ -410,6 +470,9 @@ export const deleteWbsNode = asyncHandler(async (req, res) => {
     const cantiereId = parseIdParam(req.params.id);
     const nodeId     = parseIdParam(req.params.nodeId);
     if (!cantiereId || !nodeId) return res.status(400).json({ error: "ID non valido." });
+    if (!(await ensureCantiereAccess(req, cantiereId))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
 
     const prisma = getDb();
     const node = await prisma.wbsNode.findFirst({ where: { id: nodeId, cantiere_id: cantiereId } });

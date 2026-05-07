@@ -9,8 +9,8 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, getApiErrorMessage } from '../../lib/api';
-import { telegramKeys, hrKeys } from './queryKeys';
-import type { AuditEntry, AuditStatus } from './useHr';
+import { telegramKeys, hrKeys, employeeKeys } from './queryKeys';
+import type { AuditEntry, AuditStatus, AuditBulkItem } from './useHr';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -19,13 +19,21 @@ export interface MessageLogEntry {
   timestamp_utc: string;
   employee_id: number;
   employee_name: string | null;
+  employee_label: string;
   message_type: string | null;
   raw_text: string | null;
   extracted_json: string | null;
+  has_extracted_json: boolean;
+  day_key: string;
+  raw_preview: string;
 }
 
 export interface TelegramAuditFilters {
   cantiereId?: number;     // se presente, filtra per cantiere specifico
+  employeeId?: number;
+  messageType?: string;
+  hasExtractedJson?: boolean;
+  search?: string;
   status?: AuditStatus;
   from?: string;           // YYYY-MM-DD
   to?: string;             // YYYY-MM-DD
@@ -51,6 +59,21 @@ function buildAuditPath(type: 'ore' | 'spese', filters: TelegramAuditFilters): s
   return `/api/hr/audit?${params.toString()}`;
 }
 
+function buildLogsPath(filters: TelegramAuditFilters): string {
+  const params = new URLSearchParams();
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+  if (filters.employeeId) params.set('employee_id', String(filters.employeeId));
+  if (filters.messageType) params.set('message_type', filters.messageType);
+  if (typeof filters.hasExtractedJson === 'boolean') {
+    params.set('has_extracted_json', String(filters.hasExtractedJson));
+  }
+  if (filters.search?.trim()) params.set('search', filters.search.trim());
+
+  const query = params.toString();
+  return query ? `/api/logs?${query}` : '/api/logs';
+}
+
 // ─── Hooks ───────────────────────────────────────────────────────────────────
 
 /**
@@ -60,7 +83,7 @@ function buildAuditPath(type: 'ore' | 'spese', filters: TelegramAuditFilters): s
 export function useMessageLogs(filters: TelegramAuditFilters = {}, enabled = true) {
   return useQuery({
     queryKey: telegramKeys.logs(filters),
-    queryFn: () => fetchJson<MessageLogEntry[]>('/api/logs'),
+    queryFn: () => fetchJson<MessageLogEntry[]>(buildLogsPath(filters)),
     enabled,
   });
 }
@@ -92,9 +115,25 @@ export function useTelegramSpese(filters: TelegramAuditFilters = {}) {
  * Filtra opzionalmente per cantiere_id lato client.
  */
 export function useTelegramFeed(filters: TelegramAuditFilters = {}) {
-  const oreQuery  = useTelegramOre(filters);
-  const speseQuery = useTelegramSpese(filters);
-  const logsQuery = useMessageLogs(filters);
+  const auditFilters: TelegramAuditFilters = {
+    cantiereId: filters.cantiereId,
+    status: filters.status,
+    from: filters.from,
+    to: filters.to,
+  };
+
+  const logFilters: TelegramAuditFilters = {
+    from: filters.from,
+    to: filters.to,
+    employeeId: filters.employeeId,
+    messageType: filters.messageType,
+    hasExtractedJson: filters.hasExtractedJson,
+    search: filters.search,
+  };
+
+  const oreQuery  = useTelegramOre(auditFilters);
+  const speseQuery = useTelegramSpese(auditFilters);
+  const logsQuery = useMessageLogs(logFilters);
 
   const isLoading = oreQuery.isLoading || speseQuery.isLoading || logsQuery.isLoading;
   const error     = oreQuery.error || speseQuery.error || logsQuery.error;
@@ -142,17 +181,21 @@ function isTelegramSource(method: string): boolean {
 export function useApproveTelegramEntry() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ ids, action }: { ids: number[]; action: 'verify' | 'reject' }) => {
+    mutationFn: async (payload: { items: AuditBulkItem[] } | { ids: number[]; action: 'verify' | 'reject' }) => {
       const res = await apiFetch('/api/hr/audit/bulk', {
         method: 'PUT',
-        body: JSON.stringify({ ids, action }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('Errore approvazione');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(getApiErrorMessage(body, 'Errore approvazione'));
+      }
       return res.json();
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: telegramKeys.all() });
       qc.invalidateQueries({ queryKey: hrKeys.all() });
+      qc.invalidateQueries({ queryKey: employeeKeys.list() });
     },
   });
 }

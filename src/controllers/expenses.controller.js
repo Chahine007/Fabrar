@@ -1,7 +1,7 @@
 import { insertSpesa, listPricebook, getDb } from "../db/index.js";
 import { normalizeOptionalText, parseIdParam } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { ValidationStatus } from "../constants.js";
+import { CostAllocationScope, CostCategory, LogisticaStatus, ValidationStatus } from "../constants.js";
 import {
     ensureCantiereActive,
     ensureTaskBelongsToCantiere,
@@ -9,9 +9,43 @@ import {
     getRootWbsId,
 } from "../domain/shared/linkValidators.js";
 import { canAccessCantiere } from "../domain/shared/accessControl.js";
+import {
+    GenyaImportFormatError,
+    parseCantiereIdFromReferer,
+    parseExpenseRowsFromUploadedFile,
+    parseImportedMoney,
+    parseImportedTimestamp,
+} from "../services/genyaImportParser.js";
+
+export {
+    parseCantiereIdFromReferer,
+    parseExpenseRowsFromCsv,
+    parseExpenseRowsFromTable,
+    parseExpenseRowsFromUploadedFile,
+    parseExpenseRowsFromXlsx,
+    parseImportedMoney,
+    parseImportedTimestamp,
+} from "../services/genyaImportParser.js";
 
 const WEB_SOURCE = "WEB";
 const MUTABLE_STATUSES = new Set([ValidationStatus.PENDING, ValidationStatus.REJECTED]);
+const MATERIAL_IMPORT_KEYS = [
+    "codice_sku",
+    "sku",
+    "codice_articolo",
+    "cod_articolo",
+    "descrizione_articolo",
+    "descrizione_materiale",
+    "quantita",
+    "qta",
+    "qty",
+    "unita_misura",
+    "costo_unitario",
+    "prezzo_unitario",
+    "importo_riga",
+    "valore_riga",
+    "prezzo_totale",
+];
 
 function getAuthenticatedEmployeeId(req) {
     const employeeId = Number(req.user?.employee_id);
@@ -29,6 +63,10 @@ function buildExpenseInclude() {
         wbs_node: { select: { id: true, nome: true, cantiere_id: true } },
         documento: { select: { id: true, name: true, file_path: true, type: true, cantiere_id: true } },
     };
+}
+
+function hasMaterialImportFields(item) {
+    return MATERIAL_IMPORT_KEYS.some((key) => item?.[key] != null && item[key] !== "");
 }
 
 async function ensureDocumentBelongsToCantiere(prisma, documentId, cantiereId) {
@@ -60,127 +98,6 @@ async function validateExpenseLinks(prisma, { cantiereId, taskId, wbsNodeId, doc
     }
 
     return null;
-}
-
-export function parseImportedTimestamp(value) {
-    if (!value) return new Date();
-
-    if (typeof value === "string" && value.includes("/")) {
-        const [day, month, year] = value.split("/");
-        if (day && month && year) {
-            return new Date(`${year}-${month}-${day}T12:00:00.000Z`);
-        }
-    }
-
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-        throw new Error(`Timestamp non valido: ${value}`);
-    }
-
-    return parsed;
-}
-
-function parseCsvLine(line, delimiter) {
-    const values = [];
-    let current = "";
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        const next = line[i + 1];
-
-        if (char === '"' && inQuotes && next === '"') {
-            current += '"';
-            i += 1;
-            continue;
-        }
-
-        if (char === '"') {
-            inQuotes = !inQuotes;
-            continue;
-        }
-
-        if (char === delimiter && !inQuotes) {
-            values.push(current.trim());
-            current = "";
-            continue;
-        }
-
-        current += char;
-    }
-
-    values.push(current.trim());
-    return values.map((value) => value.replace(/^['"]|['"]$/g, ""));
-}
-
-function detectCsvDelimiter(headerLine) {
-    const semicolonCount = (headerLine.match(/;/g) || []).length;
-    const commaCount = (headerLine.match(/,/g) || []).length;
-    return semicolonCount >= commaCount ? ";" : ",";
-}
-
-function normalizeImportHeader(header) {
-    const key = String(header ?? "")
-        .trim()
-        .toLowerCase()
-        .replace(/^\uFEFF/, "")
-        .replace(/\s+/g, "_");
-
-    const aliases = {
-        cantiere: "cantiere_id",
-        cantiereid: "cantiere_id",
-        id_cantiere: "cantiere_id",
-        commessa_id: "cantiere_id",
-        progetto_id: "cantiere_id",
-        data: "timestamp_utc",
-        giorno: "timestamp_utc",
-        date: "timestamp_utc",
-        totale: "importo",
-        amount: "importo",
-        costo: "importo",
-        supplier: "fornitore",
-        vendor: "fornitore",
-        note: "descrizione",
-        descrizione_spesa: "descrizione",
-    };
-
-    return aliases[key] ?? key;
-}
-
-export function parseImportedMoney(value) {
-    if (typeof value === "number") return value;
-    let text = String(value ?? "").trim().replace(/\s/g, "").replace(/[€]/g, "");
-    if (!text) return NaN;
-
-    const lastComma = text.lastIndexOf(",");
-    const lastDot = text.lastIndexOf(".");
-    if (lastComma !== -1 && lastDot !== -1) {
-        text = lastComma > lastDot
-            ? text.replace(/\./g, "").replace(",", ".")
-            : text.replace(/,/g, "");
-    } else if (lastComma !== -1) {
-        text = text.replace(/\./g, "").replace(",", ".");
-    }
-
-    return Number(text);
-}
-
-export function parseExpenseRowsFromCsv(csvText, fallbackCantiereId = null) {
-    const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
-    if (lines.length <= 1) return [];
-
-    const delimiter = detectCsvDelimiter(lines[0]);
-    const headers = parseCsvLine(lines[0], delimiter).map(normalizeImportHeader);
-
-    return lines.slice(1).map((line) => {
-        const values = parseCsvLine(line, delimiter);
-        const row = {};
-        headers.forEach((header, idx) => {
-            row[header] = values[idx] || null;
-        });
-        if (!row.cantiere_id && fallbackCantiereId) row.cantiere_id = fallbackCantiereId;
-        return row;
-    }).filter((row) => row.importo && row.cantiere_id);
 }
 
 export const getPricebook = asyncHandler(async (req, res) => {
@@ -219,15 +136,25 @@ export const createManualExpense = asyncHandler(async (req, res) => {
 
 export const bulkImportExpenses = asyncHandler(async (req, res) => {
     let spese_bulk = req.body.spese_bulk;
-    const fallbackCantiereId = parseIdParam(req.body.cantiere_id ?? req.query.cantiere_id);
+    const explicitCantiereId = parseIdParam(req.body.cantiere_id ?? req.query.cantiere_id);
+    const fallbackCantiereId = explicitCantiereId ?? parseCantiereIdFromReferer(req.get?.("referer") ?? req.headers?.referer);
 
     if (req.file) {
-        const csvText = req.file.buffer.toString("utf-8");
-        spese_bulk = parseExpenseRowsFromCsv(csvText, fallbackCantiereId);
+        try {
+            spese_bulk = await parseExpenseRowsFromUploadedFile(req.file, fallbackCantiereId);
+        } catch (err) {
+            if (err instanceof GenyaImportFormatError) {
+                return res.status(400).json({ error: err.message });
+            }
+            throw err;
+        }
     }
 
     if (!Array.isArray(spese_bulk) || spese_bulk.length === 0) {
-        return res.status(400).json({ error: "Nessuna spesa fornita o CSV non valido." });
+        return res.status(400).json({
+            error: "Nessuna spesa fornita o CSV non valido.",
+            details: "Verifica che il file contenga una colonna importo/totale e un cantiere, oppure avvia l'import dal dettaglio cantiere. Per il formato Full Genya servono importi riga valorizzati.",
+        });
     }
 
     const uploaderEmployeeId = req.user?.employee_id;
@@ -237,6 +164,12 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
 
     const prisma = getDb();
     const employeeId = Number(uploaderEmployeeId);
+    const importStats = {
+        speseCreate: 0,
+        righeLogisticaPending: 0,
+        righeSpese: 0,
+        warnings: [],
+    };
 
     await prisma.$transaction(async (tx) => {
         const rootWbsCache = new Map();
@@ -244,8 +177,10 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
             const importo = parseImportedMoney(item.importo);
             if (!Number.isFinite(importo) || importo <= 0) throw new Error("Importi devono essere > 0.");
 
+            const hasMaterialFields = hasMaterialImportFields(item);
             const cantiereId = parseIdParam(item.cantiere_id);
             if (!cantiereId) throw new Error("Ogni spesa deve essere associata a un cantiere.");
+
             if (!(await canAccessCantiere(tx, req.user, cantiereId, {
                 globalRoles: ["ADMIN", "HR"],
                 ownerRoles: ["PROJECT_MANAGER"],
@@ -256,6 +191,11 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
             const cantiere = await tx.cantiere.findFirst({ where: { id: cantiereId, attivo: 1 }, select: { id: true } });
             if (!cantiere) throw new Error(`Cantiere non valido o inattivo: ${cantiereId}.`);
 
+            if (hasMaterialFields) {
+                importStats.warnings.push("Import Genya trattato come coda logistica: nessun carico magazzino viene creato dal CSV.");
+            }
+            importStats.righeSpese += 1;
+            importStats.righeLogisticaPending += 1;
             if (!rootWbsCache.has(cantiereId)) {
                 const rootWbs = await tx.wbsNode.findFirst({ where: { cantiere_id: cantiereId, parent_id: null }, select: { id: true } });
                 rootWbsCache.set(cantiereId, rootWbs?.id ?? null);
@@ -270,14 +210,32 @@ export const bulkImportExpenses = asyncHandler(async (req, res) => {
                     importo,
                     fornitore: normalizeOptionalText(item.fornitore),
                     descrizione: normalizeOptionalText(item.descrizione),
-                    fonte: normalizeOptionalText(item.fonte) || "IMPORT",
+                    fonte: "IMPORT_GENYA",
+                    input_method: "import_genya",
                     fattura_rif: normalizeOptionalText(item.fattura_rif),
                     stato_validazione: ValidationStatus.PENDING,
+                    logistica_status: LogisticaStatus.PENDING_OCR,
+                    cost_category: CostCategory.UNKNOWN,
+                    allocation_scope: CostAllocationScope.REVIEW,
                 },
             });
+            importStats.speseCreate += 1;
         }
     });
-    res.json({ ok: true, salvate: spese_bulk.length, inserted: spese_bulk.length });
+    res.json({
+        ok: true,
+        righeProcessate: spese_bulk.length,
+        salvate: importStats.speseCreate,
+        inserted: importStats.speseCreate,
+        speseCreate: importStats.speseCreate,
+        righeSpese: importStats.righeSpese,
+        righeLogisticaPending: importStats.righeLogisticaPending,
+        articoliCreati: 0,
+        movimentiCaricoCreati: 0,
+        righeDaRiconciliare: 0,
+        righeDaRiconciliareDettaglio: [],
+        warnings: [...new Set(importStats.warnings)],
+    });
 });
 
 export const createMyExpense = asyncHandler(async (req, res) => {

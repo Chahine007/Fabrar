@@ -5,6 +5,7 @@ import { authorizeRoles } from "../middleware/auth.js";
 import {
     getKpiSchema,
     getAuditSchema,
+    getAuditLogsSchema,
     auditBulkSchema,
     userCostSchema,
     updateReportEntrySchema,
@@ -50,7 +51,7 @@ router.patch("/api/hr/employees/:id",    authorizeRoles("ADMIN", "HR"), updateEm
 router.get("/api/hr/alerts",             authorizeRoles(...DASHBOARD_ROLES), getAlerts);
 router.get("/api/hr/users/:id/kpi",      authorizeRoles(...DASHBOARD_ROLES), validate(getKpiSchema), getUserKpi);
 
-// ─── Audit (Tabulati Orari) ───────────────────────────────────────────────────
+// ─── Audit (Tabulati) ─────────────────────────────────────────────────────────
 router.get("/api/hr/audit",              authorizeRoles("ADMIN", "HR", "PROJECT_MANAGER", "WORKER"), validate(getAuditSchema), getAudit);
 router.put("/api/hr/audit/bulk",         authorizeRoles(...DASHBOARD_ROLES), validate(auditBulkSchema), bulkUpdateAudit);
 
@@ -69,7 +70,7 @@ router.post("/api/hr/users/:id/cost",    authorizeRoles("ADMIN", "HR"), validate
 
 // ─── Reports & Logs ──────────────────────────────────────────────────────────
 router.get("/api/reports",               listReportsCtrl);
-router.get("/api/logs",                  authorizeRoles(...DASHBOARD_ROLES), getAuditLogsCtrl);
+router.get("/api/logs",                  authorizeRoles(...DASHBOARD_ROLES), validate(getAuditLogsSchema), getAuditLogsCtrl);
 router.get("/api/admin/pending-summary", authorizeRoles(...DASHBOARD_ROLES), getPendingSummaryCtrl);
 
 export default router;

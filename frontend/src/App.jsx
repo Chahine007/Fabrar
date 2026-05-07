@@ -1,38 +1,33 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { AuthProvider, useAuthContext } from "./context/AuthContext";
 import { ProtectedRoute, RoleRoute } from "./components/auth/RoleGuard";
-import { ToastProvider } from "./components/ui";
+import { FullPageLoader, ToastProvider } from "./components/ui";
 
-// Unified Shell
-import ERPProShell from "./components/layout/ERPProShell";
-
-// Pages
-import LoginPage          from "./pages/LoginPage";
-import Dashboard          from "./pages/Dashboard";
-import ProjectListPage    from "./pages/ProjectListPage";
-import ProjectDetailPage  from "./pages/ProjectDetailPage";
-import MessagesPage       from "./pages/MessagesPage";
-import EmployeesPage      from "./pages/EmployeesPage";
-import EmployeeDetailPage from "./pages/EmployeeDetailPage";
-import TabulatiOrariPage  from "./pages/TabulatiOrariPage";
-import TelegramAuditPage  from "./pages/TelegramAuditPage";
-import SettingsPage       from "./pages/SettingsPage";
-import WarehousePage      from "./pages/WarehousePage";
-import SuppliersPage      from "./pages/SuppliersPage";
-import MaterialRequestsPage from "./pages/MaterialRequestsPage";
-import ActivitiesPage     from "./pages/ActivitiesPage";
+const ERPProShell = lazy(() => import("./components/layout/ERPProShell"));
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const ProjectListPage = lazy(() => import("./pages/ProjectListPage"));
+const ProjectDetailPage = lazy(() => import("./pages/ProjectDetailPage"));
+const MessagesPage = lazy(() => import("./pages/MessagesPage"));
+const EmployeesPage = lazy(() => import("./pages/EmployeesPage"));
+const EmployeeDetailPage = lazy(() => import("./pages/EmployeeDetailPage"));
+const TabulatiPage = lazy(() => import("./pages/TabulatiPage"));
+const TelegramAuditPage = lazy(() => import("./pages/TelegramAuditPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const WarehousePage = lazy(() => import("./pages/WarehousePage"));
+const SuppliersPage = lazy(() => import("./pages/SuppliersPage"));
+const MaterialRequestsPage = lazy(() => import("./pages/MaterialRequestsPage"));
+const ActivitiesPage = lazy(() => import("./pages/ActivitiesPage"));
+const DataEntryPage = lazy(() => import("./pages/DataEntryPage"));
 
 // Public Guard Component (redirects to home if already logged in)
 const PublicRoute = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuthContext();
   
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
-      </div>
-    );
+    return <FullPageLoader label="Verifica sessione..." />;
   }
   
   if (isAuthenticated) {
@@ -44,6 +39,7 @@ const PublicRoute = ({ children }) => {
 
 const ALL_AUTH_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN", "WORKER"];
 const WAREHOUSE_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN"];
+const PROJECT_ROLES = ALL_AUTH_ROLES;
 
 const HomeRedirect = () => {
   const { user } = useAuthContext();
@@ -58,7 +54,7 @@ const HomeRedirect = () => {
     case "WAREHOUSEMAN":
       return <Navigate to="/warehouse" replace />;
     case "WORKER":
-      return <Navigate to="/timesheets" replace />;
+      return <Navigate to="/data-entry" replace />;
     default:
       return <Navigate to="/settings/account" replace />;
   }
@@ -68,7 +64,8 @@ function AppRoutes() {
   const { logout } = useAuthContext();
 
   return (
-    <Routes>
+    <Suspense fallback={<FullPageLoader label="Caricamento pagina..." />}>
+      <Routes>
       <Route 
         path="/login" 
         element={
@@ -87,27 +84,29 @@ function AppRoutes() {
       >
         {/* ── OPERATIVO ── */}
         <Route path="/"           element={<HomeRedirect />} />
-        <Route path="/dashboard"  element={<RoleRoute allowedRoles={["ADMIN"]}><Dashboard /></RoleRoute>} />
-        <Route path="/messages"   element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><MessagesPage /></RoleRoute>} />
+        <Route path="/dashboard"  element={<RoleRoute allowedRoles={["ADMIN"]} allowedCapabilities={["dashboard:read"]}><Dashboard /></RoleRoute>} />
+        <Route path="/messages"   element={<RoleRoute allowedRoles={ALL_AUTH_ROLES} allowedCapabilities={["messages:read"]}><MessagesPage /></RoleRoute>} />
 
         {/* Pilastro 1: Routing a due livelli per i Progetti */}
-        <Route path="/projects"         element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ProjectListPage /></RoleRoute>} />
-        <Route path="/projects/:id"     element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ProjectDetailPage /></RoleRoute>} />
+        <Route path="/projects"         element={<RoleRoute allowedRoles={PROJECT_ROLES} allowedCapabilities={["projects:read"]}><ProjectListPage /></RoleRoute>} />
+        <Route path="/projects/:id"     element={<RoleRoute allowedRoles={PROJECT_ROLES} allowedCapabilities={["projects:read"]}><ProjectDetailPage /></RoleRoute>} />
 
-        <Route path="/activities" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ActivitiesPage /></RoleRoute>} />
+        <Route path="/activities" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES} allowedCapabilities={["tasks:read"]}><ActivitiesPage /></RoleRoute>} />
+        <Route path="/data-entry" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES} allowedCapabilities={["data_entry:read"]}><DataEntryPage /></RoleRoute>} />
 
         {/* ── RISORSE ── */}
-        <Route path="/hr"                element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><EmployeesPage /></RoleRoute>} />
+        <Route path="/hr"                element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["hr:read"]}><EmployeesPage /></RoleRoute>} />
         <Route path="/personnel"         element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><Navigate to="/hr" replace /></RoleRoute>} />
-        <Route path="/hr/employees/:id"  element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><EmployeeDetailPage /></RoleRoute>} />
-        <Route path="/hr/tabulati"       element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><TabulatiOrariPage /></RoleRoute>} />
-        <Route path="/timesheets"        element={<RoleRoute allowedRoles={["WORKER"]}><TabulatiOrariPage /></RoleRoute>} />
+        <Route path="/hr/employees/:id"  element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["hr:read"]}><EmployeeDetailPage /></RoleRoute>} />
+        <Route path="/hr/tabulati"       element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["audit:approve"]}><TabulatiPage /></RoleRoute>} />
+        <Route path="/hr/telegram-audit" element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["audit:approve"]}><TelegramAuditPage /></RoleRoute>} />
+        <Route path="/timesheets"        element={<RoleRoute allowedRoles={["WORKER"]} allowedCapabilities={["timesheets:self:write"]}><TabulatiPage /></RoleRoute>} />
         {/* Legacy: /hr/audit → /hr/tabulati */}
         <Route path="/hr/audit"          element={<Navigate to="/hr/tabulati" replace />} />
-        <Route path="/warehouse"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES}><WarehousePage /></RoleRoute>} />
-        <Route path="/suppliers"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES}><SuppliersPage /></RoleRoute>} />
-        <Route path="/material-requests" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><MaterialRequestsPage /></RoleRoute>} />
-        <Route path="/finance"           element={<RoleRoute allowedRoles={["ADMIN"]}><Navigate to="/dashboard?tab=finanza" replace /></RoleRoute>} />
+        <Route path="/warehouse"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES} allowedCapabilities={["warehouse:read"]}><WarehousePage /></RoleRoute>} />
+        <Route path="/suppliers"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES} allowedCapabilities={["suppliers:read"]}><SuppliersPage /></RoleRoute>} />
+        <Route path="/material-requests" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES} allowedCapabilities={["material_requests:read"]}><MaterialRequestsPage /></RoleRoute>} />
+        <Route path="/finance"           element={<RoleRoute allowedRoles={["ADMIN"]} allowedCapabilities={["dashboard:read"]}><Navigate to="/dashboard?tab=finanza" replace /></RoleRoute>} />
 
         {/* Hidden until real production pages exist */}
         <Route path="/documents" element={<Navigate to="/" replace />} />
@@ -124,11 +123,13 @@ function AppRoutes() {
         <Route path="/cantieri" element={<Navigate to="/projects" replace />} />
         <Route path="/spese"    element={<Navigate to="/messages" replace />} />
         <Route path="/report"   element={<Navigate to="/hr"       replace />} />
+        <Route path="/inserimenti" element={<Navigate to="/data-entry" replace />} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
-    </Routes>
+      </Routes>
+    </Suspense>
   );
 }
 

@@ -69,6 +69,13 @@ export const billingKeys = {
   project: (cantiereId: number) => [...billingKeys.all(), cantiereId] as const,
 };
 
+export const accountingKeys = {
+  all: () => ['accounting'] as const,
+  payables: (filters?: object) => [...accountingKeys.all(), 'payables', filters ?? {}] as const,
+  vatRegister: (filters?: object) => [...accountingKeys.all(), 'vat-register', filters ?? {}] as const,
+  purchaseInvoice: (id: number) => [...accountingKeys.all(), 'purchase-invoices', id] as const,
+};
+
 export const wbsKeys = {
   all:  ()                  => ['wbs'] as const,
   tree: (cantiereId: number) => [...wbsKeys.all(), 'tree', cantiereId] as const,
@@ -93,4 +100,15 @@ export const userKeys = {
   settings:         () => [...userKeys.all(), 'settings'] as const,
   materialMovements: () => [...userKeys.all(), 'material-movements'] as const,
   supportContact:   () => [...userKeys.all(), 'support-contact'] as const,
+};
+
+export const enterpriseKeys = {
+  all:          () => ['enterprise'] as const,
+  capabilities: () => [...enterpriseKeys.all(), 'capabilities'] as const,
+  biOverview:   () => [...enterpriseKeys.all(), 'bi', 'overview'] as const,
+  biJobCosting: (filters?: object) => [...enterpriseKeys.all(), 'bi', 'job-costing', filters ?? {}] as const,
+  dataQuality:  () => [...enterpriseKeys.all(), 'bi', 'data-quality'] as const,
+  outbox:       (filters?: object) => [...enterpriseKeys.all(), 'outbox', filters ?? {}] as const,
+  auditLogs:    (filters?: object) => [...enterpriseKeys.all(), 'audit', filters ?? {}] as const,
+  ledger:       () => [...enterpriseKeys.all(), 'ledger'] as const,
 };

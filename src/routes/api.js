@@ -1,6 +1,8 @@
 import express from "express";
 import logger from "../logger.js";
 import authRoutes from "./auth.routes.js";
+import meRoutes from "./me.routes.js";
+import workflowRoutes from "./workflow.routes.js";
 import cantieriRoutes from "./cantieri.routes.js";
 import expensesRoutes from "./expenses.routes.js";
 import hrRoutes from "./hr.routes.js";
@@ -15,6 +17,12 @@ import tasksRoutes from "./tasks.routes.js";
 import timesheetsRoutes from "./timesheets.routes.js";
 import userRoutes from "./user.routes.js";
 import billingRoutes from "./billing.routes.js";
+import documentsRoutes from "./documents.routes.js";
+import accountingRoutes from "./accounting.routes.js";
+import ledgerRoutes from "./ledger.routes.js";
+import outboxRoutes from "./outbox.routes.js";
+import auditRoutes from "./audit.routes.js";
+import biRoutes from "./bi.routes.js";
 
 const router = express.Router();
 
@@ -25,6 +33,8 @@ if (!process.env.JWT_SECRET) {
 
 // Router aggregator
 router.use(authRoutes);
+router.use(meRoutes);
+router.use(workflowRoutes);
 router.use(tasksRoutes);
 router.use(timesheetsRoutes);
 router.use(cantieriRoutes);
@@ -39,5 +49,11 @@ router.use("/api/suppliers", suppliersRoutes);
 router.use("/api/material-requests", materialRequestsRoutes);
 router.use("/api/user", userRoutes);
 router.use("/api/billing", billingRoutes);
+router.use("/api/documents", documentsRoutes);
+router.use("/api/accounting", accountingRoutes);
+router.use("/api/ledger", ledgerRoutes);
+router.use("/api/outbox", outboxRoutes);
+router.use("/api/audit", auditRoutes);
+router.use("/api/bi", biRoutes);
 
 export default router;

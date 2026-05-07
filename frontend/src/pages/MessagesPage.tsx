@@ -2,15 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   Pin,
-  MoreVertical,
-  Phone,
-  Video,
   ExternalLink,
   CheckSquare,
   Clock,
-  Paperclip,
-  Image as ImageIcon,
-  Mic,
   Send,
   PlusCircle,
   AlertCircle,
@@ -19,9 +13,8 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import SmartActionMenu from '../components/SmartActionMenu';
-import ShareModal from '../components/ShareModal';
 import Spinner from '../components/Spinner';
 import { useAuthContext } from '../context/AuthContext';
 import {
@@ -37,7 +30,7 @@ import { useSearchEmployees } from '../hooks/api/useHr';
 import { useTypingIndicator } from '../hooks/useTypingIndicator';
 import { useToast } from '../components/ui';
 
-const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMessage) => void }> = ({ message, onShare }) => {
+const MessageBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
   const isSystem = message.type.startsWith('system_');
 
   if (isSystem) {
@@ -88,10 +81,6 @@ const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMes
             <button className="p-1 hover:bg-card/50 rounded-lg transition-colors">
               <ChevronRight size={16} />
             </button>
-            <SmartActionMenu
-              onShare={() => onShare(message)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity"
-            />
           </div>
         </div>
       </div>
@@ -112,12 +101,6 @@ const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMes
         {!message.isMe && <p className="text-[10px] font-bold text-text-secondary ml-1 mb-1">{message.senderName}</p>}
 
         <div className="flex items-center gap-2">
-          {message.isMe && (
-            <SmartActionMenu
-              onShare={() => onShare(message)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity"
-            />
-          )}
           <div
             className={cn(
               'p-4 rounded-2xl shadow-sm',
@@ -127,19 +110,7 @@ const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMes
               message.type === 'image' && 'p-1 overflow-hidden'
             )}
           >
-            {message.type === 'text' && <p className="text-sm leading-relaxed">{message.content}</p>}
-            {message.type === 'shared_item' && (
-              <div className="space-y-2">
-                <p className="text-sm leading-relaxed">{message.content}</p>
-                <div className="p-3 bg-background/50 rounded-xl border border-border/50 text-text-primary">
-                  <p className="text-xs text-text-secondary font-bold uppercase tracking-wider mb-1">Elemento Condiviso</p>
-                  <p className="font-medium">{String(message.metadata?.title ?? '')}</p>
-                  {message.metadata?.value && (
-                    <p className="text-lg font-bold text-accent mt-1">{String(message.metadata.value)}</p>
-                  )}
-                </div>
-              </div>
-            )}
+            {message.type !== 'image' && <p className="text-sm leading-relaxed">{message.content}</p>}
             {message.type === 'image' && (
               <img
                 src={message.content}
@@ -149,12 +120,6 @@ const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMes
               />
             )}
           </div>
-          {!message.isMe && (
-            <SmartActionMenu
-              onShare={() => onShare(message)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity"
-            />
-          )}
         </div>
 
         <div className={cn('flex items-center gap-2 mt-1 px-1', message.isMe ? 'justify-end' : 'justify-start')}>
@@ -177,6 +142,8 @@ const MessageBubble: React.FC<{ message: ChatMessage; onShare: (message: ChatMes
 
 export default function MessagesPage() {
   const { user } = useAuthContext();
+  const navigate = useNavigate();
+  const toast = useToast();
   const {
     data: conversations = [],
     isLoading: loadingConversations,
@@ -184,8 +151,6 @@ export default function MessagesPage() {
   } = useConversations();
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [shareModalOpen, setShareModalOpen] = useState(false);
-  const [itemToShare, setItemToShare] = useState<unknown>(null);
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const createConversation = useCreateConversation();
@@ -212,7 +177,7 @@ export default function MessagesPage() {
 
   const pinnedConversations = visibleConversations.filter((conversation) => conversation.isPinned);
   const usersTypingInActiveConversation = activeConversationId ? typingUsers[activeConversationId] ?? [] : [];
-  const shouldSearchEmployees = searchQuery.trim().length >= 2 && visibleConversations.length === 0;
+  const shouldSearchEmployees = searchQuery.trim().length >= 2;
   const {
     data: employeeResults = [],
     isLoading: loadingEmployeeSearch,
@@ -232,21 +197,6 @@ export default function MessagesPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  const handleShare = (message: ChatMessage) => {
-    setItemToShare({
-      title: message.content || 'Messaggio',
-      value: message.type === 'shared_item' ? message.metadata?.title : undefined,
-      type: 'message',
-    });
-    setShareModalOpen(true);
-  };
-  const toast = useToast();
-
-  const handleExecuteShare = (conversationId: string, message: string, item: unknown) => {
-    console.log('Sharing to', conversationId, 'Message:', message, 'Item:', item);
-    toast.success('Messaggio condiviso', 'La condivisione è stata registrata.');
-  };
 
   const handleStartDirectConversation = async (targetEmployeeId: number) => {
     try {
@@ -290,6 +240,8 @@ export default function MessagesPage() {
   const conversationsErrorMessage =
     conversationsError instanceof Error ? conversationsError.message : null;
   const messagesErrorMessage = messagesError instanceof Error ? messagesError.message : null;
+  const canOpenProject = typeof activeConversation?.cantiereId === 'number' && activeConversation.cantiereId > 0;
+  const logHoursRoute = user?.role === 'WORKER' ? '/timesheets' : '/hr/tabulati';
 
   return (
     <div className="flex h-full bg-card overflow-hidden transition-colors duration-300">
@@ -470,13 +422,10 @@ export default function MessagesPage() {
                 />
                 <div>
                   <h3 className="text-base font-bold text-text-primary">{activeConversation.name}</h3>
-                  {activeConversation.projectContext && (
+                  {activeConversation.cantiereId && (
                     <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 bg-success-bg text-success-text rounded uppercase tracking-wider border border-success-border">
-                        {activeConversation.projectContext.status}
-                      </span>
                       <span className="text-[10px] text-text-secondary font-medium">
-                        {activeConversation.projectContext.team}
+                        Cantiere #{activeConversation.cantiereId}
                       </span>
                     </div>
                   )}
@@ -485,29 +434,23 @@ export default function MessagesPage() {
 
               <div className="flex items-center gap-2">
                 <div className="hidden md:flex items-center gap-2 mr-4">
-                  <button className="flex items-center gap-2 px-3 py-1.5 bg-background hover:bg-border text-text-secondary rounded-xl text-xs font-bold transition-colors">
-                    <ExternalLink size={14} />
-                    Progetto
-                  </button>
-                  <button className="flex items-center gap-2 px-3 py-1.5 bg-background hover:bg-border text-text-secondary rounded-xl text-xs font-bold transition-colors">
-                    <CheckSquare size={14} />
-                    Task
-                  </button>
-                  <button className="flex items-center gap-2 px-3 py-1.5 bg-accent/10 hover:bg-accent/20 text-accent rounded-xl text-xs font-bold transition-colors">
+                  {canOpenProject && (
+                    <button
+                      onClick={() => navigate(`/projects/${activeConversation.cantiereId}`)}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-background hover:bg-border text-text-secondary rounded-xl text-xs font-bold transition-colors"
+                    >
+                      <ExternalLink size={14} />
+                      Progetto
+                    </button>
+                  )}
+                  <button
+                    onClick={() => navigate(logHoursRoute)}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-accent/10 hover:bg-accent/20 text-accent rounded-xl text-xs font-bold transition-colors"
+                  >
                     <Clock size={14} />
                     Log Ore
                   </button>
                 </div>
-                <div className="w-px h-6 bg-border mx-2" />
-                <button className="p-2 text-text-secondary hover:bg-background hover:text-text-primary rounded-xl transition-all">
-                  <Phone size={20} />
-                </button>
-                <button className="p-2 text-text-secondary hover:bg-background hover:text-text-primary rounded-xl transition-all">
-                  <Video size={20} />
-                </button>
-                <button className="p-2 text-text-secondary hover:bg-background hover:text-text-primary rounded-xl transition-all">
-                  <MoreVertical size={20} />
-                </button>
               </div>
             </header>
 
@@ -533,7 +476,7 @@ export default function MessagesPage() {
                 )}
 
                 {messages.map((message) => (
-                  <MessageBubble key={message.id} message={message} onShare={handleShare} />
+                  <MessageBubble key={message.id} message={message} />
                 ))}
                 <div ref={messagesEndRef} />
               </div>
@@ -555,26 +498,24 @@ export default function MessagesPage() {
             <div className="p-6 bg-card border-t border-border">
               <div className="max-w-4xl mx-auto space-y-4">
                 <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-                  <button className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-success-bg hover:opacity-80 text-success-text rounded-full text-[10px] font-bold transition-all border border-success-border">
+                  <button
+                    onClick={() => navigate(logHoursRoute)}
+                    className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-success-bg hover:opacity-80 text-success-text rounded-full text-[10px] font-bold transition-all border border-success-border"
+                  >
                     <Clock size={14} />
                     Log Ore
                   </button>
-                  <button className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-info-bg hover:opacity-80 text-info-text rounded-full text-[10px] font-bold transition-all border border-info-border">
+                  <button
+                    onClick={() => navigate('/activities')}
+                    className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-info-bg hover:opacity-80 text-info-text rounded-full text-[10px] font-bold transition-all border border-info-border"
+                  >
                     <PlusCircle size={14} />
-                    Crea Task
+                    Attività
                   </button>
                 </div>
 
                 <div className="flex items-end gap-3">
                   <div className="flex-1 bg-background border border-border rounded-2xl p-1.5 focus-within:ring-2 focus-within:ring-accent/20 focus-within:bg-card transition-all flex items-end gap-1">
-                    <div className="flex items-center gap-1 mb-1 ml-1">
-                      <button className="p-2 text-text-secondary hover:bg-border rounded-xl transition-colors" title="Allega File">
-                        <Paperclip size={18} />
-                      </button>
-                      <button className="p-2 text-text-secondary hover:bg-border rounded-xl transition-colors" title="Immagine">
-                        <ImageIcon size={18} />
-                      </button>
-                    </div>
                     <textarea
                       placeholder="Scrivi un messaggio..."
                       className="flex-1 bg-transparent border-none outline-none text-sm p-2 resize-none min-h-[44px] max-h-32 text-text-primary"
@@ -583,11 +524,6 @@ export default function MessagesPage() {
                       onChange={handleInputChange}
                       onKeyDown={handleKeyDown}
                     />
-                    <div className="flex items-center gap-1 mb-1 mr-1">
-                      <button className="p-2 text-text-secondary hover:bg-border rounded-xl transition-colors" title="Nota Vocale">
-                        <Mic size={18} />
-                      </button>
-                    </div>
                   </div>
                   <button
                     onClick={handleSendMessage}
@@ -603,12 +539,6 @@ export default function MessagesPage() {
         )}
       </main>
 
-      <ShareModal
-        isOpen={shareModalOpen}
-        onClose={() => setShareModalOpen(false)}
-        itemToShare={itemToShare}
-        onShare={handleExecuteShare}
-      />
     </div>
   );
 }

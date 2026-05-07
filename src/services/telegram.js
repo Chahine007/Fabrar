@@ -15,6 +15,34 @@ function getFileBase() {
   return `https://api.telegram.org/file/bot${token}`;
 }
 
+function escapeHtml(text) {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function applyLightweightFormatting(text) {
+  return escapeHtml(text)
+    .replace(/\*\*([^\n*][^\n]*?[^\n*])\*\*/g, "<b>$1</b>")
+    .replace(/(^|[\s([{])\*([^\n*][^\n]*?[^\n*])\*(?=$|[\s\]).,;:!?])/gm, "$1<b>$2</b>");
+}
+
+function buildTextPayload(basePayload, options = {}) {
+  const parseMode = options.parseMode ?? "HTML";
+  if (parseMode === "HTML") {
+    return {
+      ...basePayload,
+      text: applyLightweightFormatting(basePayload.text),
+      parse_mode: "HTML",
+    };
+  }
+  if (parseMode) {
+    return { ...basePayload, parse_mode: parseMode };
+  }
+  return basePayload;
+}
+
 export async function tgCall(method, payload) {
   const url = `${getApiBase()}/${method}`;
   return withRetry(
@@ -32,14 +60,14 @@ export async function tgCall(method, payload) {
   );
 }
 
-export async function tgSendMessage(chatId, text, replyMarkup = null) {
-  const payload = { chat_id: chatId, text };
+export async function tgSendMessage(chatId, text, replyMarkup = null, options = {}) {
+  const payload = buildTextPayload({ chat_id: chatId, text }, options);
   if (replyMarkup) payload.reply_markup = replyMarkup;
   return tgCall("sendMessage", payload);
 }
 
-export async function tgEditMessageText(chatId, messageId, text, replyMarkup = null) {
-  const payload = { chat_id: chatId, message_id: messageId, text };
+export async function tgEditMessageText(chatId, messageId, text, replyMarkup = null, options = {}) {
+  const payload = buildTextPayload({ chat_id: chatId, message_id: messageId, text }, options);
   if (replyMarkup) payload.reply_markup = replyMarkup;
   return tgCall("editMessageText", payload);
 }

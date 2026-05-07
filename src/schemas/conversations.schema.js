@@ -18,7 +18,7 @@ export const createMessageSchema = z.object({
     }),
     body: z.object({
         content: z.string().trim().min(1, "Il contenuto del messaggio è obbligatorio."),
-        type: z.string().optional().default("text"),
+        type: z.enum(["text"]).optional().default("text"),
     }),
 });
 
@@ -26,4 +26,12 @@ export const createConversationSchema = z.object({
     body: z.object({
         targetEmployeeId: z.coerce.number().int().positive("ID dipendente non valido."),
     }),
+});
+
+export const projectConversationSchema = z.object({
+    params: z.object({
+        cantiereId: z.coerce.number().int().positive("ID cantiere non valido."),
+    }),
+    query: z.object({}).passthrough(),
+    body: z.object({}).passthrough(),
 });

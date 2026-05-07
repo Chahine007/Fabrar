@@ -5,8 +5,9 @@ import { Clock, CheckCircle2, XCircle, Hourglass, Activity } from 'lucide-react'
 import { cn } from '../../lib/utils';
 import { useOpsKPIs } from '../../hooks/api/useDashboard';
 import Spinner from '../Spinner';
+import { DashboardKpiGrid, type DashboardKpiDefinition, type DashboardKpiSectionProps } from './DashboardKpiGrid';
 
-export default function OperationsTab() {
+export default function OperationsTab({ kpiControls }: { kpiControls: DashboardKpiSectionProps }) {
   const { data, isLoading, error } = useOpsKPIs();
 
   if (isLoading) return <Spinner label="Caricamento KPI operativi..." />;
@@ -24,23 +25,16 @@ export default function OperationsTab() {
     if (hours < 24) return `${hours.toFixed(1)}h`;
     return `${(hours / 24).toFixed(1)}g`;
   };
+  const kpiDefinitions: DashboardKpiDefinition[] = [
+    { id: 'ops-approval-time', label: 'Tempo Medio Approvaz.', value: formatApproval(data.avgApprovalHours), icon: Clock, tone: 'text-accent', bg: 'bg-accent/10' },
+    { id: 'ops-rejection-rate', label: 'Tasso Rifiuto', value: `${data.tassoRifiuto}%`, icon: XCircle, tone: 'text-rose-500', bg: 'bg-rose-500/10' },
+    { id: 'ops-approved', label: 'Entry Approvate', value: String(data.totalVerified), icon: CheckCircle2, tone: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+    { id: 'ops-total', label: 'Entry Totali', value: String(data.totalEntries), icon: Activity, tone: 'text-indigo-500', bg: 'bg-indigo-500/10' },
+  ];
 
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'Tempo Medio Approvaz.', value: formatApproval(data.avgApprovalHours), icon: Clock,        color: 'text-accent',      bg: 'bg-accent/10' },
-          { label: 'Tasso Rifiuto',         value: `${data.tassoRifiuto}%`,                icon: XCircle,      color: 'text-rose-500',    bg: 'bg-rose-500/10' },
-          { label: 'Entry Approvate',       value: String(data.totalVerified),              icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
-          { label: 'Entry Totali',          value: String(data.totalEntries),               icon: Activity,     color: 'text-indigo-500',  bg: 'bg-indigo-500/10' },
-        ].map(({ label, value, icon: Icon, color, bg }) => (
-          <motion.div key={label} whileHover={{ y: -2 }} className="bg-card border border-border rounded-2xl p-5 flex items-center gap-4">
-            <div className={cn('p-2.5 rounded-xl', bg, color)}><Icon size={20} /></div>
-            <div><p className="text-xl font-bold text-text-primary">{value}</p><p className="text-xs text-text-secondary font-medium mt-0.5">{label}</p></div>
-          </motion.div>
-        ))}
-      </div>
+      <DashboardKpiGrid definitions={[...kpiDefinitions, ...kpiControls.customKpis]} controls={kpiControls} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Pie Chart distribuzione stati */}

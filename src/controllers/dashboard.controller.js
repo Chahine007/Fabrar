@@ -1,9 +1,9 @@
 import pkg from "@prisma/client";
-import { getDb, getCantieriStatus, formatDateOnly, parseDateOnly } from "../db/index.js";
+import { getDb, formatDateOnly, parseDateOnly } from "../db/index.js";
 import { round2, toNumber } from "../utils/helpers.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { getPendingSummary } from "./hr.controller.js";
-import { LIMITS, ValidationStatus } from "../constants.js";
+import { CostAllocationScope, LIMITS, ValidationStatus } from "../constants.js";
 import { getMultiProjectFinancials } from "../domain/finance/financeService.js";
 
 const { Prisma } = pkg;
@@ -19,7 +19,11 @@ export const getRadar = asyncHandler(async (req, res) => {
     const sevenDaysAgoStr = formatDateOnly(new Date(today.getTime() - 7 * 86400000));
 
     const [cantieriRaw, pending, weekEntries, activeEntries] = await Promise.all([
-        getCantieriStatus(),
+        prisma.cantiere.findMany({
+            where: { attivo: 1 },
+            select: { id: true, nome: true, budget: true, valore_contratto: true },
+            orderBy: { nome: "asc" },
+        }),
         getPendingSummary(prisma),
         prisma.reportEntry.findMany({
             where: {
@@ -37,11 +41,16 @@ export const getRadar = asyncHandler(async (req, res) => {
         }),
     ]);
 
-    const cantieri = cantieriRaw.map((c) => ({
-        id: c.id, nome: c.nome, budget: c.budget, costo: round2(c.costo_totale),
-        pct: c.budget > 0 ? c.costo_totale / c.budget : null,
-        status: c.budget > 0 ? (c.costo_totale / c.budget < 0.75 ? "green" : c.costo_totale / c.budget <= 0.9 ? "amber" : "red") : "gray"
-    }));
+    const financialMap = await getMultiProjectFinancials(prisma, cantieriRaw.map((c) => c.id), cantieriRaw);
+    const cantieri = cantieriRaw.map((c) => {
+        const budget = toNumber(c.valore_contratto ?? c.budget);
+        const costo = round2(financialMap[c.id]?.costoTotale ?? 0);
+        return {
+            id: c.id, nome: c.nome, budget, costo,
+            pct: budget > 0 ? costo / budget : null,
+            status: budget > 0 ? (costo / budget < 0.75 ? "green" : costo / budget <= 0.9 ? "amber" : "red") : "gray"
+        };
+    });
 
     let currentWeekHours = 0, lastWeekHours = 0;
     const mondayStr = formatDateOnly(monday);
@@ -75,7 +84,18 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
         where: { attivo: 1 },
         select: { id: true, nome: true, budget: true, valore_contratto: true },
     });
-    const financialMap = await getMultiProjectFinancials(prisma, cantieri.map((c) => c.id), cantieri);
+    const [financialMap, overheadAgg] = await Promise.all([
+        getMultiProjectFinancials(prisma, cantieri.map((c) => c.id), cantieri),
+        typeof prisma.spesa?.aggregate === "function"
+            ? prisma.spesa.aggregate({
+                where: {
+                    stato_validazione: ValidationStatus.APPROVED,
+                    allocation_scope: CostAllocationScope.OVERHEAD,
+                },
+                _sum: { importo: true },
+            })
+            : Promise.resolve({ _sum: { importo: 0 } }),
+    ]);
 
     const cantieriAnalysis = cantieri.map((c) => {
             const financials = financialMap[c.id] ?? {
@@ -135,6 +155,7 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
     const totaleFatturato = round2(cantieriAnalysis.reduce((s, c) => s + c.totaleFatturato, 0));
     const totaleIncassato = round2(cantieriAnalysis.reduce((s, c) => s + c.totaleIncassato, 0));
     const daFatturare = round2(cantieriAnalysis.reduce((s, c) => s + c.daFatturare, 0));
+    const costiOverhead = round2(toNumber(overheadAgg._sum?.importo));
 
     const topCantieri = cantieriAnalysis
         .filter((c) => c.valoreContratto > 0)
@@ -156,6 +177,7 @@ export const getFinanceKPIs = asyncHandler(async (req, res) => {
         costoManodoperaTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoManodopera, 0)),
         costoMaterialiTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoMateriali, 0)),
         costoSpeseTotale: round2(cantieriAnalysis.reduce((s, c) => s + c.costoSpese, 0)),
+        costiOverhead,
         totaleFatturato,
         totaleIncassato,
         daFatturare,

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../../lib/api';
-import { expenseKeys, hrKeys } from './queryKeys';
+import { cantierKeys, dashboardKeys, expenseKeys, hrKeys } from './queryKeys';
 
 export interface MyExpensePayload {
   date?: string | null;
@@ -51,7 +51,9 @@ function normalizeExpensePayload<T extends Record<string, unknown>>(payload: T) 
 function invalidateExpenseData(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: expenseKeys.all() });
   queryClient.invalidateQueries({ queryKey: hrKeys.all() });
-  queryClient.invalidateQueries({ queryKey: ['audit'] });
+  queryClient.invalidateQueries({ queryKey: hrKeys.audit() });
+  queryClient.invalidateQueries({ queryKey: dashboardKeys.all() });
+  queryClient.invalidateQueries({ queryKey: cantierKeys.all() });
 }
 
 export function useCreateMyExpense() {

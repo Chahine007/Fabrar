@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../lib/api';
-import { magazzinoKeys, cantierKeys, taskKeys } from './queryKeys';
+import { api, getApiErrorMessage } from '../../lib/api';
+import { billingKeys, dashboardKeys, magazzinoKeys, cantierKeys, taskKeys } from './queryKeys';
 import type {
   WarehouseArticle,
+  WarehouseArticleCreatePayload,
   WarehouseLocation,
   WarehouseMovementCreatePayload,
   WarehouseMovementRow,
@@ -42,6 +43,27 @@ export const useGiacenze = () => {
   });
 };
 
+export const useCreateArticolo = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload: WarehouseArticleCreatePayload) => {
+      const res = await api.post('/api/magazzino/articoli', payload);
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(getApiErrorMessage(body, `Errore creazione articolo (${res.status})`));
+      }
+
+      return body as WarehouseArticle;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: magazzinoKeys.articoli() });
+      queryClient.invalidateQueries({ queryKey: magazzinoKeys.giacenze() });
+    },
+  });
+};
+
 export const useMovimentiCantiere = (cantiereId: number) => {
   return useQuery({
     queryKey: magazzinoKeys.cantiere(cantiereId),
@@ -60,14 +82,21 @@ export const useCreaMovimento = () => {
   return useMutation({
     mutationFn: async (payload: WarehouseMovementCreatePayload) => {
       const res = await api.post('/api/magazzino/movimenti', payload);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(typeof body?.error === 'string' ? body.error : `Errore ${res.status}`);
+      }
       return res.json() as Promise<WarehouseMovementRow>;
     },
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: magazzinoKeys.all() });
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.all() });
       
       if (variables.cantiere_id) {
+        queryClient.invalidateQueries({ queryKey: cantierKeys.all() });
         queryClient.invalidateQueries({ queryKey: cantierKeys.detail(variables.cantiere_id) });
         queryClient.invalidateQueries({ queryKey: cantierKeys.timeline(variables.cantiere_id) });
+        queryClient.invalidateQueries({ queryKey: billingKeys.project(variables.cantiere_id) });
         queryClient.invalidateQueries({ queryKey: taskKeys.all() });
       }
     },

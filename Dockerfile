@@ -30,7 +30,7 @@ RUN apt-get update \
   && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg \
   && echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt bullseye-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends postgresql-client-16 \
+  && apt-get install -y --no-install-recommends postgresql-client-16 ffmpeg \
   && apt-get purge -y --auto-remove gnupg \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
