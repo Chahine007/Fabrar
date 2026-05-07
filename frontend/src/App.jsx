@@ -45,7 +45,7 @@ const PublicRoute = ({ children }) => {
 
 const ALL_AUTH_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN", "WORKER"];
 const WAREHOUSE_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN"];
-const PROJECT_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER"];
+const PROJECT_ROLES = ALL_AUTH_ROLES;
 
 const HomeRedirect = () => {
   const { user } = useAuthContext();
@@ -89,28 +89,28 @@ function AppRoutes() {
       >
         {/* ── OPERATIVO ── */}
         <Route path="/"           element={<HomeRedirect />} />
-        <Route path="/dashboard"  element={<RoleRoute allowedRoles={["ADMIN"]}><Dashboard /></RoleRoute>} />
-        <Route path="/messages"   element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><MessagesPage /></RoleRoute>} />
+        <Route path="/dashboard"  element={<RoleRoute allowedRoles={["ADMIN"]} allowedCapabilities={["dashboard:read"]}><Dashboard /></RoleRoute>} />
+        <Route path="/messages"   element={<RoleRoute allowedRoles={ALL_AUTH_ROLES} allowedCapabilities={["messages:read"]}><MessagesPage /></RoleRoute>} />
 
         {/* Pilastro 1: Routing a due livelli per i Progetti */}
-        <Route path="/projects"         element={<RoleRoute allowedRoles={PROJECT_ROLES}><ProjectListPage /></RoleRoute>} />
-        <Route path="/projects/:id"     element={<RoleRoute allowedRoles={PROJECT_ROLES}><ProjectDetailPage /></RoleRoute>} />
+        <Route path="/projects"         element={<RoleRoute allowedRoles={PROJECT_ROLES} allowedCapabilities={["projects:read"]}><ProjectListPage /></RoleRoute>} />
+        <Route path="/projects/:id"     element={<RoleRoute allowedRoles={PROJECT_ROLES} allowedCapabilities={["projects:read"]}><ProjectDetailPage /></RoleRoute>} />
 
-        <Route path="/activities" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ActivitiesPage /></RoleRoute>} />
+        <Route path="/activities" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES} allowedCapabilities={["tasks:read"]}><ActivitiesPage /></RoleRoute>} />
         <Route path="/data-entry" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><DataEntryPage /></RoleRoute>} />
 
         {/* ── RISORSE ── */}
-        <Route path="/hr"                element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><EmployeesPage /></RoleRoute>} />
+        <Route path="/hr"                element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["hr:read"]}><EmployeesPage /></RoleRoute>} />
         <Route path="/personnel"         element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><Navigate to="/hr" replace /></RoleRoute>} />
-        <Route path="/hr/employees/:id"  element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><EmployeeDetailPage /></RoleRoute>} />
-        <Route path="/hr/tabulati"       element={<RoleRoute allowedRoles={["ADMIN", "HR"]}><TabulatiPage /></RoleRoute>} />
-        <Route path="/timesheets"        element={<RoleRoute allowedRoles={["WORKER"]}><TabulatiPage /></RoleRoute>} />
+        <Route path="/hr/employees/:id"  element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["hr:read"]}><EmployeeDetailPage /></RoleRoute>} />
+        <Route path="/hr/tabulati"       element={<RoleRoute allowedRoles={["ADMIN", "HR"]} allowedCapabilities={["audit:approve"]}><TabulatiPage /></RoleRoute>} />
+        <Route path="/timesheets"        element={<RoleRoute allowedRoles={["WORKER"]} allowedCapabilities={["timesheets:self:write"]}><TabulatiPage /></RoleRoute>} />
         {/* Legacy: /hr/audit → /hr/tabulati */}
         <Route path="/hr/audit"          element={<Navigate to="/hr/tabulati" replace />} />
-        <Route path="/warehouse"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES}><WarehousePage /></RoleRoute>} />
-        <Route path="/suppliers"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES}><SuppliersPage /></RoleRoute>} />
-        <Route path="/material-requests" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><MaterialRequestsPage /></RoleRoute>} />
-        <Route path="/finance"           element={<RoleRoute allowedRoles={["ADMIN"]}><Navigate to="/dashboard?tab=finanza" replace /></RoleRoute>} />
+        <Route path="/warehouse"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES} allowedCapabilities={["warehouse:read"]}><WarehousePage /></RoleRoute>} />
+        <Route path="/suppliers"         element={<RoleRoute allowedRoles={WAREHOUSE_ROLES} allowedCapabilities={["suppliers:read"]}><SuppliersPage /></RoleRoute>} />
+        <Route path="/material-requests" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES} allowedCapabilities={["material_requests:read"]}><MaterialRequestsPage /></RoleRoute>} />
+        <Route path="/finance"           element={<RoleRoute allowedRoles={["ADMIN"]} allowedCapabilities={["dashboard:read"]}><Navigate to="/dashboard?tab=finanza" replace /></RoleRoute>} />
 
         {/* Hidden until real production pages exist */}
         <Route path="/documents" element={<Navigate to="/" replace />} />

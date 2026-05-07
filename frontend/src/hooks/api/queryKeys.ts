@@ -101,3 +101,14 @@ export const userKeys = {
   materialMovements: () => [...userKeys.all(), 'material-movements'] as const,
   supportContact:   () => [...userKeys.all(), 'support-contact'] as const,
 };
+
+export const enterpriseKeys = {
+  all:          () => ['enterprise'] as const,
+  capabilities: () => [...enterpriseKeys.all(), 'capabilities'] as const,
+  biOverview:   () => [...enterpriseKeys.all(), 'bi', 'overview'] as const,
+  biJobCosting: (filters?: object) => [...enterpriseKeys.all(), 'bi', 'job-costing', filters ?? {}] as const,
+  dataQuality:  () => [...enterpriseKeys.all(), 'bi', 'data-quality'] as const,
+  outbox:       (filters?: object) => [...enterpriseKeys.all(), 'outbox', filters ?? {}] as const,
+  auditLogs:    (filters?: object) => [...enterpriseKeys.all(), 'audit', filters ?? {}] as const,
+  ledger:       () => [...enterpriseKeys.all(), 'ledger'] as const,
+};

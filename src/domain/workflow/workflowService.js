@@ -1,7 +1,7 @@
-import { AUDIT_TYPE, PaymentDueStatus, ValidationStatus } from "../../constants.js";
+import { AUDIT_TYPE, LogisticaStatus, PaymentDueStatus, ValidationStatus } from "../../constants.js";
 import { normalizeStatus } from "../../utils/helpers.js";
 import { bulkUpdateItems } from "../hr/auditService.js";
-import { postPaymentDuePaidLedger } from "../finance/ledgerService.js";
+import { postPaymentDuePaidLedger, postSalesInvoicePaidLedger } from "../finance/ledgerService.js";
 import { enqueueOutboxEvent } from "../events/outboxService.js";
 import { EVENTS } from "../events/domainBus.js";
 import { writeAuditLog } from "../audit/auditLogService.js";
@@ -34,6 +34,26 @@ function paymentActionToStatus(action) {
   if (["pay", "paid", "mark-paid"].includes(normalized)) return PaymentDueStatus.PAID;
   if (["cancel", "cancelled"].includes(normalized)) return PaymentDueStatus.CANCELLED;
   if (["reopen", "open"].includes(normalized)) return PaymentDueStatus.OPEN;
+  return null;
+}
+
+function logisticsActionToStatus(action) {
+  const normalized = String(action ?? "").trim().toLowerCase();
+  if (["pending-ocr", "pending_ocr", "ocr-pending"].includes(normalized)) return LogisticaStatus.PENDING_OCR;
+  if (["ocr-review", "review", "review-required"].includes(normalized)) return LogisticaStatus.OCR_REVIEW;
+  if (["loaded", "loaded-to-warehouse", "warehouse-loaded"].includes(normalized)) return LogisticaStatus.LOADED_TO_WAREHOUSE;
+  if (["not-required", "no-logistics", "skip-logistics"].includes(normalized)) return LogisticaStatus.NOT_REQUIRED;
+  if (["reconcile", "reconciliation-required"].includes(normalized)) return LogisticaStatus.RECONCILIATION_REQUIRED;
+  return Object.values(LogisticaStatus).includes(String(action ?? "").toUpperCase())
+    ? String(action).toUpperCase()
+    : null;
+}
+
+function invoiceActionToStatus(action) {
+  const normalized = String(action ?? "").trim().toLowerCase();
+  if (["draft"].includes(normalized)) return "DRAFT";
+  if (["issue", "issued"].includes(normalized)) return "ISSUED";
+  if (["pay", "paid", "mark-paid"].includes(normalized)) return "PAID";
   return null;
 }
 
@@ -185,6 +205,167 @@ async function transitionPaymentDue(prisma, {
   });
 }
 
+async function transitionPurchaseInvoiceLogistics(prisma, {
+  id,
+  action,
+  payload,
+  user,
+  correlationId = null,
+}) {
+  const invoiceId = parsePositiveInt(id);
+  if (!invoiceId) throw httpError("ID fattura acquisto non valido.", 400);
+  const nextStatus = logisticsActionToStatus(action);
+  if (!nextStatus) throw httpError("Azione logistica OCR non valida.", 400);
+
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.fatturaAcquisto.findUnique({
+      where: { id: invoiceId },
+      include: { spesa: true },
+    });
+    if (!existing) throw httpError("Fattura acquisto non trovata.", 404);
+
+    const previousStatus = existing.spesa?.logistica_status ?? null;
+    if (previousStatus === LogisticaStatus.LOADED_TO_WAREHOUSE && nextStatus !== LogisticaStatus.LOADED_TO_WAREHOUSE) {
+      throw httpError("Una fattura già caricata a magazzino non può tornare a uno stato logistico precedente.", 409);
+    }
+
+    const invoiceUpdate = {
+      ...(payload?.cost_category ? { cost_category: String(payload.cost_category).toUpperCase() } : {}),
+      ...(payload?.allocation_scope ? { allocation_scope: String(payload.allocation_scope).toUpperCase() } : {}),
+      logistica_required: nextStatus === LogisticaStatus.LOADED_TO_WAREHOUSE,
+      ...(payload?.ocr_payload ? { ocr_payload: payload.ocr_payload } : {}),
+    };
+
+    const updatedInvoice = await tx.fatturaAcquisto.update({
+      where: { id: invoiceId },
+      data: invoiceUpdate,
+    });
+
+    let updatedSpesa = null;
+    if (existing.spesa_id) {
+      updatedSpesa = await tx.spesa.update({
+        where: { id: existing.spesa_id },
+        data: {
+          logistica_status: nextStatus,
+          ocr_reviewed_at: [
+            LogisticaStatus.NOT_REQUIRED,
+            LogisticaStatus.LOADED_TO_WAREHOUSE,
+          ].includes(nextStatus) ? new Date() : null,
+          ...(payload?.cost_category ? { cost_category: String(payload.cost_category).toUpperCase() } : {}),
+          ...(payload?.allocation_scope ? { allocation_scope: String(payload.allocation_scope).toUpperCase() } : {}),
+          ...(payload?.ocr_payload ? { ocr_payload: payload.ocr_payload } : {}),
+        },
+      });
+    }
+
+    await writeAuditLog(tx, user, {
+      entityType: "FatturaAcquisto",
+      entityId: updatedInvoice.id,
+      action: "PURCHASE_INVOICE_LOGISTICS_STATUS_CHANGED",
+      previousState: { logistica_status: previousStatus },
+      nextState: { logistica_status: nextStatus },
+      note: payload?.note,
+      correlationId,
+    });
+
+    await enqueueOutboxEvent(tx, {
+      eventType: EVENTS.PURCHASE_INVOICE_CONFIRMED,
+      aggregateType: "FatturaAcquisto",
+      aggregateId: updatedInvoice.id,
+      correlationId,
+      payload: {
+        fatturaAcquistoId: updatedInvoice.id,
+        spesaId: existing.spesa_id,
+        logisticaStatus: nextStatus,
+      },
+    });
+
+    const transition = await recordWorkflowTransition(tx, user, {
+      entityType: "FatturaAcquisto",
+      entityId: updatedInvoice.id,
+      action,
+      fromState: previousStatus,
+      toState: nextStatus,
+      payload,
+      correlationId,
+    });
+
+    return { transition, entity: { fattura_acquisto: updatedInvoice, spesa: updatedSpesa } };
+  });
+}
+
+async function transitionSalesInvoice(prisma, {
+  id,
+  action,
+  payload,
+  user,
+  correlationId = null,
+}) {
+  const invoiceId = parsePositiveInt(id);
+  if (!invoiceId) throw httpError("ID fattura attiva non valido.", 400);
+  const nextStatus = invoiceActionToStatus(action);
+  if (!nextStatus) throw httpError("Azione fattura attiva non valida.", 400);
+
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.fattura.findUnique({ where: { id: invoiceId } });
+    if (!existing) throw httpError("Fattura attiva non trovata.", 404);
+
+    const updateData = {
+      stato: nextStatus,
+      ...(payload?.note !== undefined ? { note: payload.note } : {}),
+    };
+
+    if (nextStatus === "PAID") {
+      updateData.paid_at = payload?.paid_at ? new Date(payload.paid_at) : new Date();
+      updateData.paid_amount = payload?.paid_amount ?? existing.importo_totale;
+      updateData.payment_note = payload?.payment_note ?? existing.payment_note;
+    } else if (nextStatus !== "PAID") {
+      updateData.paid_at = null;
+      updateData.paid_amount = null;
+      updateData.payment_note = null;
+    }
+
+    const updated = await tx.fattura.update({ where: { id: invoiceId }, data: updateData });
+
+    if (updated.stato === "PAID") {
+      await postSalesInvoicePaidLedger(tx, updated);
+      await enqueueOutboxEvent(tx, {
+        eventType: EVENTS.INVOICE_PAID,
+        aggregateType: "Fattura",
+        aggregateId: updated.id,
+        correlationId,
+        payload: {
+          invoiceId: updated.id,
+          cantiereId: updated.cantiere_id,
+          amount: Number(updated.paid_amount ?? updated.importo_totale),
+        },
+      });
+    }
+
+    await writeAuditLog(tx, user, {
+      entityType: "Fattura",
+      entityId: updated.id,
+      action: "SALES_INVOICE_STATUS_CHANGED",
+      previousState: { stato: existing.stato, paid_at: existing.paid_at, paid_amount: existing.paid_amount },
+      nextState: { stato: updated.stato, paid_at: updated.paid_at, paid_amount: updated.paid_amount },
+      note: payload?.note ?? payload?.payment_note,
+      correlationId,
+    });
+
+    const transition = await recordWorkflowTransition(tx, user, {
+      entityType: "Fattura",
+      entityId: updated.id,
+      action,
+      fromState: existing.stato,
+      toState: updated.stato,
+      payload,
+      correlationId,
+    });
+
+    return { transition, entity: updated };
+  });
+}
+
 export async function transitionEntity(prisma, {
   entityType,
   entityId,
@@ -209,6 +390,26 @@ export async function transitionEntity(prisma, {
 
   if (["payment-due", "payable", "scadenza-pagamento"].includes(normalizedEntityType)) {
     return transitionPaymentDue(prisma, {
+      id: entityId,
+      action,
+      payload,
+      user,
+      correlationId,
+    });
+  }
+
+  if (["purchase-invoice", "fattura-acquisto", "fatturaacquisto", "ocr-invoice"].includes(normalizedEntityType)) {
+    return transitionPurchaseInvoiceLogistics(prisma, {
+      id: entityId,
+      action,
+      payload,
+      user,
+      correlationId,
+    });
+  }
+
+  if (["invoice", "sales-invoice", "fattura"].includes(normalizedEntityType)) {
+    return transitionSalesInvoice(prisma, {
       id: entityId,
       action,
       payload,

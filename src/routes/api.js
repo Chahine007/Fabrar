@@ -19,6 +19,10 @@ import userRoutes from "./user.routes.js";
 import billingRoutes from "./billing.routes.js";
 import documentsRoutes from "./documents.routes.js";
 import accountingRoutes from "./accounting.routes.js";
+import ledgerRoutes from "./ledger.routes.js";
+import outboxRoutes from "./outbox.routes.js";
+import auditRoutes from "./audit.routes.js";
+import biRoutes from "./bi.routes.js";
 
 const router = express.Router();
 
@@ -47,5 +51,9 @@ router.use("/api/user", userRoutes);
 router.use("/api/billing", billingRoutes);
 router.use("/api/documents", documentsRoutes);
 router.use("/api/accounting", accountingRoutes);
+router.use("/api/ledger", ledgerRoutes);
+router.use("/api/outbox", outboxRoutes);
+router.use("/api/audit", auditRoutes);
+router.use("/api/bi", biRoutes);
 
 export default router;

@@ -38,7 +38,7 @@ export async function enqueueOutboxEvent(tx, {
 
 export async function flushPendingOutboxEvents(prisma, { limit = 50 } = {}) {
   const rows = await prisma.outboxEvent.findMany({
-    where: { status: { in: [OutboxStatus.PENDING, OutboxStatus.FAILED] } },
+    where: { status: OutboxStatus.PENDING },
     orderBy: [{ created_at: "asc" }, { id: "asc" }],
     take: Math.max(1, Math.min(Number(limit) || 50, 500)),
   });
@@ -75,4 +75,74 @@ export async function flushPendingOutboxEvents(prisma, { limit = 50 } = {}) {
   }
 
   return results;
+}
+
+export async function listOutboxEvents(prisma, {
+  status = null,
+  eventType = null,
+  aggregateType = null,
+  limit = 100,
+} = {}) {
+  const where = {};
+  if (status) where.status = String(status).trim().toUpperCase();
+  if (eventType) where.event_type = String(eventType).trim();
+  if (aggregateType) where.aggregate_type = String(aggregateType).trim();
+
+  return prisma.outboxEvent.findMany({
+    where,
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: Math.max(1, Math.min(Number(limit) || 100, 500)),
+  });
+}
+
+export async function retryOutboxEvent(prisma, id) {
+  const parsedId = Number(id);
+  if (!Number.isInteger(parsedId) || parsedId <= 0) {
+    const error = new Error("ID evento outbox non valido.");
+    error.status = 400;
+    throw error;
+  }
+
+  const event = await prisma.outboxEvent.findUnique({ where: { id: parsedId } });
+  if (!event) {
+    const error = new Error("Evento outbox non trovato.");
+    error.status = 404;
+    throw error;
+  }
+
+  return prisma.outboxEvent.update({
+    where: { id: parsedId },
+    data: {
+      status: OutboxStatus.PENDING,
+      last_error: null,
+      published_at: null,
+    },
+  });
+}
+
+export function startOutboxWorker(prisma, {
+  intervalMs = 5000,
+  batchSize = 50,
+  logger = console,
+} = {}) {
+  const normalizedInterval = Math.max(1000, Number(intervalMs) || 5000);
+  let running = false;
+
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      await flushPendingOutboxEvents(prisma, { limit: batchSize });
+    } catch (err) {
+      logger?.error?.({ err, event: "outbox_worker_error" }, "outbox_worker_error");
+    } finally {
+      running = false;
+    }
+  };
+
+  const timer = setInterval(tick, normalizedInterval);
+  timer.unref?.();
+  tick();
+
+  return () => clearInterval(timer);
 }

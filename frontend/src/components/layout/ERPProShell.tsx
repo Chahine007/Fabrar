@@ -17,12 +17,14 @@ import {
   ChevronDown,
   Truck,
   Inbox,
+  Euro,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useChatSockets, useTotalUnread } from '../../hooks/api/useConversations';
 import { useHrAlerts } from '../../hooks/api/useHr';
+import { useCapabilities } from '../../hooks/api/useAuth';
 import { useAuthContext } from '../../context/AuthContext';
 
 interface NavNode {
@@ -31,6 +33,7 @@ interface NavNode {
   path?: string;
   id: string;
   roles?: string[];
+  capability?: string;
   children?: NavNode[];
   hidden?: boolean;
 }
@@ -48,6 +51,7 @@ const NAV_TREE: NavNode[] = [
     icon: LayoutDashboard,
     path: '/dashboard',
     roles: ['ADMIN'],
+    capability: 'dashboard:read',
   },
   {
     id: 'operations-section',
@@ -55,9 +59,9 @@ const NAV_TREE: NavNode[] = [
     icon: Briefcase,
     children: [
       { icon: Inbox, label: 'Raccolta Dati', path: '/data-entry', id: 'data-entry', roles: ALL_AUTH_ROLES },
-      { icon: Briefcase, label: 'Progetti', path: '/projects', id: 'projects', roles: PROJECT_ROLES },
-      { icon: Activity, label: 'Attività', path: '/activities', id: 'activities' },
-      { icon: MessageSquare, label: 'Messaggi', path: '/messages', id: 'messages' },
+      { icon: Briefcase, label: 'Progetti', path: '/projects', id: 'projects', roles: PROJECT_ROLES, capability: 'projects:read' },
+      { icon: Activity, label: 'Attività', path: '/activities', id: 'activities', capability: 'tasks:read' },
+      { icon: MessageSquare, label: 'Messaggi', path: '/messages', id: 'messages', capability: 'messages:read' },
     ],
   },
   {
@@ -65,9 +69,9 @@ const NAV_TREE: NavNode[] = [
     label: 'Risorse Umane',
     icon: Users,
     children: [
-      { icon: Users, label: 'Gestione Personale', path: '/hr', id: 'hr', roles: ['ADMIN', 'HR'] },
-      { icon: ClipboardList, label: 'Tabulati', path: '/hr/tabulati', id: 'hr-tabulati', roles: ['ADMIN', 'HR'] },
-      { icon: ClipboardList, label: 'Le Mie Ore / Spese', path: '/timesheets', id: 'my-timesheets', roles: ['WORKER'] },
+      { icon: Users, label: 'Gestione Personale', path: '/hr', id: 'hr', roles: ['ADMIN', 'HR'], capability: 'hr:read' },
+      { icon: ClipboardList, label: 'Tabulati', path: '/hr/tabulati', id: 'hr-tabulati', roles: ['ADMIN', 'HR'], capability: 'audit:approve' },
+      { icon: ClipboardList, label: 'Le Mie Ore / Spese', path: '/timesheets', id: 'my-timesheets', roles: ['WORKER'], capability: 'timesheets:self:write' },
     ],
   },
   {
@@ -75,9 +79,17 @@ const NAV_TREE: NavNode[] = [
     label: 'Logistica',
     icon: Package,
     children: [
-      { icon: Package, label: 'Magazzino', path: '/warehouse', id: 'warehouse', roles: WAREHOUSE_ROLES },
-      { icon: Truck, label: 'Fornitori', path: '/suppliers', id: 'suppliers', roles: WAREHOUSE_ROLES },
-      { icon: ClipboardList, label: 'Richieste Materiali', path: '/material-requests', id: 'material-requests', roles: ALL_AUTH_ROLES },
+      { icon: Package, label: 'Magazzino', path: '/warehouse', id: 'warehouse', roles: WAREHOUSE_ROLES, capability: 'warehouse:read' },
+      { icon: Truck, label: 'Fornitori', path: '/suppliers', id: 'suppliers', roles: WAREHOUSE_ROLES, capability: 'suppliers:read' },
+      { icon: ClipboardList, label: 'Richieste Materiali', path: '/material-requests', id: 'material-requests', roles: ALL_AUTH_ROLES, capability: 'material_requests:read' },
+    ],
+  },
+  {
+    id: 'administration-section',
+    label: 'Amministrazione',
+    icon: Euro,
+    children: [
+      { icon: Euro, label: 'Finanza', path: '/finance', id: 'finance', roles: ['ADMIN'], capability: 'dashboard:read' },
     ],
   },
 ];
@@ -97,13 +109,21 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen, onLogout }: { isMobileOpen: bo
   });
   const location = useLocation();
   const { user } = useAuthContext();
+  const { data: capabilitiesData } = useCapabilities();
   const role = user?.role;
+  const capabilities = capabilitiesData?.capabilities ?? [];
+  const hasCapabilities = capabilities.length > 0;
   
   const isExpanded = isMobileOpen || isLockedExpanded || isHovered;
 
   const canAccessNode = React.useCallback(
-    (node: NavNode) => !node.roles || (!!role && node.roles.includes(role)),
-    [role]
+    (node: NavNode) => {
+      if (node.capability && hasCapabilities) {
+        return capabilities.includes(node.capability);
+      }
+      return !node.roles || (!!role && node.roles.includes(role));
+    },
+    [capabilities, hasCapabilities, role]
   );
 
   const visibleNavTree = React.useMemo(() => {
