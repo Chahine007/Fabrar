@@ -4,9 +4,14 @@ import { normalizeOptionalText, parseIdParam, round2, toNumber } from "../utils/
 import { getProjectFinancials } from "../domain/finance/financeService.js";
 import { ensureWbsBelongsToCantiere } from "../domain/shared/linkValidators.js";
 import { canAccessCantiere } from "../domain/shared/accessControl.js";
+import { writeAuditLog } from "../domain/audit/auditLogService.js";
+import { domainBus, EVENTS } from "../domain/events/domainBus.js";
+import { enqueueOutboxEvent } from "../domain/events/outboxService.js";
+import { postSalesInvoicePaidLedger } from "../domain/finance/ledgerService.js";
 
 const MUTABLE_INSTALLMENT_STATUSES = ["PENDING"];
 const INVOICE_STATUSES = ["DRAFT", "ISSUED"];
+const PAYMENT_STATUSES = ["PAID", "ISSUED"];
 
 function parsePositiveInt(value) {
   const parsed = Number(value);
@@ -70,6 +75,7 @@ function mapInvoice(invoice) {
   return {
     ...invoice,
     importo_totale: round2(toNumber(invoice.importo_totale)),
+    paid_amount: invoice.paid_amount == null ? null : round2(toNumber(invoice.paid_amount)),
     rate: Array.isArray(invoice.rate)
       ? invoice.rate.map((installment) => ({
           ...installment,
@@ -494,4 +500,117 @@ export const createInvoice = asyncHandler(async (req, res) => {
   });
 
   res.status(201).json(mapInvoice(result));
+});
+
+export const updateInvoicePayment = asyncHandler(async (req, res) => {
+  const prisma = getDb();
+  const invoiceId = parseIdParam(req.params.invoiceId ?? req.params.id);
+  if (!invoiceId) {
+    return res.status(400).json({ error: "ID fattura non valido." });
+  }
+
+  const status = normalizeEnumValue(req.body.status, PAYMENT_STATUSES, null);
+  if (!status) {
+    return res.status(400).json({ error: "Stato pagamento non valido." });
+  }
+
+  const existing = await prisma.fattura.findUnique({
+    where: { id: invoiceId },
+    select: {
+      id: true,
+      cantiere_id: true,
+      importo_totale: true,
+      stato: true,
+      paid_at: true,
+      paid_amount: true,
+      payment_note: true,
+    },
+  });
+  if (!existing) {
+    return res.status(404).json({ error: "Fattura non trovata." });
+  }
+  if (!(await ensureBillingAccess(prisma, req.user, existing.cantiere_id))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+  }
+
+  let paidAt = null;
+  let paidAmount = null;
+  if (status === "PAID") {
+    try {
+      paidAt = parseDateValue(req.body.paid_at ?? new Date(), "paid_at", { allowNull: false });
+      paidAmount = parseDecimalValue(req.body.paid_amount ?? existing.importo_totale, "paid_amount", { min: 0 });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const previousState = {
+      stato: existing.stato,
+      paid_at: existing.paid_at,
+      paid_amount: existing.paid_amount,
+      payment_note: existing.payment_note,
+    };
+
+    const updateData = status === "PAID"
+      ? {
+          stato: "PAID",
+          paid_at: paidAt,
+          paid_amount: paidAmount,
+          payment_note: normalizeOptionalText(req.body.payment_note),
+        }
+      : {
+          stato: "ISSUED",
+          paid_at: null,
+          paid_amount: null,
+          payment_note: normalizeOptionalText(req.body.payment_note),
+        };
+
+    const updatedInvoice = await tx.fattura.update({
+      where: { id: invoiceId },
+      data: updateData,
+    });
+
+    await tx.rata.updateMany({
+      where: { fattura_id: invoiceId },
+      data: { stato: status === "PAID" ? "PAID" : "INVOICED" },
+    });
+
+    if (status === "PAID") {
+      await postSalesInvoicePaidLedger(tx, updatedInvoice);
+      await enqueueOutboxEvent(tx, {
+        eventType: EVENTS.INVOICE_PAID,
+        aggregateType: "Fattura",
+        aggregateId: invoiceId,
+        payload: {
+          invoiceId,
+          cantiereId: existing.cantiere_id,
+          status,
+          amount: Number(updatedInvoice.paid_amount ?? updatedInvoice.importo_totale),
+        },
+      });
+    }
+
+    await writeAuditLog(tx, req.user, {
+      entityType: "Fattura",
+      entityId: invoiceId,
+      action: status === "PAID" ? "INVOICE_PAID" : "INVOICE_REOPENED",
+      previousState,
+      nextState: updateData,
+      note: normalizeOptionalText(req.body.payment_note),
+    });
+
+    return tx.fattura.findUnique({
+      where: { id: invoiceId },
+      include: buildInvoiceInclude(),
+    });
+  });
+
+  domainBus.emit(EVENTS.INVOICE_PAID, {
+    invoiceId,
+    cantiereId: existing.cantiere_id,
+    status,
+  });
+
+  res.json(mapInvoice(result));
 });

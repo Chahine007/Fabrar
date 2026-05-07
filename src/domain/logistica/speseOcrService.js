@@ -12,6 +12,9 @@ import {
   getDefaultWarehouseLocation,
   upsertArticleAndCreateLoadMovement,
 } from "../magazzino/warehouseService.js";
+import { postPurchaseInvoiceLedger } from "../finance/ledgerService.js";
+import { enqueueOutboxEvent } from "../events/outboxService.js";
+import { EVENTS } from "../events/domainBus.js";
 import { extractInvoiceOcrFromFile } from "../../services/openai.js";
 import { resolveStoredPath, saveFile } from "../../services/storage.service.js";
 
@@ -762,6 +765,25 @@ async function upsertPurchaseInvoiceFromOcr(tx, {
   }
 
   await syncPaymentDueFromPurchaseInvoice(tx, fatturaAcquisto, data);
+  await postPurchaseInvoiceLedger(tx, {
+    ...fatturaAcquisto,
+    ...data,
+    id: fatturaAcquisto.id,
+  });
+  await enqueueOutboxEvent(tx, {
+    eventType: EVENTS.PURCHASE_INVOICE_CONFIRMED,
+    aggregateType: "FatturaAcquisto",
+    aggregateId: fatturaAcquisto.id,
+    payload: {
+      fatturaAcquistoId: fatturaAcquisto.id,
+      spesaId: data.spesa_id ?? null,
+      fornitoreId: data.fornitore_id ?? null,
+      cantiereId: data.cantiere_id ?? null,
+      totaleDocumento: data.totale_documento == null ? null : Number(data.totale_documento),
+      costCategory: data.cost_category,
+      allocationScope: data.allocation_scope,
+    },
+  });
 
   return tx.fatturaAcquisto.findUnique({
     where: { id: fatturaAcquisto.id },

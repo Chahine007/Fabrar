@@ -45,6 +45,7 @@ const PublicRoute = ({ children }) => {
 
 const ALL_AUTH_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN", "WORKER"];
 const WAREHOUSE_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER", "WAREHOUSEMAN"];
+const PROJECT_ROLES = ["ADMIN", "HR", "PROJECT_MANAGER"];
 
 const HomeRedirect = () => {
   const { user } = useAuthContext();
@@ -92,8 +93,8 @@ function AppRoutes() {
         <Route path="/messages"   element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><MessagesPage /></RoleRoute>} />
 
         {/* Pilastro 1: Routing a due livelli per i Progetti */}
-        <Route path="/projects"         element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ProjectListPage /></RoleRoute>} />
-        <Route path="/projects/:id"     element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ProjectDetailPage /></RoleRoute>} />
+        <Route path="/projects"         element={<RoleRoute allowedRoles={PROJECT_ROLES}><ProjectListPage /></RoleRoute>} />
+        <Route path="/projects/:id"     element={<RoleRoute allowedRoles={PROJECT_ROLES}><ProjectDetailPage /></RoleRoute>} />
 
         <Route path="/activities" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><ActivitiesPage /></RoleRoute>} />
         <Route path="/data-entry" element={<RoleRoute allowedRoles={ALL_AUTH_ROLES}><DataEntryPage /></RoleRoute>} />

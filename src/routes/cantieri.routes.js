@@ -3,7 +3,7 @@ import path from "path";
 import crypto from "crypto";
 import { Router } from "express";
 import multer from "multer";
-import { verifyTokenAndRole, DASHBOARD_ROLES } from "../middleware/auth.js";
+import { authorizeRoles, verifyToken, verifyTokenAndRole, DASHBOARD_ROLES } from "../middleware/auth.js";
 import { validate } from "../middleware/validation.js";
 import {
     createCantiereSchema,
@@ -75,14 +75,14 @@ const upload = multer({
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
-router.use(["/api/cantieri", "/api/admin/cantieri"], verifyTokenAndRole(DASHBOARD_ROLES));
+router.use(["/api/cantieri", "/api/admin/cantieri"], verifyToken);
 
 // ─── Cantieri base routes ──────────────────────────────────────────────────────
 
 router.get(["/api/cantieri", "/api/admin/cantieri"], listCantieri);
-router.post("/api/admin/cantieri", validate(createCantiereSchema), createCantiere);
-router.patch("/api/admin/cantieri/:id", validate(updateCantiereSchema), updateCantiere);
-router.patch("/api/admin/cantieri/:id/toggle", validate(toggleCantiereSchema), toggleCantiere);
+router.post("/api/admin/cantieri", authorizeRoles(...DASHBOARD_ROLES), validate(createCantiereSchema), createCantiere);
+router.patch("/api/admin/cantieri/:id", authorizeRoles(...DASHBOARD_ROLES), validate(updateCantiereSchema), updateCantiere);
+router.patch("/api/admin/cantieri/:id/toggle", authorizeRoles(...DASHBOARD_ROLES), validate(toggleCantiereSchema), toggleCantiere);
 router.get("/api/cantieri/:id/financial-timeline", getFinancialTimeline);
 router.get("/api/cantieri/:id/details", getDetails);
 router.patch("/api/cantieri/:id/gps", validate(updateGpsSchema), updateGps);
@@ -104,7 +104,7 @@ router.patch("/api/cantieri/:id/settings", validate(updateCantiereSettingsSchema
 
 // ─── WBS routes ───────────────────────────────────────────────────────────────
 
-router.use("/api/cantieri/:id/wbs", verifyTokenAndRole(DASHBOARD_ROLES));
+router.use("/api/cantieri/:id/wbs", verifyTokenAndRole(["ADMIN", "HR", "PROJECT_MANAGER"]));
 router.get("/api/cantieri/:id/wbs", getWbsTree);
 router.post("/api/cantieri/:id/wbs", validate(createWbsNodeSchema), createWbsNode);
 router.patch("/api/cantieri/:id/wbs/:nodeId", validate(updateWbsNodeSchema), updateWbsNode);

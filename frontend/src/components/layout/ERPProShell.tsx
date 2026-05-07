@@ -39,6 +39,7 @@ interface NavNode {
 
 const ALL_AUTH_ROLES = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN', 'WORKER'];
 const WAREHOUSE_ROLES = ['ADMIN', 'HR', 'PROJECT_MANAGER', 'WAREHOUSEMAN'];
+const PROJECT_ROLES = ['ADMIN', 'HR', 'PROJECT_MANAGER'];
 
 const NAV_TREE: NavNode[] = [
   {
@@ -54,7 +55,7 @@ const NAV_TREE: NavNode[] = [
     icon: Briefcase,
     children: [
       { icon: Inbox, label: 'Raccolta Dati', path: '/data-entry', id: 'data-entry', roles: ALL_AUTH_ROLES },
-      { icon: Briefcase, label: 'Progetti', path: '/projects', id: 'projects' },
+      { icon: Briefcase, label: 'Progetti', path: '/projects', id: 'projects', roles: PROJECT_ROLES },
       { icon: Activity, label: 'Attività', path: '/activities', id: 'activities' },
       { icon: MessageSquare, label: 'Messaggi', path: '/messages', id: 'messages' },
     ],

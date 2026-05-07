@@ -2,6 +2,10 @@ import { getDb } from "../db/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { round2, toNumber } from "../utils/helpers.js";
 import { CostAllocationScope, CostCategory, PaymentDueStatus } from "../constants.js";
+import { writeAuditLog } from "../domain/audit/auditLogService.js";
+import { postPaymentDuePaidLedger } from "../domain/finance/ledgerService.js";
+import { enqueueOutboxEvent } from "../domain/events/outboxService.js";
+import { domainBus, EVENTS } from "../domain/events/domainBus.js";
 
 const PAYMENT_STATUS_VALUES = new Set(Object.values(PaymentDueStatus));
 const COST_CATEGORY_VALUES = new Set(Object.values(CostCategory));
@@ -239,11 +243,51 @@ export const updatePayable = asyncHandler(async (req, res) => {
     }
   }
 
-  const updated = await prisma.scadenzaPagamento.update({
-    where: { id },
-    data,
-    include: payableInclude(),
+  const events = [];
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.scadenzaPagamento.update({
+      where: { id },
+      data,
+      include: payableInclude(),
+    });
+
+    if (row.status === PaymentDueStatus.PAID) {
+      await postPaymentDuePaidLedger(tx, row);
+      await enqueueOutboxEvent(tx, {
+        eventType: EVENTS.PAYMENT_DUE_PAID,
+        aggregateType: "ScadenzaPagamento",
+        aggregateId: row.id,
+        payload: {
+          paymentDueId: row.id,
+          fornitoreId: row.fornitore_id,
+          fatturaAcquistoId: row.fattura_acquisto_id,
+          amount: toNumber(row.paid_amount ?? row.importo),
+        },
+      });
+      events.push({
+        type: EVENTS.PAYMENT_DUE_PAID,
+        payload: {
+          paymentDueId: row.id,
+          fornitoreId: row.fornitore_id,
+          fatturaAcquistoId: row.fattura_acquisto_id,
+        },
+      });
+    }
+
+    await writeAuditLog(tx, req.user, {
+      entityType: "ScadenzaPagamento",
+      entityId: id,
+      action: row.status === PaymentDueStatus.PAID ? "PAYMENT_DUE_PAID" : "PAYABLE_UPDATED",
+      previousState: existing,
+      nextState: data,
+    });
+    return row;
   });
+
+  for (const event of events) {
+    domainBus.emit(event.type, event.payload);
+  }
+
   res.json(mapPayable(updated));
 });
 

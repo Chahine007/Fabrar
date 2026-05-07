@@ -458,14 +458,17 @@ export async function handleTelegramUpdate(update) {
   // ── F9: Comando /imposta_gps — solo admin/PM verificati via tabella User ──
   if (text.toLowerCase() === '/imposta_gps') {
     const { getDb } = await import('../db/index.js');
-    const adminUser = await getDb().user.findFirst({
+    const authorizedEmployee = await getDb().employee.findFirst({
       where: {
-        employee_id: employee.id,
-        is_active:   1,
-        role:        { in: ['ADMIN', 'EXTERNAL_PM'] },
+        id: employee.id,
+        user: {
+          is_active: 1,
+          role: { in: ['ADMIN', 'PROJECT_MANAGER'] },
+        },
       },
+      select: { id: true },
     });
-    if (!adminUser) {
+    if (!authorizedEmployee) {
       await tgSendMessage(chatId, '\u26d4 Comando riservato agli amministratori e ai Project Manager.');
       return;
     }

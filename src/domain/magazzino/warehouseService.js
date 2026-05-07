@@ -5,6 +5,8 @@ import { Prisma } from '@prisma/client';
 import { DomainError } from '../shared/DomainError.js';
 import { ValidationStatus } from '../../constants.js';
 import { domainBus, EVENTS } from '../events/domainBus.js';
+import { enqueueOutboxEvent } from '../events/outboxService.js';
+import { postWarehouseMovementLedger } from '../finance/ledgerService.js';
 
 const DEFAULT_LOCATION_CODES = ["DEFAULT", "PRINCIPALE"];
 
@@ -188,6 +190,20 @@ export async function createDischargeInTransaction(tx, payload, userId, employee
             documento_id:   documento_id ?? null,
         },
     });
+    await postWarehouseMovementLedger(tx, movimento);
+    await enqueueOutboxEvent(tx, {
+        eventType: EVENTS.STOCK_ISSUED,
+        aggregateType: 'MovimentoMagazzino',
+        aggregateId: movimento.id,
+        payload: {
+            movimentoId: movimento.id,
+            cantiereId: cantiere_id,
+            taskId: task_id ?? null,
+            wbsNodeId: targetWbsNodeId,
+            articoloId: articolo_id,
+            valoreTotale: Number(valoreTotale),
+        },
+    });
 
     const descrizione = options.description
         ?? `Scarico Magazzino: ${articolo.descrizione} (${articolo.codice_sku})`;
@@ -247,7 +263,7 @@ export async function processCarico(prisma, payload, userId) {
     const qty = new Prisma.Decimal(quantita);
     if (qty.lte(0)) throw new DomainError('La quantità deve essere > 0.', 'INVALID_QTY');
 
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
         const articolo = await tx.articolo.findUnique({ where: { id: articolo_id } });
         if (!articolo) throw new DomainError('Articolo non trovato.', 'NOT_FOUND');
 
@@ -275,7 +291,7 @@ export async function processCarico(prisma, payload, userId) {
 
         await tx.articolo.update({ where: { id: articolo_id }, data: { costo_medio: cmpNew } });
 
-        await tx.movimentoMagazzino.create({
+        const movimento = await tx.movimentoMagazzino.create({
             data: {
                 tipo_movimento: 'CARICO',
                 articolo_id, quantita: qty,
@@ -287,7 +303,34 @@ export async function processCarico(prisma, payload, userId) {
                 fornitore_id:   fornitore_id ?? null,
             },
         });
+
+        await postWarehouseMovementLedger(tx, movimento);
+        await enqueueOutboxEvent(tx, {
+            eventType: EVENTS.STOCK_LOADED,
+            aggregateType: 'MovimentoMagazzino',
+            aggregateId: movimento.id,
+            payload: {
+                movimentoId: movimento.id,
+                articoloId: articolo_id,
+                fornitoreId: fornitore_id ?? null,
+                documentId: documento_id ?? null,
+                valoreTotale: Number(valoreTotale),
+            },
+        });
+
+        return {
+            movimentoId: movimento.id,
+            eventPayload: {
+                movimentoId: movimento.id,
+                articoloId: articolo_id,
+                fornitoreId: fornitore_id ?? null,
+                documentId: documento_id ?? null,
+            },
+        };
     });
+
+    domainBus.emit(EVENTS.STOCK_LOADED, result.eventPayload);
+    return result;
 }
 
 export async function upsertArticleAndCreateLoadMovement(tx, line, context) {
@@ -375,6 +418,19 @@ export async function upsertArticleAndCreateLoadMovement(tx, line, context) {
             esecutore_id: userId,
             documento_id: context.documentoId ?? null,
             fornitore_id: context.fornitoreId ?? null,
+        },
+    });
+    await postWarehouseMovementLedger(tx, movimento);
+    await enqueueOutboxEvent(tx, {
+        eventType: EVENTS.STOCK_LOADED,
+        aggregateType: "MovimentoMagazzino",
+        aggregateId: movimento.id,
+        payload: {
+            movimentoId: movimento.id,
+            articoloId: articolo.id,
+            fornitoreId: context.fornitoreId ?? null,
+            documentId: context.documentoId ?? null,
+            valoreTotale: Number(valoreTotale),
         },
     });
 

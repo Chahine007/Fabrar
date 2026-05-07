@@ -449,6 +449,48 @@ export function useCreateConversation() {
   });
 }
 
+export function useProjectConversation(cantiereId: number | null) {
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
+    queryKey: ['conversations', 'project', cantiereId ?? 0],
+    queryFn: async () => {
+      const response = await apiFetch(`/api/conversations/projects/${cantiereId}/ensure`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? 'Errore conversazione progetto');
+      }
+
+      return response.json() as Promise<Conversation>;
+    },
+    enabled: cantiereId != null,
+    staleTime: 30_000,
+    select: normalizeConversation,
+  });
+
+  useEffect(() => {
+    if (!query.data) return;
+    queryClient.setQueryData<Conversation[]>(
+      conversationKeys.list(),
+      (existingConversations = []) => {
+        const normalized = normalizeConversation(query.data);
+        if (existingConversations.some((item) => item.id === normalized.id)) {
+          return sortConversations(existingConversations.map((item) =>
+            item.id === normalized.id ? normalized : item
+          ));
+        }
+        return sortConversations([normalized, ...existingConversations]);
+      }
+    );
+  }, [query.data, queryClient]);
+
+  return query;
+}
+
 export function useChatSockets(currentUser?: CurrentChatUser | null) {
   const identity = useMemo(
     () => getCurrentUserIdentity(currentUser),

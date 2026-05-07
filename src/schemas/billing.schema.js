@@ -18,6 +18,7 @@ const optionalDate = z.preprocess(
 
 const installmentStatus = z.enum(["PENDING"]);
 const invoiceStatus = z.enum(["DRAFT", "ISSUED"]);
+const invoicePaymentStatus = z.enum(["PAID", "ISSUED"]);
 
 export const createInstallmentSchema = z.object({
   params: z.object({ cantiereId: positiveInt }),
@@ -60,5 +61,16 @@ export const createInvoiceSchema = z.object({
     documento_id: optionalPositiveInt,
     note: optionalText,
     installment_ids: z.array(positiveInt).optional(),
+  }),
+});
+
+export const updateInvoicePaymentSchema = z.object({
+  params: z.object({ invoiceId: positiveInt }),
+  query: z.object({}).passthrough(),
+  body: z.object({
+    status: invoicePaymentStatus,
+    paid_at: optionalDate,
+    paid_amount: z.coerce.number().min(0, "paid_amount non valido.").optional().nullable(),
+    payment_note: optionalText,
   }),
 });

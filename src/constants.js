@@ -51,6 +51,33 @@ export const PaymentDueSource = Object.freeze({
     MANUAL: 'MANUAL',
 });
 
+export const LedgerDirection = Object.freeze({
+    DEBIT: 'DEBIT',
+    CREDIT: 'CREDIT',
+});
+
+export const LedgerEntryStatus = Object.freeze({
+    POSTED: 'POSTED',
+    VOIDED: 'VOIDED',
+});
+
+export const OutboxStatus = Object.freeze({
+    PENDING: 'PENDING',
+    PROCESSING: 'PROCESSING',
+    PUBLISHED: 'PUBLISHED',
+    FAILED: 'FAILED',
+});
+
+export const AppRole = Object.freeze({
+    ADMIN: 'ADMIN',
+    HR: 'HR',
+    PROJECT_MANAGER: 'PROJECT_MANAGER',
+    WAREHOUSEMAN: 'WAREHOUSEMAN',
+    WORKER: 'WORKER',
+});
+
+export const APP_ROLES = Object.freeze(Object.values(AppRole));
+
 export const AUDIT_TYPE = Object.freeze({
     ORE:       'ore',
     SPESE:     'spese',

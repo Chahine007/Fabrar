@@ -45,6 +45,7 @@ describe('cantieri controller security guards', () => {
     });
     const req = {
       params: { id: '12' },
+      user: { id: 1, role: 'ADMIN' },
       body: {
         nome: 'Nuovo nome',
         pm_id: 4,
@@ -75,6 +76,7 @@ describe('cantieri controller security guards', () => {
     });
     const req = {
       params: { id: '12' },
+      user: { id: 1, role: 'ADMIN' },
       body: {
         attivo: 0,
         budget: 999999,
@@ -104,7 +106,7 @@ describe('cantieri controller security guards', () => {
         }),
       },
     });
-    const req = { params: { id: '12', docId: '5' } };
+    const req = { params: { id: '12', docId: '5' }, user: { id: 1, role: 'ADMIN' } };
     const res = createResponse();
     const next = vi.fn();
 

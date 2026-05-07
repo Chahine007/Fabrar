@@ -4,7 +4,7 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, getApiErrorMessage } from '../../lib/api';
-import { accountingKeys, hrKeys, employeeKeys, magazzinoKeys } from './queryKeys';
+import { accountingKeys, billingKeys, cantierKeys, dashboardKeys, hrKeys, employeeKeys, magazzinoKeys } from './queryKeys';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ export type Employee = EmployeeWithKPI;
 export interface CreateEmployeePayload {
   firstName: string;
   lastName: string;
-  role: 'WORKER' | 'ADMIN' | 'PROJECT_MANAGER' | 'HR';
+  role: 'WORKER' | 'ADMIN' | 'PROJECT_MANAGER' | 'HR' | 'WAREHOUSEMAN';
   hourly_rate?: number;
   email?: string;
 }
@@ -604,6 +604,12 @@ export function useBulkAudit() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: hrKeys.all() });
+      qc.invalidateQueries({ queryKey: employeeKeys.all() });
+      qc.invalidateQueries({ queryKey: dashboardKeys.all() });
+      qc.invalidateQueries({ queryKey: cantierKeys.all() });
+      qc.invalidateQueries({ queryKey: billingKeys.all() });
+      qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
+      qc.invalidateQueries({ queryKey: accountingKeys.all() });
     },
   });
 }
@@ -745,6 +751,9 @@ export function useConfirmGenericInvoiceOcr() {
       qc.invalidateQueries({ queryKey: hrKeys.all() });
       qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
       qc.invalidateQueries({ queryKey: accountingKeys.all() });
+      qc.invalidateQueries({ queryKey: dashboardKeys.all() });
+      qc.invalidateQueries({ queryKey: cantierKeys.all() });
+      qc.invalidateQueries({ queryKey: billingKeys.all() });
     },
   });
 }
@@ -787,6 +796,9 @@ export function useConfirmSpesaOcr() {
       qc.invalidateQueries({ queryKey: hrKeys.all() });
       qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
       qc.invalidateQueries({ queryKey: accountingKeys.all() });
+      qc.invalidateQueries({ queryKey: dashboardKeys.all() });
+      qc.invalidateQueries({ queryKey: cantierKeys.all() });
+      qc.invalidateQueries({ queryKey: billingKeys.all() });
     },
   });
 }

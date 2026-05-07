@@ -1,6 +1,8 @@
 import express from "express";
 import logger from "../logger.js";
 import authRoutes from "./auth.routes.js";
+import meRoutes from "./me.routes.js";
+import workflowRoutes from "./workflow.routes.js";
 import cantieriRoutes from "./cantieri.routes.js";
 import expensesRoutes from "./expenses.routes.js";
 import hrRoutes from "./hr.routes.js";
@@ -27,6 +29,8 @@ if (!process.env.JWT_SECRET) {
 
 // Router aggregator
 router.use(authRoutes);
+router.use(meRoutes);
+router.use(workflowRoutes);
 router.use(tasksRoutes);
 router.use(timesheetsRoutes);
 router.use(cantieriRoutes);

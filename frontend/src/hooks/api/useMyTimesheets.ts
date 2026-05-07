@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../../lib/api';
-import { employeeKeys, hrKeys, timesheetKeys } from './queryKeys';
+import { cantierKeys, dashboardKeys, employeeKeys, hrKeys, timesheetKeys } from './queryKeys';
 
 export interface MyTimeEntryPayload {
   report_date: string;
@@ -57,7 +57,9 @@ function invalidateTimesheetData(queryClient: ReturnType<typeof useQueryClient>)
   queryClient.invalidateQueries({ queryKey: timesheetKeys.all() });
   queryClient.invalidateQueries({ queryKey: hrKeys.all() });
   queryClient.invalidateQueries({ queryKey: employeeKeys.all() });
-  queryClient.invalidateQueries({ queryKey: ['audit'] });
+  queryClient.invalidateQueries({ queryKey: hrKeys.audit() });
+  queryClient.invalidateQueries({ queryKey: dashboardKeys.all() });
+  queryClient.invalidateQueries({ queryKey: cantierKeys.all() });
 }
 
 export function useCreateMyTimeEntry() {

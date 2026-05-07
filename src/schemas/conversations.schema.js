@@ -27,3 +27,11 @@ export const createConversationSchema = z.object({
         targetEmployeeId: z.coerce.number().int().positive("ID dipendente non valido."),
     }),
 });
+
+export const projectConversationSchema = z.object({
+    params: z.object({
+        cantiereId: z.coerce.number().int().positive("ID cantiere non valido."),
+    }),
+    query: z.object({}).passthrough(),
+    body: z.object({}).passthrough(),
+});

@@ -3,7 +3,7 @@ import { Loader2, UserPlus } from 'lucide-react';
 import { useCreateEmployee } from '../../hooks/api/useHr';
 import { Button, Dialog, Field, FormError, Input, Select } from '../ui';
 
-type EmployeeRole = 'WORKER' | 'ADMIN' | 'PROJECT_MANAGER' | 'HR';
+type EmployeeRole = 'WORKER' | 'ADMIN' | 'PROJECT_MANAGER' | 'HR' | 'WAREHOUSEMAN';
 
 interface CreateEmployeeModalProps {
   onClose: () => void;
@@ -109,6 +109,7 @@ export default function CreateEmployeeModal({ onClose }: CreateEmployeeModalProp
                 <option value="WORKER">WORKER</option>
                 <option value="ADMIN">ADMIN</option>
                 <option value="PROJECT_MANAGER">PROJECT_MANAGER</option>
+                <option value="WAREHOUSEMAN">WAREHOUSEMAN</option>
                 <option value="HR">HR</option>
               </Select>
             </Field>

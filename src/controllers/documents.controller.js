@@ -2,6 +2,9 @@ import path from "path";
 import { getDb } from "../db/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { deleteFile, resolveStoredPath, saveFile } from "../services/storage.service.js";
+import { canAccessCantiere } from "../domain/shared/accessControl.js";
+import { writeAuditLog } from "../domain/audit/auditLogService.js";
+import { domainBus, EVENTS } from "../domain/events/domainBus.js";
 
 function parsePositiveInt(value) {
   const parsed = Number.parseInt(value, 10);
@@ -45,6 +48,47 @@ async function ensureCantiere(prisma, cantiereId) {
   return Boolean(cantiere);
 }
 
+async function ensureDocumentAccess(prisma, user, cantiereId) {
+  return canAccessCantiere(prisma, user, cantiereId, {
+    globalRoles: ["ADMIN", "HR"],
+    warehouseRoles: ["WAREHOUSEMAN"],
+    ownerRoles: ["PROJECT_MANAGER"],
+    allowWorkerTasks: true,
+  });
+}
+
+async function validateOptionalRecordLinks(prisma, body, cantiereId) {
+  const spesaId = parsePositiveInt(body.spesa_id);
+  const movimentoId = parsePositiveInt(body.movimento_id);
+  const fatturaId = parsePositiveInt(body.fattura_id);
+
+  if (spesaId) {
+    const spesa = await prisma.spesa.findFirst({
+      where: { id: spesaId, cantiere_id: cantiereId },
+      select: { id: true },
+    });
+    if (!spesa) return "Spesa non valida per questo cantiere.";
+  }
+
+  if (movimentoId) {
+    const movimento = await prisma.movimentoMagazzino.findFirst({
+      where: { id: movimentoId, cantiere_id: cantiereId },
+      select: { id: true },
+    });
+    if (!movimento) return "Movimento magazzino non valido per questo cantiere.";
+  }
+
+  if (fatturaId) {
+    const fattura = await prisma.fattura.findFirst({
+      where: { id: fatturaId, cantiere_id: cantiereId },
+      select: { id: true },
+    });
+    if (!fattura) return "Fattura non valida per questo cantiere.";
+  }
+
+  return null;
+}
+
 async function linkDocumentToOptionalRecords(prisma, documentId, body) {
   const spesaId = parsePositiveInt(body.spesa_id);
   const movimentoId = parsePositiveInt(body.movimento_id);
@@ -80,7 +124,9 @@ async function linkDocumentToOptionalRecords(prisma, documentId, body) {
   }
 
   if (operations.length) {
-    await prisma.$transaction(operations);
+    for (const operation of operations) {
+      await operation;
+    }
   }
 }
 
@@ -100,32 +146,56 @@ export const uploadDocument = asyncHandler(async (req, res) => {
   if (!exists) {
     return res.status(404).json({ error: "Cantiere non trovato." });
   }
+  if (!(await ensureDocumentAccess(prisma, req.user, cantiereId))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+  }
+
+  const linkError = await validateOptionalRecordLinks(prisma, req.body, cantiereId);
+  if (linkError) {
+    return res.status(400).json({ error: linkError });
+  }
 
   const storedFile = await saveFile(req.file, {
     folder: path.join("cantieri", String(cantiereId)),
   });
 
-  const doc = await prisma.document.create({
-    data: {
-      cantiere_id: cantiereId,
-      name: req.file.originalname,
-      file_path: storedFile.relativePath,
-      type: detectDocType(req.file.mimetype, req.file.originalname),
-      size: formatFileSize(req.file.size),
-      mime_type: req.file.mimetype,
-      dimensione: req.file.size,
-      employee_id: parsePositiveInt(req.user?.employee_id),
-      uploader: req.user?.employee_id
-        ? `employee:${req.user.employee_id}`
-        : `user:${req.user?.id ?? "unknown"}`,
-      tag: req.body.tag || "generic",
-      numero_fattura: req.body.numero_fattura || null,
-      data_emissione: parseNullableDate(req.body.data_emissione),
-      importo: parseNullableDecimal(req.body.importo),
-    },
+  const doc = await prisma.$transaction(async (tx) => {
+    const created = await tx.document.create({
+      data: {
+        cantiere_id: cantiereId,
+        name: req.file.originalname,
+        file_path: storedFile.relativePath,
+        type: detectDocType(req.file.mimetype, req.file.originalname),
+        size: formatFileSize(req.file.size),
+        mime_type: req.file.mimetype,
+        dimensione: req.file.size,
+        employee_id: parsePositiveInt(req.user?.employee_id),
+        uploader: req.user?.employee_id
+          ? `employee:${req.user.employee_id}`
+          : `user:${req.user?.id ?? "unknown"}`,
+        tag: req.body.tag || "generic",
+        numero_fattura: req.body.numero_fattura || null,
+        data_emissione: parseNullableDate(req.body.data_emissione),
+        importo: parseNullableDecimal(req.body.importo),
+      },
+    });
+
+    await linkDocumentToOptionalRecords(tx, created.id, req.body);
+    await writeAuditLog(tx, req.user, {
+      entityType: "Document",
+      entityId: created.id,
+      action: "DOCUMENT_LINKED",
+      nextState: {
+        cantiere_id: cantiereId,
+        spesa_id: parsePositiveInt(req.body.spesa_id),
+        movimento_id: parsePositiveInt(req.body.movimento_id),
+        fattura_id: parsePositiveInt(req.body.fattura_id),
+      },
+    });
+    return created;
   });
 
-  await linkDocumentToOptionalRecords(prisma, doc.id, req.body);
+  domainBus.emit(EVENTS.DOCUMENT_LINKED, { documentId: doc.id, cantiereId });
 
   res.status(201).json(doc);
 });
@@ -136,6 +206,9 @@ export const getDocumentsByCantiere = asyncHandler(async (req, res) => {
 
   if (!cantiereId) {
     return res.status(400).json({ error: "ID cantiere non valido." });
+  }
+  if (!(await ensureDocumentAccess(prisma, req.user, cantiereId))) {
+    return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
   }
 
   const where = { cantiere_id: cantiereId };
@@ -166,13 +239,22 @@ export const deleteDocument = asyncHandler(async (req, res) => {
   if (!doc) {
     return res.status(404).json({ error: "Documento non trovato." });
   }
+  if (!doc.cantiere_id || !(await ensureDocumentAccess(prisma, req.user, doc.cantiere_id))) {
+    return res.status(403).json({ error: "Accesso negato al documento richiesto." });
+  }
 
-  await prisma.$transaction([
-    prisma.spesa.updateMany({ where: { documento_id: documentId }, data: { documento_id: null } }),
-    prisma.movimentoMagazzino.updateMany({ where: { documento_id: documentId }, data: { documento_id: null } }),
-    prisma.fattura.updateMany({ where: { documento_id: documentId }, data: { documento_id: null } }),
-    prisma.document.delete({ where: { id: documentId } }),
-  ]);
+  await prisma.$transaction(async (tx) => {
+    await tx.spesa.updateMany({ where: { documento_id: documentId }, data: { documento_id: null } });
+    await tx.movimentoMagazzino.updateMany({ where: { documento_id: documentId }, data: { documento_id: null } });
+    await tx.fattura.updateMany({ where: { documento_id: documentId }, data: { documento_id: null } });
+    await tx.document.delete({ where: { id: documentId } });
+    await writeAuditLog(tx, req.user, {
+      entityType: "Document",
+      entityId: documentId,
+      action: "DOCUMENT_DELETED",
+      previousState: { cantiere_id: doc.cantiere_id, name: doc.name },
+    });
+  });
 
   await deleteFile(doc.file_path);
 
@@ -190,6 +272,9 @@ export const downloadDocument = asyncHandler(async (req, res) => {
   const doc = await prisma.document.findUnique({ where: { id: documentId } });
   if (!doc) {
     return res.status(404).json({ error: "Documento non trovato." });
+  }
+  if (!doc.cantiere_id || !(await ensureDocumentAccess(prisma, req.user, doc.cantiere_id))) {
+    return res.status(403).json({ error: "Accesso negato al documento richiesto." });
   }
 
   if (!doc.file_path) {

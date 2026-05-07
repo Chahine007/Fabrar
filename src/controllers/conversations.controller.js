@@ -2,6 +2,7 @@ import { getDb } from "../db/index.js";
 import { employeeRoom } from "../sockets/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { parsePagination } from "../utils/pagination.js";
+import { canAccessCantiere } from "../domain/shared/accessControl.js";
 
 function formatMessageTime(dateStr) {
     if (!dateStr) return "";
@@ -261,6 +262,87 @@ export const findOrCreateDirectConversation = asyncHandler(async (req, res) => {
 
     const summary = await loadConversationSummary(prisma, directConversation.id, currentEmployeeId);
     res.status(201).json(summary);
+});
+
+export const ensureProjectConversation = asyncHandler(async (req, res) => {
+    const prisma = getDb();
+    const currentEmployeeId = getCurrentEmployeeId(req, res);
+    if (currentEmployeeId == null) return;
+
+    const cantiereId = Number(req.params.cantiereId);
+    if (!Number.isInteger(cantiereId) || cantiereId <= 0) {
+        return res.status(400).json({ error: "ID cantiere non valido." });
+    }
+
+    if (!(await canAccessCantiere(prisma, req.user, cantiereId, {
+        globalRoles: ["ADMIN", "HR"],
+        warehouseRoles: ["WAREHOUSEMAN"],
+        ownerRoles: ["PROJECT_MANAGER"],
+        allowWorkerTasks: true,
+    }))) {
+        return res.status(403).json({ error: "Accesso negato al cantiere richiesto." });
+    }
+
+    const cantiere = await prisma.cantiere.findUnique({
+        where: { id: cantiereId },
+        select: {
+            id: true,
+            nome: true,
+            pm_user: { select: { employee: { select: { id: true } } } },
+            sm_user: { select: { employee: { select: { id: true } } } },
+        },
+    });
+    if (!cantiere) {
+        return res.status(404).json({ error: "Cantiere non trovato." });
+    }
+
+    const participantIds = [
+        currentEmployeeId,
+        cantiere.pm_user?.employee?.id,
+        cantiere.sm_user?.employee?.id,
+    ].filter((id, index, values) => Number.isInteger(id) && id > 0 && values.indexOf(id) === index);
+
+    const conversation = await prisma.$transaction(async (tx) => {
+        let projectConversation = await tx.conversation.findFirst({
+            where: {
+                cantiere_id: cantiereId,
+                type: { in: ["PROJECT", "project"] },
+            },
+            select: { id: true },
+        });
+
+        if (!projectConversation) {
+            projectConversation = await tx.conversation.create({
+                data: {
+                    name: cantiere.nome,
+                    type: "PROJECT",
+                    cantiere_id: cantiereId,
+                },
+                select: { id: true },
+            });
+        }
+
+        for (const employeeId of participantIds) {
+            await tx.conversationParticipant.upsert({
+                where: {
+                    conversation_id_employee_id: {
+                        conversation_id: projectConversation.id,
+                        employee_id: employeeId,
+                    },
+                },
+                update: {},
+                create: {
+                    conversation_id: projectConversation.id,
+                    employee_id: employeeId,
+                },
+            });
+        }
+
+        return projectConversation;
+    });
+
+    const summary = await loadConversationSummary(prisma, conversation.id, currentEmployeeId);
+    res.status(200).json(summary);
 });
 
 export const getConversationMessages = asyncHandler(async (req, res) => {

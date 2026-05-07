@@ -51,6 +51,9 @@ export interface BillingInvoice {
   stato: InvoiceStatus;
   documento_id: number | null;
   note: string | null;
+  paid_at?: string | null;
+  paid_amount?: number | null;
+  payment_note?: string | null;
   created_at: string;
   updated_at: string;
   documento: BillingDocument | null;
@@ -109,6 +112,13 @@ export interface CreateInvoicePayload {
   stato?: InvoiceStatus;
 }
 
+export interface UpdateInvoicePaymentPayload {
+  status: 'PAID' | 'ISSUED';
+  paid_at?: string | null;
+  paid_amount?: number | null;
+  payment_note?: string | null;
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(path, init);
   if (!response.ok) {
@@ -127,7 +137,9 @@ function normalizeNullableString(value: string | null | undefined) {
 function invalidateBillingContext(queryClient: ReturnType<typeof useQueryClient>, cantiereId: number) {
   queryClient.invalidateQueries({ queryKey: billingKeys.project(cantiereId) });
   queryClient.invalidateQueries({ queryKey: dashboardKeys.all() });
+  queryClient.invalidateQueries({ queryKey: cantierKeys.all() });
   queryClient.invalidateQueries({ queryKey: cantierKeys.detail(cantiereId) });
+  queryClient.invalidateQueries({ queryKey: cantierKeys.timeline(cantiereId) });
   queryClient.invalidateQueries({ queryKey: ['project', cantiereId] });
 }
 
@@ -188,6 +200,23 @@ export function useCreateInvoice(cantiereId: number) {
           ...payload,
           numero_fattura: normalizeNullableString(payload.numero_fattura),
           data_emissione: normalizeNullableString(payload.data_emissione),
+        }),
+      }),
+    onSuccess: () => invalidateBillingContext(queryClient, cantiereId),
+  });
+}
+
+export function useUpdateInvoicePayment(cantiereId: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ invoiceId, data }: { invoiceId: number; data: UpdateInvoicePaymentPayload }) =>
+      fetchJson<BillingInvoice>(`/api/billing/invoices/${invoiceId}/payment`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          ...data,
+          paid_at: normalizeNullableString(data.paid_at),
+          payment_note: normalizeNullableString(data.payment_note),
         }),
       }),
     onSuccess: () => invalidateBillingContext(queryClient, cantiereId),

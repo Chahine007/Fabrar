@@ -25,6 +25,6 @@ describe("telegram service", () => {
     expect(postMock).toHaveBeenCalledTimes(1);
     const [url, payload] = postMock.mock.calls[0];
     expect(url).toBe("https://api.telegram.org/botTEST_TOKEN/sendMessage");
-    expect(payload).toEqual({ chat_id: 123, text: "ciao" });
+    expect(payload).toEqual({ chat_id: 123, text: "ciao", parse_mode: "HTML" });
   });
 });

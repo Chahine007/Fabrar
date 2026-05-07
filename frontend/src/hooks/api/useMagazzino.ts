@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, getApiErrorMessage } from '../../lib/api';
-import { magazzinoKeys, cantierKeys, taskKeys } from './queryKeys';
+import { billingKeys, dashboardKeys, magazzinoKeys, cantierKeys, taskKeys } from './queryKeys';
 import type {
   WarehouseArticle,
   WarehouseArticleCreatePayload,
@@ -82,14 +82,21 @@ export const useCreaMovimento = () => {
   return useMutation({
     mutationFn: async (payload: WarehouseMovementCreatePayload) => {
       const res = await api.post('/api/magazzino/movimenti', payload);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(typeof body?.error === 'string' ? body.error : `Errore ${res.status}`);
+      }
       return res.json() as Promise<WarehouseMovementRow>;
     },
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: magazzinoKeys.all() });
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.all() });
       
       if (variables.cantiere_id) {
+        queryClient.invalidateQueries({ queryKey: cantierKeys.all() });
         queryClient.invalidateQueries({ queryKey: cantierKeys.detail(variables.cantiere_id) });
         queryClient.invalidateQueries({ queryKey: cantierKeys.timeline(variables.cantiere_id) });
+        queryClient.invalidateQueries({ queryKey: billingKeys.project(variables.cantiere_id) });
         queryClient.invalidateQueries({ queryKey: taskKeys.all() });
       }
     },

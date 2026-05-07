@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { Hash, MessageCircle, MessageSquare, Send } from 'lucide-react';
 import { cn } from '../../../lib/utils';
-import { useConversations, useMessages, useSendMessage } from '../../../hooks/api/useConversations';
+import { useMessages, useProjectConversation, useSendMessage } from '../../../hooks/api/useConversations';
 import Spinner from '../../Spinner';
 import ErrorMessage from '../../ErrorMessage';
 
@@ -19,11 +19,9 @@ export default function MessagesTab({
   cantiereId: number;
   cantiereName: string;
 }) {
-  const { data: conversations, isLoading: loadingConv } = useConversations();
+  const { data: conversation, isLoading: loadingConv } = useProjectConversation(cantiereId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [input, setInput] = useState('');
-
-  const conversation = conversations?.find((item) => item.cantiereId === cantiereId) ?? null;
 
   const conversationId = conversation?.id ?? null;
   const { data: messages, isLoading: loadingMsgs, error } = useMessages(conversationId);
@@ -54,8 +52,7 @@ export default function MessagesTab({
         </div>
         <p className="font-semibold text-text-primary">Nessuna conversazione attiva</p>
         <p className="text-sm text-text-secondary max-w-xs text-center opacity-70">
-          Non è disponibile una conversazione collegata a questo cantiere.
-          Crea una conversazione dalla pagina Messaggi.
+          Non è stato possibile inizializzare una conversazione collegata a questo cantiere.
         </p>
       </div>
     );

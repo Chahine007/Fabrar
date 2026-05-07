@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, getApiErrorMessage } from '../../lib/api';
-import { cantierKeys, magazzinoKeys, materialRequestKeys, taskKeys } from './queryKeys';
+import { billingKeys, cantierKeys, dashboardKeys, magazzinoKeys, materialRequestKeys, taskKeys } from './queryKeys';
 
 export type MaterialRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'FULFILLED';
 
@@ -118,6 +118,10 @@ export function useUpdateMaterialRequestStatus() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: materialRequestKeys.all() });
+      qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
+      qc.invalidateQueries({ queryKey: dashboardKeys.all() });
+      qc.invalidateQueries({ queryKey: cantierKeys.all() });
+      qc.invalidateQueries({ queryKey: billingKeys.all() });
     },
   });
 }
@@ -133,6 +137,8 @@ export function useFulfillMaterialRequest() {
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: materialRequestKeys.all() });
       qc.invalidateQueries({ queryKey: magazzinoKeys.all() });
+      qc.invalidateQueries({ queryKey: dashboardKeys.all() });
+      qc.invalidateQueries({ queryKey: billingKeys.all() });
       qc.invalidateQueries({ queryKey: cantierKeys.detail(data.richiesta.cantiere_id) });
       qc.invalidateQueries({ queryKey: cantierKeys.timeline(data.richiesta.cantiere_id) });
       qc.invalidateQueries({ queryKey: taskKeys.all() });

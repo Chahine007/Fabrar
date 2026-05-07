@@ -8,6 +8,9 @@ import { ValidationStatus, AUDIT_TYPE } from '../../constants.js';
 import { normalizeStatus } from '../../utils/helpers.js';
 import { DomainError } from '../shared/DomainError.js';
 import { domainBus, EVENTS } from '../events/domainBus.js';
+import { writeAuditLog } from '../audit/auditLogService.js';
+import { enqueueOutboxEvent } from '../events/outboxService.js';
+import { postReportEntryApprovedLedger, postSpesaApprovedLedger } from '../finance/ledgerService.js';
 
 // ─── Regola di business: Policy 4.2 ─────────────────────────────────────────
 
@@ -60,7 +63,7 @@ async function resolveItemsFromIds(tx, ids, action) {
  * Accetta sia il formato { items: [...] } che { ids: [...], action: '...' }.
  * Restituisce il numero di record aggiornati.
  */
-export async function bulkUpdateItems(prisma, body) {
+export async function bulkUpdateItems(prisma, body, user = null) {
     const iso = new Date().toISOString();
     const events = [];
 
@@ -82,7 +85,16 @@ export async function bulkUpdateItems(prisma, body) {
             if (rawItem.type === AUDIT_TYPE.ORE) {
                 const entry = await tx.reportEntry.findUnique({
                     where: { id },
-                    select: { report_id: true, cantiere_id: true, report: { select: { employee_id: true } } },
+                    select: {
+                        id: true,
+                        report_id: true,
+                        cantiere_id: true,
+                        wbs_node_id: true,
+                        task_id: true,
+                        ore_lavorate: true,
+                        stato_validazione: true,
+                        report: { select: { employee_id: true, report_date: true } },
+                    },
                 });
                 if (!entry) throw new DomainError(`Riga ore non trovata: ${id}`, 'NOT_FOUND');
 
@@ -95,7 +107,30 @@ export async function bulkUpdateItems(prisma, body) {
                     data: { stato_validazione: newSt, modified_by_admin_at: iso },
                 });
 
+                await writeAuditLog(tx, user, {
+                    entityType: 'ReportEntry',
+                    entityId: id,
+                    action: 'REPORT_ENTRY_STATUS_CHANGED',
+                    previousState: { stato_validazione: entry.stato_validazione },
+                    nextState: { stato_validazione: newSt },
+                });
+
                 if (newSt === ValidationStatus.APPROVED) {
+                    await postReportEntryApprovedLedger(tx, {
+                        ...entry,
+                        stato_validazione: newSt,
+                    });
+                    await enqueueOutboxEvent(tx, {
+                        eventType: EVENTS.REPORT_ENTRY_APPROVED,
+                        aggregateType: 'ReportEntry',
+                        aggregateId: id,
+                        payload: {
+                            entryId: id,
+                            cantiereId: entry.cantiere_id ?? null,
+                            taskId: entry.task_id ?? null,
+                            employeeId: entry.report?.employee_id ?? null,
+                        },
+                    });
                     events.push({
                         type: EVENTS.REPORT_ENTRY_VERIFIED,
                         payload: {
@@ -109,10 +144,73 @@ export async function bulkUpdateItems(prisma, body) {
             }
 
             if (rawItem.type === AUDIT_TYPE.SPESE) {
+                const spesa = typeof tx.spesa.findUnique === 'function'
+                    ? await tx.spesa.findUnique({
+                        where: { id },
+                        select: {
+                            id: true,
+                            timestamp_utc: true,
+                            employee_id: true,
+                            cantiere_id: true,
+                            wbs_node_id: true,
+                            task_id: true,
+                            importo: true,
+                            fornitore_id: true,
+                            descrizione: true,
+                            fonte: true,
+                            input_method: true,
+                            documento_id: true,
+                            logistica_status: true,
+                            cost_category: true,
+                            allocation_scope: true,
+                            stato_validazione: true,
+                        },
+                    })
+                    : null;
+                if (typeof tx.spesa.findUnique === 'function' && !spesa) {
+                    throw new DomainError(`Spesa non trovata: ${id}`, 'NOT_FOUND');
+                }
+
                 await tx.spesa.update({
                     where: { id },
                     data: { stato_validazione: newSt, modified_by_admin_at: iso },
                 });
+
+                await writeAuditLog(tx, user, {
+                    entityType: 'Spesa',
+                    entityId: id,
+                    action: 'SPESA_STATUS_CHANGED',
+                    previousState: { stato_validazione: spesa?.stato_validazione ?? null },
+                    nextState: { stato_validazione: newSt },
+                });
+
+                if (newSt === ValidationStatus.APPROVED) {
+                    if (spesa) {
+                        await postSpesaApprovedLedger(tx, {
+                            ...spesa,
+                            stato_validazione: newSt,
+                        });
+                        await enqueueOutboxEvent(tx, {
+                            eventType: EVENTS.EXPENSE_APPROVED,
+                            aggregateType: 'Spesa',
+                            aggregateId: id,
+                            payload: {
+                                spesaId: id,
+                                cantiereId: spesa.cantiere_id ?? null,
+                                taskId: spesa.task_id ?? null,
+                                allocationScope: spesa.allocation_scope ?? null,
+                                costCategory: spesa.cost_category ?? null,
+                            },
+                        });
+                    }
+                    events.push({
+                        type: EVENTS.SPESA_VERIFIED,
+                        payload: {
+                            spesaId: id,
+                            cantiereId: spesa?.cantiere_id ?? null,
+                        },
+                    });
+                }
                 continue;
             }
 

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, getApiErrorMessage } from '../../lib/api';
-import { cantierKeys } from './queryKeys';
+import { cantierKeys, dashboardKeys } from './queryKeys';
 
 export interface DocumentUploader {
   id: number;
@@ -89,6 +89,7 @@ export function useUploadDocument(cantiereId: number) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: cantierKeys.docs(cantiereId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.all() });
     },
   });
 }
@@ -110,6 +111,7 @@ export function useDeleteDocument(cantiereId: number) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: cantierKeys.docs(cantiereId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.all() });
     },
   });
 }

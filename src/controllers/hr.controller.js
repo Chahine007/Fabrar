@@ -30,6 +30,7 @@ import { AUDIT_TYPE, LIMITS, ValidationStatus } from "../constants.js";
 import { bulkUpdateItems } from "../domain/hr/auditService.js";
 import { domainBus, EVENTS } from "../domain/events/domainBus.js";
 import { parsePagination } from "../utils/pagination.js";
+import { writeAuditLog } from "../domain/audit/auditLogService.js";
 
 const { Prisma } = pkg;
 const MAX_DAILY_HOURS_ALERT = LIMITS.MAX_DAILY_HOURS_ALERT;
@@ -429,7 +430,24 @@ export const updateEmployeeCtrl = asyncHandler(async (req, res) => {
         return res.status(400).json({ error: 'Nessun campo valido fornito.' });
     }
 
-    await prisma.employee.update({ where: { id }, data });
+    await prisma.$transaction(async (tx) => {
+        await tx.employee.update({ where: { id }, data });
+        if (data.ruolo && existing.user_id) {
+            await tx.user.update({
+                where: { id: existing.user_id },
+                data: { role: data.ruolo },
+            });
+        }
+        if (data.ruolo && data.ruolo !== existing.ruolo) {
+            await writeAuditLog(tx, req.user, {
+                entityType: "Employee",
+                entityId: id,
+                action: "EMPLOYEE_ROLE_CHANGED",
+                previousState: { ruolo: existing.ruolo, user_id: existing.user_id ?? null },
+                nextState: { ruolo: data.ruolo, user_id: existing.user_id ?? null },
+            });
+        }
+    });
 
     res.json({ ok: true, updated: Object.keys(data) });
 });
@@ -586,7 +604,7 @@ export const getAudit = asyncHandler(async (req, res) => {
 
 export const bulkUpdateAudit = asyncHandler(async (req, res) => {
     const prisma = getDb();
-    const count  = await bulkUpdateItems(prisma, req.body);
+    const count  = await bulkUpdateItems(prisma, req.body, req.user);
     res.json({ success: true, count });
 });
 
@@ -669,7 +687,22 @@ export const updateSpesaCtrl = asyncHandler(async (req, res) => {
         data.stato_validazione = normalizeStatus(data.status);
         delete data.status; // status column removed from schema
     }
+    const prisma = getDb();
+    const existing = await prisma.spesa.findUnique({
+        where: { id: spesaId },
+        select: { stato_validazione: true, cantiere_id: true },
+    });
     await dbUpdateSpesa(spesaId, data);
+    await writeAuditLog(prisma, req.user, {
+        entityType: "Spesa",
+        entityId: spesaId,
+        action: "SPESA_UPDATED",
+        previousState: existing,
+        nextState: data,
+    });
+    if (data.stato_validazione === ValidationStatus.APPROVED) {
+        domainBus.emit(EVENTS.SPESA_VERIFIED, { spesaId, cantiereId: existing?.cantiere_id ?? null });
+    }
     res.json({ success: true });
 });
 
