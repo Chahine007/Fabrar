@@ -34,15 +34,21 @@ function hasAnyCapability(current: string[] = [], required: string[] = []) {
 
 export function RoleGuard({ allowedRoles = [], allowedCapabilities = [], children }: RoleGuardProps) {
   const { user } = useAuthContext();
-  const { data: capabilitiesData } = useCapabilities();
+  const capabilitiesQuery = useCapabilities();
+  const capabilitiesData = capabilitiesQuery.data;
   const capabilities = capabilitiesData?.capabilities ?? [];
+  const hasCapabilityContract = allowedCapabilities.length > 0 && !!capabilitiesData;
 
   if (!user) {
     return null;
   }
 
-  if (allowedCapabilities.length > 0 && hasAnyCapability(capabilities, allowedCapabilities)) {
-    return <>{children}</>;
+  if (allowedCapabilities.length > 0 && capabilitiesQuery.isLoading) {
+    return null;
+  }
+
+  if (hasCapabilityContract) {
+    return hasAnyCapability(capabilities, allowedCapabilities) ? <>{children}</> : null;
   }
 
   if (allowedCapabilities.length > 0 && allowedRoles.length === 0) {
@@ -59,7 +65,8 @@ export function RoleGuard({ allowedRoles = [], allowedCapabilities = [], childre
 export function RoleRoute({ allowedRoles = [], allowedCapabilities = [], children }: RoleGuardProps) {
   const { user, isAuthenticated, isLoading } = useAuthContext();
   const capabilitiesQuery = useCapabilities();
-  const capabilities = capabilitiesQuery.data?.capabilities ?? [];
+  const capabilitiesData = capabilitiesQuery.data;
+  const capabilities = capabilitiesData?.capabilities ?? [];
 
   if (isLoading || (allowedCapabilities.length > 0 && capabilitiesQuery.isLoading)) {
     return <FullPageLoader label="Verifica permessi..." />;
@@ -71,12 +78,16 @@ export function RoleRoute({ allowedRoles = [], allowedCapabilities = [], childre
 
   const allowedByCapability =
     allowedCapabilities.length > 0 && hasAnyCapability(capabilities, allowedCapabilities);
+  const hasCapabilityContract = allowedCapabilities.length > 0 && !!capabilitiesData;
   const hasCapabilityRule = allowedCapabilities.length > 0;
   const hasRoleRule = allowedRoles.length > 0;
   const allowedByRole = hasRoleRule && !!user && allowedRoles.includes(user.role);
   const hasNoAccessRule = !hasCapabilityRule && !hasRoleRule;
+  const isAllowed = hasCapabilityContract
+    ? allowedByCapability
+    : allowedByCapability || allowedByRole || hasNoAccessRule;
 
-  if (!user || (!hasNoAccessRule && !allowedByCapability && !allowedByRole)) {
+  if (!user || !isAllowed) {
     return <Navigate to="/" replace />;
   }
 

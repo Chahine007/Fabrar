@@ -5,30 +5,48 @@ import {
   Braces,
   ClipboardList, Clock, Banknote, MapPin, RefreshCw, Download,
   CheckCircle2, XCircle, Search, MessageCircle,
-  ChevronDown, ChevronUp, Eye, Loader2, Pencil, X,
-  PackageCheck, Filter, Users,
+  ChevronDown, ChevronUp, Eye, Loader2, Pencil,
+  Filter, Users,
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import { useAudit, useUpdateReportEntry, useExportCsv } from '../hooks/api/useHr';
+import { useAudit, useExportCsv } from '../hooks/api/useHr';
 import {
   useMessageLogs,
   useApproveTelegramEntry,
   type MessageLogEntry,
 } from '../hooks/api/useTelegramAudit';
 import { useCantieri } from '../hooks/api/useCantieri';
-import type { AuditEntry, AuditStatus, AuditFilters, AuditType } from '../hooks/api/useHr';
+import type { AuditEntry, AuditFilters } from '../hooks/api/useHr';
 import ErrorMessage from '../components/ErrorMessage';
 import { useAuthContext } from '../context/AuthContext';
 import { RoleGuard } from '../components/auth/RoleGuard';
 import { CardListSkeleton, EmptyState, TableSkeleton, useToast } from '../components/ui';
 import MethodBadge from '../components/ui/MethodBadge';
+import { EditAuditModal } from '../components/tabulati/EditAuditModal';
+import {
+  CostBadges,
+  LogisticaBadge,
+  PurchaseInvoiceBadge,
+  StatusBadge,
+  auditKey,
+  formatAuditDate,
+  formatAuditValue,
+  formatDayLabel,
+  formatLogTime,
+  getLogAnomalyCount,
+  isApprovedAuditStatus,
+  safeNumber,
+  safeParseLogJson,
+  safeTime,
+  toAuditMutationItem,
+  type AuditMutationStatus,
+} from '../components/tabulati/tabulatiUtils';
 
 type TypeFilter   = 'tutti' | 'ore' | 'spese';
 type StatusFilter = 'tutti' | 'pending' | 'approved' | 'rejected';
 type CategoryFilter = 'tutte' | 'INVENTORY_MATERIAL' | 'CONSUMABLE_SUPPLY' | 'SERVICE' | 'LEASING_RENTAL' | 'UTILITY' | 'INSURANCE' | 'TAX_FEE' | 'PROFESSIONAL_SERVICE' | 'TRAVEL_VEHICLE' | 'OTHER' | 'UNKNOWN';
 type ScopeFilter = 'tutte' | 'PROJECT' | 'OVERHEAD' | 'REVIEW';
-type AuditMutationStatus = 'APPROVED' | 'REJECTED';
 type EnrichedLogEntry = MessageLogEntry & {
   parsedJson: unknown | null;
   hasInvalidJson: boolean;
@@ -50,235 +68,6 @@ type DayLogGroup = {
   latestTime: number;
   totalLogs: number;
   groups: EmployeeLogGroup[];
-};
-
-function isApprovedAuditStatus(status: AuditStatus | string | null | undefined) {
-  const raw = String(status ?? '').toUpperCase();
-  return raw === 'APPROVED' || raw === 'VERIFIED';
-}
-
-function safeNumber(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function safeTime(value: unknown) {
-  const parsed = new Date(String(value ?? '')).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatAuditDate(value: unknown) {
-  const time = safeTime(value);
-  return time ? new Date(time).toLocaleDateString('it-IT') : '—';
-}
-
-function formatAuditValue(entry: AuditEntry) {
-  const value = safeNumber(entry.value);
-  return entry.type === 'ore'
-    ? `${value}h`
-    : `€${value.toLocaleString('it-IT')}`;
-}
-
-function auditKey(entry: Pick<AuditEntry, 'type' | 'id'>) {
-  return `${entry.type}:${entry.id}`;
-}
-
-function toAuditMutationItem(entry: Pick<AuditEntry, 'id' | 'type'>, newStatus: AuditMutationStatus) {
-  return { id: entry.id, type: entry.type as AuditType, newStatus };
-}
-
-function formatDayLabel(dayKey: string) {
-  const time = safeTime(`${dayKey}T00:00:00`);
-  return time
-    ? new Date(time).toLocaleDateString('it-IT', {
-        weekday: 'long',
-        day: '2-digit',
-        month: 'long',
-        year: 'numeric',
-      })
-    : dayKey;
-}
-
-function formatLogTime(value: string) {
-  const time = safeTime(value);
-  return time
-    ? new Date(time).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
-    : '—';
-}
-
-function safeParseLogJson(rawJson: string | null) {
-  if (!rawJson || !rawJson.trim()) {
-    return { parsedJson: null, hasInvalidJson: false };
-  }
-
-  try {
-    return { parsedJson: JSON.parse(rawJson), hasInvalidJson: false };
-  } catch {
-    return { parsedJson: rawJson, hasInvalidJson: true };
-  }
-}
-
-function getLogAnomalyCount(log: EnrichedLogEntry) {
-  let count = 0;
-  if (log.isUnknownEmployee) count += 1;
-  if (log.hasInvalidJson) count += 1;
-  if (log.previewTruncated) count += 1;
-  return count;
-}
-
-const StatusBadge = ({ status }: { status: AuditStatus }) => {
-  const map: Record<AuditStatus, { label: string; cls: string }> = {
-    pending:  { label: '⏳ In Attesa', cls: 'bg-warning-bg text-warning-text border border-warning-border' },
-    approved: { label: '✅ Approvato', cls: 'bg-success-bg text-success-text border border-success-border' },
-    verified: { label: '✅ Approvato', cls: 'bg-success-bg text-success-text border border-success-border' },
-    rejected: { label: '❌ Rifiutato', cls: 'bg-danger-bg text-danger-text border border-danger-border' },
-  };
-  const s = map[status] ?? { label: status, cls: 'bg-background text-text-secondary' };
-  return <span className={cn('px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap', s.cls)}>{s.label}</span>;
-};
-
-const LogisticaBadge = ({ status }: { status?: AuditEntry['logistica_status'] }) => {
-  if (!status || status === 'NOT_REQUIRED') return null;
-  const map: Record<string, { label: string; cls: string }> = {
-    PENDING_OCR: { label: 'Da analizzare OCR', cls: 'bg-warning-bg text-warning-text border-warning-border' },
-    OCR_REVIEW: { label: 'OCR in revisione', cls: 'bg-info-bg text-info-text border-info-border' },
-    LOADED_TO_WAREHOUSE: { label: 'Caricato a magazzino', cls: 'bg-success-bg text-success-text border-success-border' },
-    RECONCILIATION_REQUIRED: { label: 'Da riconciliare', cls: 'bg-danger-bg text-danger-text border-danger-border' },
-  };
-  const item = map[status] ?? { label: status, cls: 'bg-background text-text-secondary border-border' };
-  return (
-    <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold', item.cls)}>
-      <PackageCheck size={11} />
-      {item.label}
-    </span>
-  );
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-  INVENTORY_MATERIAL: 'Materiale',
-  CONSUMABLE_SUPPLY: 'Fornitura',
-  SERVICE: 'Servizio',
-  LEASING_RENTAL: 'Leasing',
-  UTILITY: 'Utenza',
-  INSURANCE: 'Assicurazione',
-  TAX_FEE: 'Tassa',
-  PROFESSIONAL_SERVICE: 'Professionista',
-  TRAVEL_VEHICLE: 'Veicolo',
-  OTHER: 'Altro',
-  UNKNOWN: 'Da classificare',
-};
-
-const SCOPE_LABELS: Record<string, string> = {
-  PROJECT: 'Cantiere',
-  OVERHEAD: 'Overhead',
-  REVIEW: 'Review',
-};
-
-const CostBadges = ({ entry }: { entry: AuditEntry }) => {
-  if (entry.type !== 'spese') return null;
-  const category = entry.cost_category ?? 'OTHER';
-  const scope = entry.allocation_scope ?? 'PROJECT';
-  return (
-    <span className="inline-flex flex-wrap gap-1">
-      <span className="inline-flex rounded-full border border-border bg-background px-2 py-1 text-[10px] font-bold text-text-secondary">
-        {CATEGORY_LABELS[String(category)] ?? String(category)}
-      </span>
-      <span className={cn(
-        'inline-flex rounded-full border px-2 py-1 text-[10px] font-bold',
-        scope === 'OVERHEAD'
-          ? 'border-info-border bg-info-bg text-info-text'
-          : scope === 'REVIEW'
-            ? 'border-warning-border bg-warning-bg text-warning-text'
-            : 'border-success-border bg-success-bg text-success-text'
-      )}>
-        {SCOPE_LABELS[String(scope)] ?? String(scope)}
-      </span>
-    </span>
-  );
-};
-
-const PurchaseInvoiceBadge = ({ entry }: { entry: AuditEntry }) => {
-  if (entry.type !== 'spese' || !entry.fattura_acquisto) return null;
-  const invoice = entry.fattura_acquisto;
-  const total = safeNumber(invoice.totale_documento);
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1 rounded-full border border-info-border bg-info-bg px-2 py-1 text-[10px] font-bold text-info-text">
-      Fattura #{invoice.numero_documento || invoice.id}
-      {total > 0 && <span>· €{total.toLocaleString('it-IT')}</span>}
-      {invoice.righe_count != null && <span>· {invoice.righe_count} righe</span>}
-    </span>
-  );
-};
-
-const EditModal = ({ entry, onClose }: { entry: AuditEntry; onClose: () => void }) => {
-  const update = useUpdateReportEntry();
-  const { data: cantieri } = useCantieri();
-  const toast = useToast();
-  const [ore, setOre]       = useState(String(entry.value));
-  const [cid, setCid]       = useState('');
-  const [note, setNote]     = useState(entry.note ?? '');
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await update.mutateAsync({ id: entry.id, data: {
-        ore_lavorate:    parseFloat(ore) || undefined,
-        cantiere_id:     cid ? Number(cid) : undefined,
-        attivita_svolte: note || null,
-      }});
-      onClose();
-    } catch (err) {
-      toast.error('Salvataggio non riuscito', (err as Error).message);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <motion.div initial={{ opacity: 0, scale: 0.95, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="relative bg-card border border-border rounded-3xl p-7 w-full max-w-md shadow-2xl z-10">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-bold text-text-primary flex items-center gap-2"><Pencil size={18} className="text-accent" /> Modifica Timbratura</h2>
-          <button onClick={onClose} className="p-1.5 rounded-xl hover:bg-background text-text-secondary"><X size={18} /></button>
-        </div>
-        <div className="mb-4 p-4 bg-background border border-border rounded-2xl text-sm text-text-secondary space-y-0.5">
-          <p className="font-bold text-text-primary">{entry.nome} {entry.cognome}</p>
-          <p>Data: {new Date(entry.date).toLocaleDateString('it-IT')}</p>
-          <p>Cantiere: <span className="text-text-primary font-medium">{entry.cantiere_nome ?? '—'}</span></p>
-        </div>
-        <form onSubmit={submit} className="space-y-4">
-          {entry.type === 'ore' && (
-            <div>
-              <label className="block text-xs font-bold text-text-secondary uppercase tracking-wider mb-1">Ore Lavorate</label>
-              <input id="edit-ore" type="number" step="0.5" min="0" max="24" value={ore} onChange={e => setOre(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl border border-border bg-background text-sm outline-none focus:ring-2 focus:ring-accent/20" />
-            </div>
-          )}
-          <div>
-            <label className="block text-xs font-bold text-text-secondary uppercase tracking-wider mb-1">Cantiere</label>
-            <select id="edit-cantiere" value={cid} onChange={e => setCid(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-border bg-background text-sm outline-none focus:ring-2 focus:ring-accent/20">
-              <option value="">— Mantieni attuale —</option>
-              {(cantieri ?? []).map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-text-secondary uppercase tracking-wider mb-1">Note</label>
-            <textarea id="edit-note" value={note} onChange={e => setNote(e.target.value)} rows={3}
-              className="w-full px-4 py-2.5 rounded-xl border border-border bg-background text-sm outline-none focus:ring-2 focus:ring-accent/20 resize-none" />
-          </div>
-          <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-border text-text-secondary text-sm font-bold hover:bg-background transition-colors">Annulla</button>
-            <button type="submit" disabled={update.isPending}
-              className="flex-1 py-2.5 rounded-xl bg-accent text-white text-sm font-bold hover:bg-accent/90 disabled:opacity-50 flex items-center justify-center gap-2">
-              {update.isPending ? <><Loader2 size={14} className="animate-spin" /> Salvataggio...</> : 'Salva'}
-            </button>
-          </div>
-        </form>
-      </motion.div>
-    </div>
-  );
 };
 
 function RawLogsPanel({
@@ -1093,7 +882,7 @@ export default function TabulatiPage() {
       </div>
 
       <AnimatePresence>
-        {editEntry && <EditModal entry={editEntry} onClose={()=>setEditEntry(null)}/>}
+        {editEntry && <EditAuditModal entry={editEntry} onClose={()=>setEditEntry(null)}/>}
       </AnimatePresence>
     </div>
   );

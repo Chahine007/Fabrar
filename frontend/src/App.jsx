@@ -1,28 +1,26 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { AuthProvider, useAuthContext } from "./context/AuthContext";
 import { ProtectedRoute, RoleRoute } from "./components/auth/RoleGuard";
 import { FullPageLoader, ToastProvider } from "./components/ui";
 
-// Unified Shell
-import ERPProShell from "./components/layout/ERPProShell";
-
-// Pages
-import LoginPage          from "./pages/LoginPage";
-import Dashboard          from "./pages/Dashboard";
-import ProjectListPage    from "./pages/ProjectListPage";
-import ProjectDetailPage  from "./pages/ProjectDetailPage";
-import MessagesPage       from "./pages/MessagesPage";
-import EmployeesPage      from "./pages/EmployeesPage";
-import EmployeeDetailPage from "./pages/EmployeeDetailPage";
-import TabulatiPage       from "./pages/TabulatiPage";
-import TelegramAuditPage  from "./pages/TelegramAuditPage";
-import SettingsPage       from "./pages/SettingsPage";
-import WarehousePage      from "./pages/WarehousePage";
-import SuppliersPage      from "./pages/SuppliersPage";
-import MaterialRequestsPage from "./pages/MaterialRequestsPage";
-import ActivitiesPage     from "./pages/ActivitiesPage";
-import DataEntryPage      from "./pages/DataEntryPage";
+const ERPProShell = lazy(() => import("./components/layout/ERPProShell"));
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const ProjectListPage = lazy(() => import("./pages/ProjectListPage"));
+const ProjectDetailPage = lazy(() => import("./pages/ProjectDetailPage"));
+const MessagesPage = lazy(() => import("./pages/MessagesPage"));
+const EmployeesPage = lazy(() => import("./pages/EmployeesPage"));
+const EmployeeDetailPage = lazy(() => import("./pages/EmployeeDetailPage"));
+const TabulatiPage = lazy(() => import("./pages/TabulatiPage"));
+const TelegramAuditPage = lazy(() => import("./pages/TelegramAuditPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const WarehousePage = lazy(() => import("./pages/WarehousePage"));
+const SuppliersPage = lazy(() => import("./pages/SuppliersPage"));
+const MaterialRequestsPage = lazy(() => import("./pages/MaterialRequestsPage"));
+const ActivitiesPage = lazy(() => import("./pages/ActivitiesPage"));
+const DataEntryPage = lazy(() => import("./pages/DataEntryPage"));
 
 // Public Guard Component (redirects to home if already logged in)
 const PublicRoute = ({ children }) => {
@@ -66,7 +64,8 @@ function AppRoutes() {
   const { logout } = useAuthContext();
 
   return (
-    <Routes>
+    <Suspense fallback={<FullPageLoader label="Caricamento pagina..." />}>
+      <Routes>
       <Route 
         path="/login" 
         element={
@@ -129,7 +128,8 @@ function AppRoutes() {
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
-    </Routes>
+      </Routes>
+    </Suspense>
   );
 }
 
