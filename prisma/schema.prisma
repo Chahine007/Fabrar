@@ -75,6 +75,12 @@ model User {
   cantieri_sm         Cantiere[]           @relation("CantiereSiteManager")
   movimenti_magazzino MovimentoMagazzino[]
 
+  // CRM (MVP)
+  crm_interactions_created CrmInteraction[] @relation("CrmInteractionCreator")
+  crm_deals_owned          CrmDeal[]        @relation("CrmDealOwner")
+  crm_tickets_assigned     CrmTicket[]      @relation("CrmTicketAssignee")
+  crm_tickets_created      CrmTicket[]      @relation("CrmTicketCreator")
+
   @@index([role, is_active])
 }
 
@@ -966,4 +972,259 @@ model BotSession {
 
   @@index([employee_id, type])
   @@index([expires_at])
+}
+
+// ==========================================
+// CRM (MVP)
+// ==========================================
+
+model CrmAccount {
+  id           Int      @id @default(autoincrement())
+  name         String
+  vat_number   String?
+  tax_code     String?
+  email        String?
+  phone        String?
+  website      String?
+  address      String?
+  city         String?
+  postal_code  String?
+  country      String?  @default("IT")
+  industry     String?
+  notes        String?
+  tags         String?
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  contacts      CrmContact[]
+  interactions  CrmInteraction[]
+  deals         CrmDeal[]
+  tickets       CrmTicket[]
+
+  @@index([name])
+  @@index([vat_number])
+  @@index([tax_code])
+  @@index([email])
+  @@index([is_active, updated_at])
+}
+
+model CrmContact {
+  id           Int      @id @default(autoincrement())
+  account_id   Int?
+  first_name   String?
+  last_name    String?
+  full_name    String?
+  email        String?
+  phone        String?
+  mobile       String?
+  title        String?
+  department   String?
+  is_primary   Boolean  @default(false)
+  notes        String?
+  tags         String?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  account       CrmAccount?       @relation(fields: [account_id], references: [id], onDelete: SetNull)
+  interactions  CrmInteraction[]
+  tickets       CrmTicket[]
+  campaign_memberships CrmCampaignMember[]
+
+  @@index([account_id])
+  @@index([email])
+  @@index([phone])
+  @@index([last_name])
+  @@index([updated_at])
+}
+
+enum CrmInteractionType {
+  NOTE
+  CALL
+  EMAIL
+  MEETING
+  TASK
+}
+
+model CrmInteraction {
+  id             Int                @id @default(autoincrement())
+  type           CrmInteractionType @default(NOTE)
+  occurred_at    DateTime           @default(now())
+  subject        String?
+  body           String?
+  outcome        String?
+  account_id     Int?
+  contact_id     Int?
+  deal_id        Int?
+  ticket_id      Int?
+  created_by_user_id Int?
+  created_at     DateTime           @default(now())
+  updated_at     DateTime           @updatedAt
+
+  account   CrmAccount? @relation(fields: [account_id], references: [id], onDelete: SetNull)
+  contact   CrmContact? @relation(fields: [contact_id], references: [id], onDelete: SetNull)
+  deal      CrmDeal?    @relation(fields: [deal_id], references: [id], onDelete: SetNull)
+  ticket    CrmTicket?  @relation(fields: [ticket_id], references: [id], onDelete: SetNull)
+  created_by User?      @relation("CrmInteractionCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+
+  @@index([account_id, occurred_at])
+  @@index([contact_id, occurred_at])
+  @@index([deal_id, occurred_at])
+  @@index([ticket_id, occurred_at])
+  @@index([created_by_user_id, occurred_at])
+}
+
+enum CrmDealStage {
+  PROSPECT
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+}
+
+model CrmDeal {
+  id             Int          @id @default(autoincrement())
+  account_id     Int?
+  title          String
+  description    String?
+  stage          CrmDealStage @default(PROSPECT)
+  amount         Decimal?     @db.Decimal(12, 2)
+  currency       String       @default("EUR")
+  expected_close DateTime?
+  owner_user_id  Int?
+  created_at     DateTime     @default(now())
+  updated_at     DateTime     @updatedAt
+
+  account       CrmAccount?      @relation(fields: [account_id], references: [id], onDelete: SetNull)
+  owner         User?            @relation("CrmDealOwner", fields: [owner_user_id], references: [id], onDelete: SetNull)
+  interactions  CrmInteraction[]
+
+  @@index([account_id])
+  @@index([stage, updated_at])
+  @@index([owner_user_id])
+}
+
+enum CrmTicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum CrmTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model CrmTicket {
+  id             Int               @id @default(autoincrement())
+  account_id     Int?
+  contact_id     Int?
+  subject        String
+  description    String?
+  status         CrmTicketStatus   @default(OPEN)
+  priority       CrmTicketPriority @default(MEDIUM)
+  assignee_user_id Int?
+  created_by_user_id Int?
+  created_at     DateTime          @default(now())
+  updated_at     DateTime          @updatedAt
+
+  account    CrmAccount? @relation(fields: [account_id], references: [id], onDelete: SetNull)
+  contact    CrmContact? @relation(fields: [contact_id], references: [id], onDelete: SetNull)
+  assignee   User?       @relation("CrmTicketAssignee", fields: [assignee_user_id], references: [id], onDelete: SetNull)
+  created_by User?       @relation("CrmTicketCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  interactions CrmInteraction[]
+
+  @@index([account_id, status])
+  @@index([contact_id])
+  @@index([assignee_user_id, status])
+  @@index([status, updated_at])
+}
+
+enum CrmCampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+model CrmCampaign {
+  id          Int               @id @default(autoincrement())
+  name        String
+  description String?
+  status      CrmCampaignStatus @default(DRAFT)
+  start_date  DateTime?
+  end_date    DateTime?
+  channel     String?
+  created_at  DateTime          @default(now())
+  updated_at  DateTime          @updatedAt
+
+  members CrmCampaignMember[]
+
+  @@index([name])
+  @@index([status, updated_at])
+}
+
+model CrmCampaignMember {
+  id           Int      @id @default(autoincrement())
+  campaign_id  Int
+  contact_id   Int
+  status       String?  @default("ADDED")
+  added_at     DateTime @default(now())
+
+  campaign CrmCampaign @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  contact  CrmContact  @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+
+  @@unique([campaign_id, contact_id])
+  @@index([campaign_id])
+  @@index([contact_id])
+}
+
+model CrmFaq {
+  id         Int      @id @default(autoincrement())
+  question   String
+  answer     String
+  category   String?
+  is_active  Boolean  @default(true)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([category])
+  @@index([is_active, sort_order])
+}
+
+model CrmIntegrationAccount {
+  id           Int      @id @default(autoincrement())
+  provider     String
+  external_id  String?
+  display_name String?
+  status       String   @default("DISCONNECTED")
+  metadata     Json?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  events CrmEvent[]
+
+  @@index([provider, status])
+}
+
+model CrmEvent {
+  id                    Int      @id @default(autoincrement())
+  integration_account_id Int
+  event_type            String
+  external_event_id     String?
+  payload               Json?
+  processed_at          DateTime?
+  created_at            DateTime @default(now())
+
+  integration_account CrmIntegrationAccount @relation(fields: [integration_account_id], references: [id], onDelete: Cascade)
+
+  @@index([integration_account_id, created_at])
+  @@index([event_type, created_at])
+  @@index([processed_at])
 }

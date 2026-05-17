@@ -45,6 +45,15 @@ export const NAV_TREE: NavNode[] = [
       { icon: Briefcase, label: 'Progetti', path: '/projects', id: 'projects', roles: PROJECT_ROLES, capability: 'projects:read' },
       { icon: Activity, label: 'Attività', path: '/activities', id: 'activities', capability: 'tasks:read' },
       { icon: MessageSquare, label: 'Messaggi', path: '/messages', id: 'messages', capability: 'messages:read' },
+      { icon: Users, label: 'Clienti', path: '/clients', id: 'clients', roles: PROJECT_ROLES },
+    ],
+  },
+  {
+    id: 'crm-section',
+    label: 'CRM',
+    icon: Users,
+    children: [
+      { icon: Users, label: 'Clienti', path: '/clients', id: 'crm-clients', roles: ALL_AUTH_ROLES, capability: 'crm:accounts:read' },
     ],
   },
   {

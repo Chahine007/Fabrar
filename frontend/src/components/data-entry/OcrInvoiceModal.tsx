@@ -14,100 +14,23 @@ import type {
   CostAllocationScope,
   CostCategory,
   GenericInvoiceOcrResponse,
-  InvoiceOcrLine,
-  InvoiceOcrPayload,
   SpesaOcrResponse,
 } from '../../hooks/api/useHr';
-import { Button, EmptyState, useToast } from '../ui';
-
-function safeNumber(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatMoney(value: unknown) {
-  const amount = safeNumber(value);
-  return `€${amount.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function formatOptionalMoney(value: unknown) {
-  if (value == null || value === '') return '—';
-  return formatMoney(value);
-}
-
-function normalizeOcrLines(lines: InvoiceOcrLine[] | undefined | null) {
-  return Array.isArray(lines) ? lines : [];
-}
-
-function isLoadableLine(line: InvoiceOcrLine) {
-  return Boolean(
-    line.codice_sku
-      && line.stockable !== false
-      && (line.cost_category == null || line.cost_category === 'INVENTORY_MATERIAL')
-  );
-}
-
-const COST_CATEGORY_OPTIONS: Array<{ value: CostCategory; label: string }> = [
-  { value: 'INVENTORY_MATERIAL', label: 'Materiale di magazzino' },
-  { value: 'CONSUMABLE_SUPPLY', label: 'Fornitura / consumabile' },
-  { value: 'SERVICE', label: 'Servizio' },
-  { value: 'LEASING_RENTAL', label: 'Leasing / noleggio' },
-  { value: 'UTILITY', label: 'Utenza' },
-  { value: 'INSURANCE', label: 'Assicurazione' },
-  { value: 'TAX_FEE', label: 'Tassa / diritto' },
-  { value: 'PROFESSIONAL_SERVICE', label: 'Prestazione professionale' },
-  { value: 'TRAVEL_VEHICLE', label: 'Viaggio / veicolo' },
-  { value: 'OTHER', label: 'Altro' },
-  { value: 'UNKNOWN', label: 'Da classificare' },
-];
-
-const ALLOCATION_SCOPE_OPTIONS: Array<{ value: CostAllocationScope; label: string }> = [
-  { value: 'PROJECT', label: 'Progetto / cantiere' },
-  { value: 'OVERHEAD', label: 'Overhead aziendale' },
-  { value: 'REVIEW', label: 'Da rivedere' },
-];
-
-function categoryLabel(value?: string | null) {
-  return COST_CATEGORY_OPTIONS.find((item) => item.value === value)?.label ?? value ?? 'Da classificare';
-}
-
-function scopeLabel(value?: string | null) {
-  return ALLOCATION_SCOPE_OPTIONS.find((item) => item.value === value)?.label ?? value ?? 'Da rivedere';
-}
-
-function formatOcrAddress(subject?: InvoiceOcrPayload['fornitore'] | InvoiceOcrPayload['cliente'] | null) {
-  if (!subject) return '—';
-  const locality = [subject.cap, subject.comune].filter(Boolean).join(' ');
-  const province = subject.provincia ? `(${subject.provincia})` : '';
-  return [subject.indirizzo, [locality, province].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—';
-}
-
-function lineStatusMeta(line: InvoiceOcrLine) {
-  if (!isLoadableLine(line)) {
-    return { label: 'Da riconciliare', cls: 'bg-warning-bg text-warning-text border-warning-border' };
-  }
-  if (line.magazzino_status === 'existing') {
-    return { label: 'Articolo esistente', cls: 'bg-info-bg text-info-text border-info-border' };
-  }
-  if (line.magazzino_status === 'reconcile') {
-    return { label: 'Da riconciliare', cls: 'bg-warning-bg text-warning-text border-warning-border' };
-  }
-  return { label: 'Nuovo articolo', cls: 'bg-success-bg text-success-text border-success-border' };
-}
-
-function supplierActionLabel(action?: SpesaOcrResponse['fornitoreAction']) {
-  if (action === 'created') return 'Fornitore creato';
-  if (action === 'updated') return 'Fornitore aggiornato';
-  if (action === 'found') return 'Fornitore già presente';
-  return 'Fornitore non variato';
-}
-
-function purchaseInvoiceDueLabel(invoice?: { scadenze?: Array<{ data_scadenza?: string; importo?: number | string }> } | null) {
-  const due = invoice?.scadenze?.[0];
-  if (!due) return 'scadenziario non generato';
-  const date = String(due.data_scadenza ?? '').slice(0, 10) || 'senza data';
-  return `scadenza ${date} · ${formatOptionalMoney(due.importo)}`;
-}
+import { Button, useToast } from '../ui';
+import {
+  ALLOCATION_SCOPE_OPTIONS,
+  COST_CATEGORY_OPTIONS,
+  OcrAccountingSummary,
+  OcrConfirmationSummary,
+  OcrInvoiceLinesTable,
+  OcrSubjectPanel,
+  categoryLabel,
+  formatMoney,
+  isLoadableLine,
+  normalizeOcrLines,
+  scopeLabel,
+  supplierActionLabel,
+} from './OcrInvoiceModal.parts';
 
 export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry; onClose: () => void }) {
   const analyze = useAnalyzeSpesaOcr();
@@ -221,144 +144,26 @@ export default function OcrInvoiceModal({ entry, onClose }: { entry: AuditEntry;
           </form>
 
           {confirmation && (
-            <div className="mb-5 rounded-2xl border border-success-border bg-success-bg p-4 text-sm text-success-text">
-              <p className="font-bold">Carico magazzino completato</p>
-              <div className="mt-2 grid gap-2 md:grid-cols-4">
-                <span>{supplierActionLabel(confirmation.fornitoreAction)}</span>
-                <span>{confirmation.articoliCreati ?? 0} articoli creati</span>
-                <span>{confirmation.movimentiCaricoCreati ?? 0} movimenti di carico</span>
-                <span>{confirmation.righeDaRiconciliare ?? 0} righe da riconciliare</span>
-              </div>
-              {confirmation.fatturaAcquisto?.id && (
-                <p className="mt-2 text-xs font-semibold">
-                  Fattura acquisto #{confirmation.fatturaAcquisto.id} salvata con dati IVA, righe OCR e {purchaseInvoiceDueLabel(confirmation.fatturaAcquisto)}.
-                </p>
-              )}
+            <div className="mb-5">
+              <OcrConfirmationSummary confirmation={confirmation} title="Carico magazzino completato" />
             </div>
           )}
 
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Fornitore</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{fornitore?.ragione_sociale || '—'}</p>
-              <p className="mt-1 text-xs text-text-secondary">P.IVA: {fornitore?.partita_iva || '—'}</p>
-              <p className="mt-1 text-xs text-text-secondary">{formatOcrAddress(fornitore)}</p>
-            </div>
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Cliente</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{cliente?.ragione_sociale || '—'}</p>
-              <p className="mt-1 text-xs text-text-secondary">P.IVA: {cliente?.partita_iva || '—'}</p>
-              <p className="mt-1 text-xs text-text-secondary">{formatOcrAddress(cliente)}</p>
-            </div>
+            <OcrSubjectPanel title="Fornitore" subject={fornitore} />
+            <OcrSubjectPanel title="Cliente" subject={cliente} />
           </div>
 
-          <div className="mt-4 grid gap-4 md:grid-cols-4">
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Tipo documento</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{payload?.tipo_documento || payload?.document_type || '—'}</p>
-            </div>
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Documento</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{payload?.numero_documento || '—'}</p>
-            </div>
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Data</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{payload?.data_documento || '—'}</p>
-            </div>
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Totale OCR</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_documento)}</p>
-            </div>
+          <div className="mt-4">
+            <OcrAccountingSummary payload={payload} pagamento={pagamento} purchaseInvoice={purchaseInvoice} />
           </div>
 
-          <div className="mt-4 grid gap-4 md:grid-cols-4">
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Imponibile</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_imponibile)}</p>
-            </div>
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">IVA</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_imposta)}</p>
-            </div>
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Pagamento</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{pagamento?.modalita_pagamento || '—'}</p>
-              <p className="mt-1 text-xs text-text-secondary">{pagamento?.iban || '—'}</p>
-            </div>
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Scadenza</p>
-              <p className="mt-1 text-sm font-bold text-text-primary">{pagamento?.scadenza || '—'}</p>
-              <p className="mt-1 text-xs text-text-secondary">{formatOptionalMoney(pagamento?.importo_scadenza)}</p>
-            </div>
-          </div>
-
-          {purchaseInvoice && (
-            <div className="mt-4 rounded-2xl border border-info-border bg-info-bg p-4 text-sm text-info-text">
-              <p className="font-bold">Fattura acquisto strutturata</p>
-              <p className="mt-1 text-xs">
-                {purchaseInvoice.numero_documento || payload?.numero_documento || 'Documento senza numero'} ·{' '}
-                {purchaseInvoice.righe?.length ?? 0} righe salvabili · dati fornitore, IVA e scadenziario disponibili.
-              </p>
-            </div>
-          )}
-
-          <div className="mt-5 rounded-2xl border border-border">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h3 className="text-sm font-bold text-text-primary">Righe materiali estratte</h3>
-              <span className="text-xs text-text-secondary">
-                {loadableLines.length} caricabili · {lines.length - loadableLines.length} da riconciliare
-              </span>
-            </div>
-            {lines.length === 0 ? (
-              <div className="p-6">
-                <EmptyState
-                  icon={FileSearch}
-                  title="Nessuna riga materiale"
-                  description="Carica una fattura accompagnatoria o un DDT con tabella articoli leggibile."
-                />
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-background text-xs uppercase tracking-wider text-text-secondary">
-                    <tr>
-                      <th className="px-4 py-3 text-left">Codice</th>
-                      <th className="px-4 py-3 text-left">Descrizione</th>
-                      <th className="px-4 py-3 text-left">Esito</th>
-                      <th className="px-4 py-3 text-right">Q.ta</th>
-                      <th className="px-4 py-3 text-left">UM</th>
-                      <th className="px-4 py-3 text-right">Prezzo unit.</th>
-                      <th className="px-4 py-3 text-right">Totale</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {lines.map((line, index) => {
-                      const status = lineStatusMeta(line);
-                      return (
-                        <tr key={`${line.codice_articolo ?? 'row'}-${index}`}>
-                          <td className="px-4 py-3">
-                            <p className="font-bold text-text-primary">{line.codice_sku || line.codice_articolo || '—'}</p>
-                            {line.codice_articolo && line.codice_sku && line.codice_articolo !== line.codice_sku && (
-                              <p className="text-[10px] text-text-secondary">Orig.: {line.codice_articolo}</p>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-text-secondary">{line.descrizione || '—'}</td>
-                          <td className="px-4 py-3">
-                            <span className={cn('inline-flex rounded-full border px-2 py-1 text-[10px] font-bold', status.cls)}>
-                              {status.label}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right text-text-primary">{safeNumber(line.quantita).toLocaleString('it-IT')}</td>
-                          <td className="px-4 py-3 text-text-secondary">{line.unita_misura || '—'}</td>
-                          <td className="px-4 py-3 text-right text-text-primary">{formatOptionalMoney(line.prezzo_unitario ?? line.costo_unitario)}</td>
-                          <td className="px-4 py-3 text-right font-bold text-text-primary">{formatOptionalMoney(line.prezzo_totale ?? line.importo_riga)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+          <div className="mt-5">
+            <OcrInvoiceLinesTable
+              lines={lines}
+              loadableLines={loadableLines}
+              emptyDescription="Carica una fattura accompagnatoria o un DDT con tabella articoli leggibile."
+            />
           </div>
         </div>
 
@@ -440,8 +245,16 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
   };
 
   const handleConfirm = async () => {
-    if (!analysis || !canConfirm) return;
+    if (!analysis || !canConfirm) {
+      // #region agent log
+      fetch('http://127.0.0.1:7699/ingest/dc878b05-bf22-4ecc-b058-58a7c0170030',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'93ee36'},body:JSON.stringify({sessionId:'93ee36',runId:'initial',hypothesisId:'H5',location:'OcrInvoiceModal.tsx:confirm-guard',message:'Generic OCR confirm blocked by guard',data:{hasAnalysis:Boolean(analysis),canConfirm,mode,selectedSpesaId,selectedCantiereId,allocationScope,hasUpload:Boolean(analysis?.upload),hasConfirmation:Boolean(confirmation)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      return;
+    }
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7699/ingest/dc878b05-bf22-4ecc-b058-58a7c0170030',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'93ee36'},body:JSON.stringify({sessionId:'93ee36',runId:'initial',hypothesisId:'H5',location:'OcrInvoiceModal.tsx:confirm-submit',message:'Generic OCR confirm request submitted',data:{mode,selectedSpesaId,cantiereId:mode==='new'&&allocationScope==='PROJECT'?Number(selectedCantiereId):null,costCategory,allocationScope,linesCount:lines.length,loadableLinesCount:loadableLines.length},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       const result = await confirm.mutateAsync({
         upload: analysis.upload,
         ocrPayload: analysis.ocrPayload,
@@ -452,11 +265,17 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
         allocationScope,
       });
       setConfirmation(result);
+      // #region agent log
+      fetch('http://127.0.0.1:7699/ingest/dc878b05-bf22-4ecc-b058-58a7c0170030',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'93ee36'},body:JSON.stringify({sessionId:'93ee36',runId:'initial',hypothesisId:'H5',location:'OcrInvoiceModal.tsx:confirm-success',message:'Generic OCR confirm succeeded',data:{movimentiCaricoCreati:result.movimentiCaricoCreati ?? 0,articoliCreati:result.articoliCreati ?? 0,righeDaRiconciliare:result.righeDaRiconciliare ?? 0},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       toast.success(
         'Fattura registrata',
         `${result.movimentiCaricoCreati ?? 0} carichi creati. ${supplierActionLabel(result.fornitoreAction)}.`
       );
     } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7699/ingest/dc878b05-bf22-4ecc-b058-58a7c0170030',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'93ee36'},body:JSON.stringify({sessionId:'93ee36',runId:'initial',hypothesisId:'H5',location:'OcrInvoiceModal.tsx:confirm-error',message:'Generic OCR confirm failed',data:{errorMessage:err instanceof Error ? err.message : 'unknown'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       toast.error('Conferma non riuscita', err instanceof Error ? err.message : 'Errore conferma fattura.');
     }
   };
@@ -527,71 +346,16 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
           </form>
 
           {confirmation && (
-            <div className="mt-5 rounded-2xl border border-success-border bg-success-bg p-4 text-sm text-success-text">
-              <p className="font-bold">Fattura registrata</p>
-              <div className="mt-2 grid gap-2 md:grid-cols-4">
-                <span>{supplierActionLabel(confirmation.fornitoreAction)}</span>
-                <span>{confirmation.articoliCreati ?? 0} articoli creati</span>
-                <span>{confirmation.movimentiCaricoCreati ?? 0} movimenti di carico</span>
-                <span>{confirmation.righeDaRiconciliare ?? 0} righe da riconciliare</span>
-              </div>
-              {confirmation.fatturaAcquisto?.id && (
-                <p className="mt-2 text-xs font-semibold">
-                  Fattura acquisto #{confirmation.fatturaAcquisto.id} salvata con dati IVA, righe OCR e {purchaseInvoiceDueLabel(confirmation.fatturaAcquisto)}.
-                </p>
-              )}
+            <div className="mt-5">
+              <OcrConfirmationSummary confirmation={confirmation} />
             </div>
           )}
 
           {analysis && (
             <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)]">
               <div className="space-y-4">
-                <div className="rounded-2xl border border-border bg-background p-4">
-                  <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Fornitore</p>
-                  <p className="mt-1 text-sm font-bold text-text-primary">{fornitore?.ragione_sociale || '—'}</p>
-                  <p className="mt-1 text-xs text-text-secondary">P.IVA: {fornitore?.partita_iva || '—'}</p>
-                  <p className="mt-1 text-xs text-text-secondary">{formatOcrAddress(fornitore)}</p>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-2xl border border-border bg-background p-4">
-                    <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Documento</p>
-                    <p className="mt-1 text-sm font-bold text-text-primary">{payload?.numero_documento || '—'}</p>
-                    <p className="mt-1 text-xs text-text-secondary">{payload?.data_documento || '—'}</p>
-                  </div>
-                  <div className="rounded-2xl border border-border bg-background p-4">
-                    <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Totale</p>
-                    <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_documento)}</p>
-                    <p className="mt-1 text-xs text-text-secondary">{pagamento?.modalita_pagamento || 'Pagamento non letto'}</p>
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-4">
-                  <div className="rounded-2xl border border-border bg-background p-4">
-                    <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Imponibile</p>
-                    <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_imponibile)}</p>
-                  </div>
-                  <div className="rounded-2xl border border-border bg-background p-4">
-                    <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">IVA</p>
-                    <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(payload?.totale_imposta)}</p>
-                  </div>
-                  <div className="rounded-2xl border border-border bg-background p-4">
-                    <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Scadenza</p>
-                    <p className="mt-1 text-sm font-bold text-text-primary">{pagamento?.scadenza || '—'}</p>
-                  </div>
-                  <div className="rounded-2xl border border-border bg-background p-4">
-                    <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">Importo rata</p>
-                    <p className="mt-1 text-sm font-bold text-text-primary">{formatOptionalMoney(pagamento?.importo_scadenza)}</p>
-                  </div>
-                </div>
-
-                {purchaseInvoice && (
-                  <div className="rounded-2xl border border-info-border bg-info-bg p-4 text-sm text-info-text">
-                    <p className="font-bold">Fattura acquisto strutturata</p>
-                    <p className="mt-1 text-xs">
-                      {purchaseInvoice.numero_documento || payload?.numero_documento || 'Documento senza numero'} ·{' '}
-                      {purchaseInvoice.righe?.length ?? 0} righe · fornitore, IVA, pagamento e scadenziario saranno salvati.
-                    </p>
-                  </div>
-                )}
+                <OcrSubjectPanel title="Fornitore" subject={fornitore} />
+                <OcrAccountingSummary payload={payload} pagamento={pagamento} purchaseInvoice={purchaseInvoice} compact />
 
                 <div className="rounded-2xl border border-border bg-background p-4">
                   <p className="text-sm font-bold text-text-primary">Classificazione contabile</p>
@@ -692,73 +456,13 @@ export function GeneralInvoiceOcrModal({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-border">
-                <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                  <h3 className="text-sm font-bold text-text-primary">Righe materiali</h3>
-                  <span className="text-xs text-text-secondary">
-                    {loadableLines.length} caricabili · {lines.length - loadableLines.length} da riconciliare
-                  </span>
-                </div>
-                {lines.length === 0 ? (
-                  <div className="p-6">
-                    <EmptyState
-                      icon={FileSearch}
-                      title="Nessuna riga materiale"
-                      description="Il documento può essere registrato come spesa, ma non genera carichi senza codici articolo."
-                    />
-                  </div>
-                ) : (
-                  <div className="max-h-[360px] overflow-auto">
-                    <table className="w-full text-sm">
-                      <thead className="sticky top-0 bg-background text-xs uppercase tracking-wider text-text-secondary">
-                        <tr>
-                          <th className="px-4 py-3 text-left">Codice</th>
-                          <th className="px-4 py-3 text-left">Descrizione</th>
-                          <th className="px-4 py-3 text-left">Esito</th>
-                          <th className="px-4 py-3 text-right">Totale</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {lines.map((line, index) => {
-                          const status = lineStatusMeta(line);
-                          return (
-                            <tr key={`${line.codice_articolo ?? 'row'}-${index}`}>
-                              <td className="px-4 py-3 font-bold text-text-primary">{line.codice_sku || line.codice_articolo || '—'}</td>
-                              <td className="px-4 py-3 text-text-secondary">{line.descrizione || '—'}</td>
-                              <td className="px-4 py-3">
-                                <span className={cn('inline-flex rounded-full border px-2 py-1 text-[10px] font-bold', status.cls)}>
-                                  {status.label}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-right font-bold text-text-primary">{formatOptionalMoney(line.prezzo_totale ?? line.importo_riga)}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {costLines.length > 0 && (
-                  <div className="border-t border-border p-4">
-                    <h4 className="text-sm font-bold text-text-primary">Righe costo non logistiche</h4>
-                    <div className="mt-3 space-y-2">
-                      {costLines.map((line, index) => (
-                        <div key={`${line.descrizione ?? 'cost'}-${index}`} className="rounded-xl border border-border bg-background p-3 text-sm">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-semibold text-text-primary">{line.descrizione || 'Costo senza descrizione'}</p>
-                              <p className="mt-1 text-xs text-text-secondary">
-                                {categoryLabel(line.cost_category)} · {scopeLabel(line.allocation_scope)}
-                              </p>
-                            </div>
-                            <span className="font-bold text-text-primary">{formatOptionalMoney(line.importo)}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <OcrInvoiceLinesTable
+                lines={lines}
+                loadableLines={loadableLines}
+                emptyDescription="Il documento può essere registrato come spesa, ma non genera carichi senza codici articolo."
+                compact
+                costLines={costLines}
+              />
             </div>
           )}
         </div>

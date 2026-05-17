@@ -1,14 +1,19 @@
 -- Sprint: OCR strutturato fatture acquisto
 -- Espande fornitori e persiste fatture fornitori + righe estratte da OCR.
 
-ALTER TABLE "Fornitore"
-  ADD COLUMN "partita_iva_normalizzata" TEXT,
-  ADD COLUMN "codice_fiscale" TEXT,
-  ADD COLUMN "comune" TEXT,
-  ADD COLUMN "provincia" TEXT,
-  ADD COLUMN "cap" TEXT,
-  ADD COLUMN "paese" TEXT DEFAULT 'IT',
-  ADD COLUMN "iban_default" TEXT;
+DO $$
+BEGIN
+  IF to_regclass('"Fornitore"') IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE "Fornitore"
+      ADD COLUMN IF NOT EXISTS "partita_iva_normalizzata" TEXT,
+      ADD COLUMN IF NOT EXISTS "codice_fiscale" TEXT,
+      ADD COLUMN IF NOT EXISTS "comune" TEXT,
+      ADD COLUMN IF NOT EXISTS "provincia" TEXT,
+      ADD COLUMN IF NOT EXISTS "cap" TEXT,
+      ADD COLUMN IF NOT EXISTS "paese" TEXT DEFAULT ''IT'',
+      ADD COLUMN IF NOT EXISTS "iban_default" TEXT';
+  END IF;
+END $$;
 
 CREATE TABLE "FatturaAcquisto" (
   "id" SERIAL NOT NULL,
@@ -84,33 +89,65 @@ CREATE INDEX "RigaFatturaAcquisto_articolo_id_idx" ON "RigaFatturaAcquisto"("art
 CREATE INDEX "RigaFatturaAcquisto_codice_sku_normalizzato_idx" ON "RigaFatturaAcquisto"("codice_sku_normalizzato");
 CREATE INDEX "RigaFatturaAcquisto_cost_category_idx" ON "RigaFatturaAcquisto"("cost_category");
 
-CREATE INDEX "Fornitore_partita_iva_normalizzata_idx" ON "Fornitore"("partita_iva_normalizzata");
-CREATE INDEX "Fornitore_ragione_sociale_idx" ON "Fornitore"("ragione_sociale");
+DO $$
+BEGIN
+  IF to_regclass('"Fornitore"') IS NOT NULL THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS "Fornitore_partita_iva_normalizzata_idx" ON "Fornitore"("partita_iva_normalizzata")';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS "Fornitore_ragione_sociale_idx" ON "Fornitore"("ragione_sociale")';
+  END IF;
 
-ALTER TABLE "FatturaAcquisto"
-  ADD CONSTRAINT "FatturaAcquisto_document_id_fkey"
-  FOREIGN KEY ("document_id") REFERENCES "Document"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  IF to_regclass('"FatturaAcquisto"') IS NOT NULL THEN
+    IF to_regclass('"Document"') IS NOT NULL THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FatturaAcquisto_document_id_fkey') THEN
+        EXECUTE 'ALTER TABLE "FatturaAcquisto"
+          ADD CONSTRAINT "FatturaAcquisto_document_id_fkey"
+          FOREIGN KEY ("document_id") REFERENCES "Document"("id") ON DELETE SET NULL ON UPDATE CASCADE';
+      END IF;
+    END IF;
+    IF to_regclass('"Spesa"') IS NOT NULL THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FatturaAcquisto_spesa_id_fkey') THEN
+        EXECUTE 'ALTER TABLE "FatturaAcquisto"
+          ADD CONSTRAINT "FatturaAcquisto_spesa_id_fkey"
+          FOREIGN KEY ("spesa_id") REFERENCES "Spesa"("id") ON DELETE SET NULL ON UPDATE CASCADE';
+      END IF;
+    END IF;
+    IF to_regclass('"Fornitore"') IS NOT NULL THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FatturaAcquisto_fornitore_id_fkey') THEN
+        EXECUTE 'ALTER TABLE "FatturaAcquisto"
+          ADD CONSTRAINT "FatturaAcquisto_fornitore_id_fkey"
+          FOREIGN KEY ("fornitore_id") REFERENCES "Fornitore"("id") ON DELETE SET NULL ON UPDATE CASCADE';
+      END IF;
+    END IF;
+    IF to_regclass('"Cantiere"') IS NOT NULL THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FatturaAcquisto_cantiere_id_fkey') THEN
+        EXECUTE 'ALTER TABLE "FatturaAcquisto"
+          ADD CONSTRAINT "FatturaAcquisto_cantiere_id_fkey"
+          FOREIGN KEY ("cantiere_id") REFERENCES "Cantiere"("id") ON DELETE SET NULL ON UPDATE CASCADE';
+      END IF;
+    END IF;
+  END IF;
 
-ALTER TABLE "FatturaAcquisto"
-  ADD CONSTRAINT "FatturaAcquisto_spesa_id_fkey"
-  FOREIGN KEY ("spesa_id") REFERENCES "Spesa"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
-ALTER TABLE "FatturaAcquisto"
-  ADD CONSTRAINT "FatturaAcquisto_fornitore_id_fkey"
-  FOREIGN KEY ("fornitore_id") REFERENCES "Fornitore"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
-ALTER TABLE "FatturaAcquisto"
-  ADD CONSTRAINT "FatturaAcquisto_cantiere_id_fkey"
-  FOREIGN KEY ("cantiere_id") REFERENCES "Cantiere"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
-ALTER TABLE "RigaFatturaAcquisto"
-  ADD CONSTRAINT "RigaFatturaAcquisto_fattura_acquisto_id_fkey"
-  FOREIGN KEY ("fattura_acquisto_id") REFERENCES "FatturaAcquisto"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
-ALTER TABLE "RigaFatturaAcquisto"
-  ADD CONSTRAINT "RigaFatturaAcquisto_articolo_id_fkey"
-  FOREIGN KEY ("articolo_id") REFERENCES "Articolo"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
-ALTER TABLE "RigaFatturaAcquisto"
-  ADD CONSTRAINT "RigaFatturaAcquisto_movimento_id_fkey"
-  FOREIGN KEY ("movimento_id") REFERENCES "MovimentoMagazzino"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  IF to_regclass('"RigaFatturaAcquisto"') IS NOT NULL THEN
+    IF to_regclass('"FatturaAcquisto"') IS NOT NULL THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RigaFatturaAcquisto_fattura_acquisto_id_fkey') THEN
+        EXECUTE 'ALTER TABLE "RigaFatturaAcquisto"
+          ADD CONSTRAINT "RigaFatturaAcquisto_fattura_acquisto_id_fkey"
+          FOREIGN KEY ("fattura_acquisto_id") REFERENCES "FatturaAcquisto"("id") ON DELETE CASCADE ON UPDATE CASCADE';
+      END IF;
+    END IF;
+    IF to_regclass('"Articolo"') IS NOT NULL THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RigaFatturaAcquisto_articolo_id_fkey') THEN
+        EXECUTE 'ALTER TABLE "RigaFatturaAcquisto"
+          ADD CONSTRAINT "RigaFatturaAcquisto_articolo_id_fkey"
+          FOREIGN KEY ("articolo_id") REFERENCES "Articolo"("id") ON DELETE SET NULL ON UPDATE CASCADE';
+      END IF;
+    END IF;
+    IF to_regclass('"MovimentoMagazzino"') IS NOT NULL THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RigaFatturaAcquisto_movimento_id_fkey') THEN
+        EXECUTE 'ALTER TABLE "RigaFatturaAcquisto"
+          ADD CONSTRAINT "RigaFatturaAcquisto_movimento_id_fkey"
+          FOREIGN KEY ("movimento_id") REFERENCES "MovimentoMagazzino"("id") ON DELETE SET NULL ON UPDATE CASCADE';
+      END IF;
+    END IF;
+  END IF;
+END $$;

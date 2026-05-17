@@ -23,6 +23,7 @@ import ledgerRoutes from "./ledger.routes.js";
 import outboxRoutes from "./outbox.routes.js";
 import auditRoutes from "./audit.routes.js";
 import biRoutes from "./bi.routes.js";
+import crmRoutes from "./crm.routes.js";
 
 const router = express.Router();
 
@@ -55,5 +56,6 @@ router.use("/api/ledger", ledgerRoutes);
 router.use("/api/outbox", outboxRoutes);
 router.use("/api/audit", auditRoutes);
 router.use("/api/bi", biRoutes);
+router.use(crmRoutes);
 
 export default router;

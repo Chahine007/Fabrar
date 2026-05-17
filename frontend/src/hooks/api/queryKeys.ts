@@ -18,6 +18,25 @@ export const supplierKeys = {
   detail: (id: number) => [...supplierKeys.all(), 'detail', id] as const,
 };
 
+export const crmKeys = {
+  all: () => ['crm'] as const,
+
+  accounts: () => [...crmKeys.all(), 'accounts'] as const,
+  accountList: (filters?: object) => [...crmKeys.accounts(), 'list', filters ?? {}] as const,
+  accountDetail: (id: number) => [...crmKeys.accounts(), 'detail', id] as const,
+  accountInteractions: (accountId: number, filters?: object) => [...crmKeys.accounts(), accountId, 'interactions', filters ?? {}] as const,
+  accountDeals: (accountId: number, filters?: object) => [...crmKeys.accounts(), accountId, 'deals', filters ?? {}] as const,
+  accountTickets: (accountId: number, filters?: object) => [...crmKeys.accounts(), accountId, 'tickets', filters ?? {}] as const,
+
+  deals: () => [...crmKeys.all(), 'deals'] as const,
+  dealList: (filters?: object) => [...crmKeys.deals(), 'list', filters ?? {}] as const,
+  dealDetail: (id: number) => [...crmKeys.deals(), 'detail', id] as const,
+  pipeline: () => [...crmKeys.deals(), 'pipeline'] as const,
+
+  campaigns: () => [...crmKeys.all(), 'campaigns'] as const,
+  campaignList: (filters?: object) => [...crmKeys.campaigns(), 'list', filters ?? {}] as const,
+};
+
 export const materialRequestKeys = {
   all:  () => ['material-requests'] as const,
   list: (filters?: object) => [...materialRequestKeys.all(), 'list', filters ?? {}] as const,
